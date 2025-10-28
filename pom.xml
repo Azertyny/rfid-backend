@@ -1,0 +1,212 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<parent>
+		<groupId>org.springframework.boot</groupId>
+		<artifactId>spring-boot-starter-parent</artifactId>
+		<version>3.5.7</version>
+		<relativePath/> <!-- lookup parent from repository -->
+	</parent>
+	<groupId>com.rfidback</groupId>
+	<artifactId>rfid-back</artifactId>
+	<version>0.0.1-SNAPSHOT</version>
+	<name>RFIDBack</name>
+	<description>RFID project backend</description>
+	<url/>
+	<licenses>
+		<license/>
+	</licenses>
+	<developers>
+		<developer/>
+	</developers>
+	<scm>
+		<connection/>
+		<developerConnection/>
+		<tag/>
+		<url/>
+	</scm>
+	<properties>
+		<java.version>21</java.version>
+    <openapi.generator.version>7.6.0</openapi.generator.version>
+	</properties>
+	<dependencies>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-actuator</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-data-jpa</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-security</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-validation</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-web</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>com.h2database</groupId>
+			<artifactId>h2</artifactId>
+			<scope>runtime</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.postgresql</groupId>
+			<artifactId>postgresql</artifactId>
+			<scope>runtime</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.security</groupId>
+			<artifactId>spring-security-test</artifactId>
+			<scope>test</scope>
+		</dependency>
+
+    	<!-- Dependencies required by OpenAPI generated sources -->
+	    <dependency>
+	    	<groupId>io.swagger.core.v3</groupId>
+	    	<artifactId>swagger-annotations</artifactId>
+	    	<version>2.2.14</version>
+	    </dependency>
+
+	    <!-- Jakarta Validation API (for Spring Boot 3 / Jakarta EE) -->
+	    <dependency>
+	    	<groupId>jakarta.validation</groupId>
+	    	<artifactId>jakarta.validation-api</artifactId>
+	    	<version>3.0.2</version>
+	    </dependency>
+
+	    <!-- Jakarta Annotations -->
+	    <dependency>
+	    	<groupId>jakarta.annotation</groupId>
+	    	<artifactId>jakarta.annotation-api</artifactId>
+	    	<version>2.1.1</version>
+	    </dependency>
+
+	    <!-- Jakarta Servlet API (provided) -->
+	    <dependency>
+	    	<groupId>jakarta.servlet</groupId>
+	    	<artifactId>jakarta.servlet-api</artifactId>
+	    	<version>6.0.0</version>
+	    	<scope>provided</scope>
+	    </dependency>
+
+
+      <dependency>
+        <groupId>org.openapitools</groupId>
+        <artifactId>jackson-databind-nullable</artifactId>
+        <version>0.2.3</version>
+      </dependency>
+
+      <!-- https://mvnrepository.com/artifact/org.projectlombok/lombok -->
+<dependency>
+    <groupId>org.projectlombok</groupId>
+    <artifactId>lombok</artifactId>
+    <version>1.18.42</version>
+</dependency>
+	</dependencies>
+
+  <build>
+      <plugins>
+
+          <!-- 🧠 OpenAPI Generator Plugin -->
+          <plugin>
+              <groupId>org.openapitools</groupId>
+              <artifactId>openapi-generator-maven-plugin</artifactId>
+              <version>${openapi.generator.version}</version>
+              <executions>
+                  <execution>
+                      <id>generate-api-code</id>
+                      <goals>
+                          <goal>generate</goal>
+                      </goals>
+                      <configuration>
+                          <!-- Type de code à générer -->
+                          <generatorName>spring</generatorName>
+                          <inputSpec>${project.basedir}/src/main/resources/openapi/api.yaml</inputSpec>
+                          <output>${project.build.directory}/generated-sources/openapi</output>
+
+                          <!-- Package du code généré -->
+                          <apiPackage>com.rfidback.generated.api</apiPackage>
+                          <modelPackage>com.rfidback.generated.model</modelPackage>
+                          <!-- <invokerPackage>com.rfidback.generated.invoker</invokerPackage> -->
+
+                          <!-- Options spécifiques Spring Boot -->
+                          <configOptions>
+                              <useSpringBoot3>true</useSpringBoot3>
+                              <interfaceOnly>false</interfaceOnly>
+                              <delegatePattern>true</delegatePattern>
+                              <useTags>true</useTags>
+                              <documentationProvider>none</documentationProvider>
+                              <useOptional>true</useOptional>
+                              <useResponseEntity>true</useResponseEntity>
+                              <hideGenerationTimestamp>true</hideGenerationTimestamp>
+                              <unhandledException>true</unhandledException>
+                              <!-- Use Jakarta EE packages (matches Spring Boot 3 / Java 21) -->
+                              <useJakartaEe>true</useJakartaEe>
+                          </configOptions>
+                      </configuration>
+                  </execution>
+              </executions>
+          </plugin>
+
+          <!-- ☕ Compiler -->
+          <plugin>
+              <groupId>org.apache.maven.plugins</groupId>
+              <artifactId>maven-compiler-plugin</artifactId>
+              <version>3.11.0</version>
+              <configuration>
+                  <source>${java.version}</source>
+                  <target>${java.version}</target>
+              </configuration>
+          </plugin>
+
+		  <!-- Spring Boot Maven plugin: explicitly set mainClass to avoid ambiguous main-class detection -->
+		  <plugin>
+			  <groupId>org.springframework.boot</groupId>
+			  <artifactId>spring-boot-maven-plugin</artifactId>
+			  <configuration>
+				  <mainClass>com.rfidback.RfidBackApplication</mainClass>
+			  </configuration>
+		  </plugin>
+
+      </plugins>
+
+      <!-- Ajout du code généré aux sources compilées -->
+     <pluginManagement>
+          <plugins>
+              <plugin>
+                  <groupId>org.codehaus.mojo</groupId>
+                  <artifactId>build-helper-maven-plugin</artifactId>
+                  <version>3.6.0</version>
+                  <executions>
+                      <execution>
+                          <id>add-generated-sources</id>
+                          <phase>generate-sources</phase>
+                          <goals>
+                              <goal>add-source</goal>
+                          </goals>
+                          <configuration>
+                              <sources>
+                                  <source>${project.build.directory}/generated-sources/openapi/src/main/java</source>
+                              </sources>
+                          </configuration>
+                      </execution>
+                  </executions>
+              </plugin>
+          </plugins>
+      </pluginManagement>
+  </build>
+
+</project>

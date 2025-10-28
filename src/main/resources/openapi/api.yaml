@@ -1,0 +1,117 @@
+openapi: 3.0.3
+info:
+  title: RFID-BACK API
+  version: 1.0.0
+  description: API de gestion des cueilleurs, tags, activités et conformités
+
+servers:
+  - url: http://localhost:8080/api
+    description: Serveur local de développement
+
+# -----------------------------------------------------------------------------------------------
+# Endpoints section
+# -----------------------------------------------------------------------------------------------
+paths:
+  # -----------------------------------------------------------------------------------------------
+  # Reader section
+  # -----------------------------------------------------------------------------------------------
+  /readers:
+    get:
+      summary: List all readers
+      operationId: listReaders
+      tags: [Reader]
+      responses:
+        "200":
+          description: Readers list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadersList"
+        "500": { $ref: "#/components/responses/InternalError" }
+    post:
+      summary: Create a new reader
+      operationId: createReader
+      tags: [Reader]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateReader"
+      responses:
+        "201":
+          description: Reader
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Reader"
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "500": { $ref: "#/components/responses/InternalError" }
+# ---------------------------------------------------------------------------
+# COMMON DEFINITONS
+# ---------------------------------------------------------------------------
+components:
+  # ---------------------------------------------------------------------------
+  responses:
+    Done:
+      description: Retourné lorsque l'action demandée a été réalisée
+    Created:
+      description: Retourné lorsqu'une nouvelle ressource a été créée
+    Modified:
+      description: Retourné lorsqu'une ressource a été modifiée
+    Deleted:
+      description: Retourné lorsqu'une ressource a été supprimée
+    AlreadyExist:
+      description: Retourné lorsqu'une ressource existe déjà
+    NotFound:
+      description: Retourné lorsqu'une ressource est introuvable
+    InvalidRequest:
+      description: Requête invalide
+    InternalError:
+      description: Erreur interne côté serveur
+    UnexpectedError:
+      description: Retourné lorsqu'une nouvelle ressource a été créée
+
+  # ---------------------------------------------------------------------------
+  schemas:
+    CreateReader:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Nom du lecteur
+          example: Reader 1
+      required:
+        - name
+
+    Reader:
+      allOf:
+        - $ref: "#/components/schemas/CreateReader"
+        - type: object
+          properties:
+            apitoken:
+              type: string
+              description: Jeton API du lecteur
+              example: abcd1234efgh5678ijkl9012mnop3456
+            creationDate:
+              type: string
+              format: date-time
+              description: Date de création du lecteur
+              example: "2024-01-01T12:00:00Z"
+            updateDate:
+              type: string
+              format: date-time
+              description: Date de la dernière mise à jour du lecteur
+              example: "2024-01-02T12:00:00Z"
+          required:
+            - apitoken
+
+    ReadersList:
+      type: object
+      properties:
+        readers:
+          type: array
+          items:
+            $ref: "#/components/schemas/Reader"
+      required:
+        - readers
