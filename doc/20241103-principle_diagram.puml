@@ -1,0 +1,35 @@
+@startuml
+
+hide circle
+
+class AppNavigateur {
+  + requetes()
+}
+
+class AppMobile {
+  + requeteConformite()
+  + requeteInfosTAG()
+}
+
+class ClientRFID {
+  + requeteConformite()
+}
+
+package serveur {
+    class API {
+    + receptionRequete()
+    + envoieReponse()
+    }
+
+    class BDD {
+    + RequeteSQL()
+    }
+}
+
+AppNavigateur --> API : appelle
+AppMobile --> API : appelle
+ClientRFID --> API : appelle
+API --> BDD
+BDD --> API
+
+@enduml

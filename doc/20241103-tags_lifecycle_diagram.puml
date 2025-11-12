@@ -1,0 +1,15 @@
+@startuml TAG_LIFECYCLE
+title Cycle de vie des Tags
+
+
+[*] --> IDLE : Enregistrement
+IDLE --> EnAttente : Affectation
+EnAttente --> EnAttente : Réaffectation
+Comptabilisé --> EnAttente : Affectation
+EnAttente --> Comptabilisé : Lecture RFID
+Comptabilisé --> [*] : Suppression du système
+
+IDLE : Le Tag est enregistré dans le système
+EnAttente : Le Tag est affecté est prêt pour utilisation
+Comptabilisé : Le Tag a été lu
+@enduml

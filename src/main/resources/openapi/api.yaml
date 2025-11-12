@@ -47,6 +47,36 @@ paths:
                 $ref: "#/components/schemas/Reader"
         "400": { $ref: "#/components/responses/InvalidRequest" }
         "500": { $ref: "#/components/responses/InternalError" }
+
+  # -----------------------------------------------------------------------------------------------
+  # Tag section
+  # -----------------------------------------------------------------------------------------------
+  /tags/scan:
+    post:
+      summary: Scan a tag and report its compliance state
+      description: >
+        Endpoint appelé par un lecteur RFID pour signaler si un tag scanné est conforme.
+        Accessible uniquement avec le jeton API généré lors de l'enregistrement du lecteur.
+      operationId: scanTag
+      tags: [Tag]
+      security:
+        - ReaderApiToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScanTagRequest"
+      responses:
+        "200":
+          description: Résultat du scan du tag
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanTagResponse"
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
 # ---------------------------------------------------------------------------
 # COMMON DEFINITONS
 # ---------------------------------------------------------------------------
@@ -71,6 +101,8 @@ components:
       description: Erreur interne côté serveur
     UnexpectedError:
       description: Retourné lorsqu'une nouvelle ressource a été créée
+    Unauthorized:
+      description: Jeton API manquant ou invalide
 
   # ---------------------------------------------------------------------------
   schemas:
@@ -115,3 +147,51 @@ components:
             $ref: "#/components/schemas/Reader"
       required:
         - readers
+
+    ScanTagRequest:
+      type: object
+      properties:
+        uid:
+          type: string
+          description: Identifiant unique du tag scanné
+          example: E2000017221101891400A23G
+        conforme:
+          type: boolean
+          description: Indique si le tag est conforme selon la lecture
+          example: false
+      required:
+        - uid
+        - conforme
+
+    ScanTagResponse:
+      type: object
+      properties:
+        uid:
+          type: string
+          description: Identifiant unique du tag scanné
+          example: E2000017221101891400A23G
+        conforme:
+          type: boolean
+          description: Etat de conformité enregistré pour ce tag
+          example: false
+        processedAt:
+          type: string
+          format: date-time
+          description: Date de prise en compte du scan
+          example: "2024-01-15T09:30:00Z"
+        message:
+          type: string
+          description: Détail éventuel sur le traitement de la conformité
+          example: Tag enregistré comme non conforme
+      required:
+        - uid
+        - conforme
+        - processedAt
+
+  # ---------------------------------------------------------------------------
+  securitySchemes:
+    ReaderApiToken:
+      type: apiKey
+      in: header
+      name: x-api-token
+      description: Jeton API généré lors de l'enregistrement d'un lecteur RFID

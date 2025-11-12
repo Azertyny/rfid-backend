@@ -1,0 +1,130 @@
+@startuml
+
+' ===============================
+' CONFIGURATION VISUELLE
+' ===============================
+hide circle
+'skinparam linetype ortho
+skinparam classAttributeIconSize 0
+
+' ===============================
+' ENTITÉS PRINCIPALES
+' ===============================
+
+entity "Utilisateur" as utilisateur {
+  *id : UUID (PK)
+  --
+  nom : string(50)
+  prenom : string(50)
+  email : string(100) <<UNIQUE>>
+  mot_de_passe : string(255)
+  role : enum('ADMIN','CHEF_EQUIPE','OPERATEUR')
+  date_creation : timestamp
+}
+
+entity "Cueilleur" as cueilleur {
+  *id : UUID (PK)
+  --
+  nom : string(50)
+  prenom : string(50)
+  commentaire : string(280)
+  date_creation : timestamp
+  actif : boolean
+}
+
+entity "Activité" as activite {
+  *id : UUID (PK)
+  --
+  libelle : string(50)
+  date_creation : timestamp
+  actif : boolean
+}
+
+entity "Tag" as tag {
+  *id : UUID (PK)
+  --
+  numero_tag : string(50) <<UNIQUE>>
+  etat : enum('IDLE','EN_ATTENTE','COMPTE','TERMINE')
+  conforme : boolean
+  date_enregistrement : timestamp
+  date_comptage : timestamp (nullable)
+}
+
+entity "Affectation" as affectation {
+  *id : UUID (PK)
+  --
+  tag_id : UUID (FK -> Tag)
+  cueilleur_id : UUID (FK -> Cueilleur)
+  activite_id : UUID (FK -> Activité)
+  date_affectation : date
+  statut_comptage : enum('EN_ATTENTE','COMPTE','NON_COMPTE')
+  date_comptage : timestamp (nullable)
+}
+
+entity "Enregistrement" as enregistrement {
+  *id : UUID (PK)
+  --
+  tag_id : UUID (FK -> Tag)
+  cueilleur_id : UUID (FK -> Cueilleur)
+  activite_id : UUID (FK -> Activité)
+  lecteur_id : UUID (FK -> Lecteur)
+  conforme : boolean
+  commentaire : text (nullable)
+  date_enregistrement : timestamp
+}
+
+entity "Journal" as journal {
+  *id : UUID (PK)
+  --
+  utilisateur_id : UUID (FK -> Utilisateur)
+  action : string(100)
+  entite : string(50)
+  entite_id : UUID
+  date_action : timestamp
+}
+
+entity "Lecteur" as lecteur {
+  *id : UUID (PK)
+  --
+  nom : string(50)
+  type : enum('FIXE','MOBILE')
+  localisation : string(100)
+  statut : enum('ACTIF','HORS_LIGNE','MAINTENANCE')
+  derniere_connexion : timestamp
+  utilisateur_id : UUID (FK -> Utilisateur, nullable)
+}
+
+
+' ===============================
+' RELATIONS & CARDINALITÉS
+' ===============================
+
+utilisateur ||--o{ journal : "effectue"
+cueilleur ||--o{ affectation : "participe à"
+activite ||--o{ affectation : "contient"
+tag ||--o{ affectation : "est affecté"
+tag ||--o{ enregistrement : "est enregistré dans"
+cueilleur ||--o{ enregistrement : "réalisé par"
+activite ||--o{ enregistrement : "lié à"
+lecteur ||--o{ enregistrement : "effectue la lecture"
+
+note top of affectation
+  Table d'association entre Cueilleur, Activité et Tag.
+  Permet de gérer les réaffectations de badges et les
+  statuts de comptage dans le temps.
+end note
+
+note right of tag
+  L'état du tag reflète son cycle de vie RFID :
+  - IDLE : non affecté
+  - EN_ATTENTE : affecté, non compté
+  - COMPTE : lu sur la ligne
+  - TERMINE : cycle terminé
+end note
+
+note left of enregistrement
+  Historique des conformités enregistrées.
+  Permet de tracer les comptages et anomalies.
+end note
+
+@enduml
