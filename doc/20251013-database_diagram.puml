@@ -1,0 +1,99 @@
+@startuml database_diagram
+title RFID Back - Database Diagram
+
+' ===============================
+' DATABASE DIAGRAM
+' ===============================
+hide circle
+'skinparam linetype ortho
+skinparam classAttributeIconSize 0
+
+' TODO: Look at new UUID postgres type for primary keys (therefore no need for creation or update timestamps)
+
+' ===============================
+' MAIN ENTITIES
+' ===============================
+
+entity "User" as user {
+  *id : UUID (PK)
+  --
+  lastname : string(50)
+  firstname : string(50)
+  email : string(100) <<UNIQUE>>
+  password : string(255)
+  role : enum('ADMIN','CHEF_EQUIPE','OPERATEUR')
+  creation_date : timestamp
+}
+
+entity "Picker" as picker {
+  *id : UUID (PK)
+  --
+  lastname : string(50)
+  firstname : string(50)
+  comment : string(280)
+  creation_date : timestamp
+}
+
+entity "Activity" as activity {
+  *id : UUID (PK)
+  --
+  label : string(50)
+  creation_date : timestamp
+  start_date: timestamp (nullable)
+  end_date: timestamp (nullable)
+  is_inprogress : boolean
+}
+
+entity "Tag" as tag {
+  *id : UUID (PK)
+  --
+  uid : string(50) <<UNIQUE>>
+  creation_date : timestamp
+}
+
+entity "Assignment" as assignment {
+  *id : UUID (PK)
+  --
+  tag_id : UUID (FK -> Tag)
+  picker_id : UUID (FK -> Picker)
+  activity_id : UUID (FK -> Activity)
+  creation_date : date
+}
+
+entity "Record" as record {
+  *id : UUID (PK)
+  --
+  assignment_id : UUID (FK -> Assignment)
+  conforme : boolean
+  creation_date : timestamp (nullable)
+  comment : text (nullable)
+}
+
+entity "Log" as log {
+  *id : UUID (PK)
+  --
+  user_id : UUID (FK -> User)
+  action : enum('CREATE','UPDATE','DELETE','LOGIN','LOGOUT')
+  date_action : timestamp
+}
+
+entity "Reader" as reader {
+  *id : UUID (PK)
+  --
+  uid : string(50) <<UNIQUE>>
+  api_token : string(255) <<UNIQUE>>
+  comment : string(280) (nullable)
+  creation_date : timestamp
+}
+  
+' ===============================
+' RELATIONS & CARDINALITÉS
+' ===============================
+user ||--o{ log
+picker ||--o{ assignment
+activity ||--o{ assignment
+tag ||--o{ assignment
+assignment ||--o{ record
+reader ||--o{ record
+
+@enduml

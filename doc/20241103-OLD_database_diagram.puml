@@ -4,15 +4,15 @@
 hide circle
 ' skinparam linetype ortho
 
-' Système
+' TODO: Look at new UUID postgres type for primary keys (therefore no need for creation or update timestamps)
+
 entity "Cueilleur" as cueilleur {
 id: number (pk)
 --
-uid: string (50) (UNIQUE)
-nom: string (50)
-prenom: string (50)
-commentaire: string (256) (Nullable)
-date_creation: timestamp
+lastname: string (50)
+firstname: string (50)
+comment: string (256) (Nullable)
+creation_date: timestamp
 activite_id: number (fk)
 }
 note left of cueilleur
