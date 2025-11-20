@@ -49,14 +49,154 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
 
   # -----------------------------------------------------------------------------------------------
+  # Picker section
+  # -----------------------------------------------------------------------------------------------
+  /pickers:
+    get:
+      summary: List pickers with pagination
+      description: |
+        Get the sorted and filtered list of pickers with pagination support
+      operationId: getPickers
+      tags: [Picker]
+      parameters:
+        - $ref: "#/components/parameters/PageNumber"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/PageSort"
+      responses:
+        "200":
+          description: Pickers page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PickersPage"
+        "4XX": { $ref: "#/components/responses/InvalidRequest" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    post:
+      summary: Create a picker
+      description: Create a new picker
+      operationId: createPicker
+      tags: [Picker]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePicker"
+      responses:
+        "201":
+          description: Created picker
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Picker"
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "409": { $ref: "#/components/responses/AlreadyExist" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /pickers/{pickerId}:
+    parameters:
+      - in: path
+        name: pickerId
+        required: true
+        description: Identifiant du cueilleur
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: Get picker detail
+      description: Get detailed information about a specific picker
+      operationId: getPicker
+      tags: [Picker]
+      responses:
+        "200":
+          description: Cueilleur
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Picker"
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    put:
+      summary: Update picker
+      operationId: updatePicker
+      tags: [Picker]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePicker"
+      responses:
+        "200":
+          description: Cueilleur mis à jour
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Picker"
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/AlreadyExist" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    delete:
+      summary: Delete picker
+      operationId: deletePicker
+      tags: [Picker]
+      responses:
+        "204":
+          description: Cueilleur supprimé
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/AlreadyExist" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  # -----------------------------------------------------------------------------------------------
   # Tag section
   # -----------------------------------------------------------------------------------------------
+  /tags/registerAll:
+    post:
+      summary: Register a list of tags
+      description: >
+        Endpoint called by an RFID reader to register all scanned tags in the system during tag assignment or management.
+      operationId: registerAllTags
+      tags: [Tag]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                uids:
+                  type: array
+                  description: |
+                    Unique IDs of scanned tags
+                  items:
+                    type: string
+                    example: E2000017221101891400A23G
+              required:
+                - uids
+      responses:
+        "200":
+          description: |
+            All scanned tags have been registered in the system
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  registeredCount:
+                    type: integer
+                    description: |
+                      Tags registered in the system
+                    example: 42
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
   /tags/scan:
     post:
       summary: Scan a tag and report its compliance state
       description: >
-        Endpoint appelé par un lecteur RFID pour signaler si un tag scanné est conforme.
-        Accessible uniquement avec le jeton API généré lors de l'enregistrement du lecteur.
+        Endpoint called by an RFID reader to report whether a scanned tag is compliant.
+        Accessible only with the API token generated during reader registration.
       operationId: scanTag
       tags: [Tag]
       security:
@@ -69,7 +209,8 @@ paths:
               $ref: "#/components/schemas/ScanTagRequest"
       responses:
         "200":
-          description: Résultat du scan du tag
+          description: |
+            Tag scanned successfully
           content:
             application/json:
               schema:
@@ -77,6 +218,7 @@ paths:
         "400": { $ref: "#/components/responses/InvalidRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "500": { $ref: "#/components/responses/InternalError" }
+
 # ---------------------------------------------------------------------------
 # COMMON DEFINITONS
 # ---------------------------------------------------------------------------
@@ -105,16 +247,45 @@ components:
       description: Jeton API manquant ou invalide
 
   # ---------------------------------------------------------------------------
+  parameters:
+    PageNumber:
+      name: page
+      in: query
+      description: Page number to retrieve (0-based)
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+    PageSize:
+      name: size
+      in: query
+      description: Elements per page
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    PageSort:
+      name: sort
+      in: query
+      description: |
+        Filtering and sorting criteria. Format: `field1,asc|desc`.
+        example: : `lastname,asc`.
+      schema:
+        type: string
+      example: lastname,asc
+
+  # ---------------------------------------------------------------------------
   schemas:
     CreateReader:
       type: object
       properties:
-        name:
+        uid:
           type: string
-          description: Nom du lecteur
+          description: Reader uid
           example: Reader 1
       required:
-        - name
+        - uid
 
     Reader:
       allOf:
@@ -123,17 +294,17 @@ components:
           properties:
             apitoken:
               type: string
-              description: Jeton API du lecteur
+              description: API token used by the reader to authenticate requests
               example: abcd1234efgh5678ijkl9012mnop3456
             creationDate:
               type: string
               format: date-time
-              description: Date de création du lecteur
+              description: Reader creation date
               example: "2024-01-01T12:00:00Z"
             updateDate:
               type: string
               format: date-time
-              description: Date de la dernière mise à jour du lecteur
+              description: Last update date of the reader
               example: "2024-01-02T12:00:00Z"
           required:
             - apitoken
@@ -148,44 +319,130 @@ components:
       required:
         - readers
 
+    CreatePicker:
+      type: object
+      properties:
+        lastname:
+          type: string
+          description: Picker last name
+          example: Dupont
+          maxLength: 50
+        firstname:
+          type: string
+          description: Picker first name
+          example: Alice
+          maxLength: 50
+        comment:
+          type: string
+          description: Additional comment about the picker
+          example: Available only on weekends
+          maxLength: 280
+      required:
+        - lastname
+        - firstname
+
+    UpdatePicker:
+      allOf:
+        - $ref: "#/components/schemas/CreatePicker"
+
+    Picker:
+      allOf:
+        - $ref: "#/components/schemas/CreatePicker"
+        - type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+              description: Picker unique identifier
+            creationDate:
+              type: string
+              format: date-time
+              description: Picker creation date
+              example: "2024-01-10T15:00:00Z"
+          required:
+            - id
+            - creationDate
+
+    PageMetadata:
+      type: object
+      properties:
+        page:
+          type: integer
+          description: Current page number
+        size:
+          type: integer
+          description: Page size
+        totalElements:
+          type: integer
+          description: Total number of elements
+        totalPages:
+          type: integer
+          description: Total number of pages
+        hasNext:
+          type: boolean
+          description: Tell if a next page exists
+        hasPrevious:
+          type: boolean
+          description: Tell if a previous page exists
+      required:
+        - page
+        - size
+        - totalElements
+        - totalPages
+        - hasNext
+        - hasPrevious
+
+    PickersPage:
+      type: object
+      properties:
+        content:
+          type: array
+          items:
+            $ref: "#/components/schemas/Picker"
+        metadata:
+          $ref: "#/components/schemas/PageMetadata"
+      required:
+        - content
+        - metadata
+
     ScanTagRequest:
       type: object
       properties:
         uid:
           type: string
-          description: Identifiant unique du tag scanné
+          description: Unique identifier of the scanned tag
           example: E2000017221101891400A23G
-        conforme:
+        isCompliant:
           type: boolean
-          description: Indique si le tag est conforme selon la lecture
+          description: Tells whether the scanned tag is compliant
           example: false
       required:
         - uid
-        - conforme
+        - isCompliant
 
     ScanTagResponse:
       type: object
       properties:
         uid:
           type: string
-          description: Identifiant unique du tag scanné
+          description: Unique identifier of the scanned tag
           example: E2000017221101891400A23G
-        conforme:
+        isCompliant:
           type: boolean
-          description: Etat de conformité enregistré pour ce tag
+          description: Tells whether the scanned tag is compliant
           example: false
         processedAt:
           type: string
           format: date-time
-          description: Date de prise en compte du scan
+          description: Scan processing date and time
           example: "2024-01-15T09:30:00Z"
         message:
           type: string
-          description: Détail éventuel sur le traitement de la conformité
-          example: Tag enregistré comme non conforme
+          description: Compliance processing message
+          example: Tag marked as non-compliant due to missing validation
       required:
         - uid
-        - conforme
+        - isCompliant
         - processedAt
 
   # ---------------------------------------------------------------------------
@@ -194,4 +451,4 @@ components:
       type: apiKey
       in: header
       name: x-api-token
-      description: Jeton API généré lors de l'enregistrement d'un lecteur RFID
+      description: API token assigned to the reader during its registration

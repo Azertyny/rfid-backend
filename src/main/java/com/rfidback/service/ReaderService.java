@@ -22,10 +22,10 @@ public class ReaderService {
         // Here you would add logic to save the reader to a database
         // For demonstration, we will just create a Reader object and return it
 
-        ReaderEntity readerEntity = ReaderEntity.builder().name(createReader.getName()).build();
+        ReaderEntity readerEntity = ReaderEntity.builder().name(createReader.getUid()).build();
         ReaderEntity readerEntitySaved = readerRepository.save(readerEntity);
         Reader reader = new Reader();
-        reader.setName(readerEntitySaved.getName());
+        reader.setUid(readerEntitySaved.getName());
         reader.setApitoken(readerEntitySaved.getApitoken());
         return reader;
     }
@@ -35,7 +35,7 @@ public class ReaderService {
         ArrayList<Reader> readerArrayList = new ArrayList<>();
         for (ReaderEntity readerEntity : readerRepository.findAll()) {
             Reader reader = new Reader();
-            reader.setName(readerEntity.getName());
+            reader.setUid(readerEntity.getName());
             reader.setApitoken(readerEntity.getApitoken());
             reader.setCreationDate(Optional.of(readerEntity.getCreationDate()));
             reader.setUpdateDate(Optional.of(readerEntity.getUpdateDate()));

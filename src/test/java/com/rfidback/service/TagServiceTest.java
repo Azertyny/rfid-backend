@@ -11,6 +11,7 @@ import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+
 import com.rfidback.entity.ReaderEntity;
 import com.rfidback.entity.TagEntity;
 import com.rfidback.generated.model.ScanTagRequest;
@@ -39,19 +40,19 @@ class TagServiceTest {
             return entity;
         });
 
-        ScanTagRequest request = new ScanTagRequest().uid("E2000017221101891400A23G").conforme(false);
+        ScanTagRequest request = new ScanTagRequest().uid("E2000017221101891400A23G").isCompliant(false);
 
         ScanTagResponse response = tagService.registerScan(reader, request);
 
         assertEquals(request.getUid(), response.getUid());
-        assertEquals(request.getConforme(), response.getConforme());
+        assertEquals(request.getIsCompliant(), response.getIsCompliant());
         assertEquals(OffsetDateTime.parse("2024-01-15T09:30:00Z"), response.getProcessedAt());
         assertEquals(Optional.of("Tag enregistré comme non conforme"), response.getMessage());
     }
 
     @Test
     void registerScan_withoutReaderFailsFast() {
-        ScanTagRequest request = new ScanTagRequest().uid("E2000017221101891400A23G").conforme(true);
+        ScanTagRequest request = new ScanTagRequest().uid("E2000017221101891400A23G").isCompliant(true);
         assertThrows(IllegalArgumentException.class, () -> tagService.registerScan(null, request));
     }
 }
