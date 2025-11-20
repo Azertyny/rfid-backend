@@ -24,8 +24,8 @@ public class TagService {
 
         TagEntity tagEntity = TagEntity.builder()
                 .uid(scanTagRequest.getUid())
-                .conforme(Boolean.TRUE.equals(scanTagRequest.getConforme()))
-                .message(buildMessage(scanTagRequest.getConforme()))
+                .conforme(Boolean.TRUE.equals(scanTagRequest.getIsCompliant()))
+                .message(buildMessage(scanTagRequest.getIsCompliant()))
                 .reader(reader)
                 .build();
 
@@ -33,7 +33,7 @@ public class TagService {
 
         ScanTagResponse response = new ScanTagResponse();
         response.setUid(saved.getUid());
-        response.setConforme(saved.isConforme());
+        response.setIsCompliant(saved.isConforme());
         response.setProcessedAt(saved.getProcessedAt());
         response.setMessage(Optional.ofNullable(saved.getMessage()));
         return response;
