@@ -39,5 +39,5 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ OWNER_LC }}/rfid-backend:latest
-            ghcr.io/${{ OWNER_LC }}/rfid)backend:${{ github.sha }}
+            ghcr.io/${{ env.OWNER_LC }}/rfid-backend:latest
+            ghcr.io/${{ env.OWNER_LC }}/rfid-backend:${{ github.sha }}
