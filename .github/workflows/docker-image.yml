@@ -13,6 +13,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      - name: set lower case owner name
+        run: |
+          echo "OWNER_LC=${OWNER,,}" >>${GITHUB_ENV}
+        env:
+          OWNER: "${{ github.repository_owner }}"
       - name: Checkout
         uses: actions/checkout@v4
       - name: Set up JDK
@@ -34,5 +39,5 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/rfid_backend:latest
-            ghcr.io/${{ github.repository_owner }}/rfid_backend:${{ github.sha }}
+            ghcr.io/${{ OWNER_LC }}/rfid-backend:latest
+            ghcr.io/${{ OWNER_LC }}/rfid)backend:${{ github.sha }}
