@@ -7,6 +7,8 @@ info:
 servers:
   - url: http://localhost:8080/api
     description: Serveur local de développement
+  - url: https://api.apolog.fr/api
+    description: Serveur de production
 
 # -----------------------------------------------------------------------------------------------
 # Endpoints section

@@ -11,8 +11,8 @@ spring:
   datasource:
     url: ${DB_URL:jdbc:h2:file:./data/rfidbackdb;DB_CLOSE_DELAY=-1}
     driver-class-name: org.h2.Driver
-    username: ${DB_USERNAME}
-    password: ${DB_PASSWORD}
+    username: ${DB_USERNAME:sa}
+    password: ${DB_PASSWORD:password}
   jpa:
     hibernate:
       ddl-auto: update # crée/maj les tables à la volée
