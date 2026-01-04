@@ -2,7 +2,7 @@ name: Build and push Docker image
 
 on:
   push:
-    branches: ["feature/mep_vps"]
+    branches: ["main"]
   workflow_dispatch:
 
 permissions:
