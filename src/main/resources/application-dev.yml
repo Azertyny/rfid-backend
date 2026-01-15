@@ -1,0 +1,26 @@
+server:
+  port: 8080
+
+app:
+  cors:
+    allowed-origins: ${APP_CORS_ALLOWED_ORIGINS:*}
+  security:
+    allow-h2-console: true
+
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:h2:file:./data/rfidbackdb;DB_CLOSE_DELAY=-1}
+    driver-class-name: org.h2.Driver
+    username: ${DB_USERNAME:sa}
+    password: ${DB_PASSWORD:password}
+  jpa:
+    hibernate:
+      ddl-auto: update # crée/maj les tables à la volée
+    show-sql: true # affiche les requêtes SQL
+    properties:
+      hibernate:
+        format_sql: true
+  h2:
+    console:
+      enabled: true
+      path: /h2-console

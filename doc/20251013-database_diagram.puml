@@ -34,16 +34,6 @@ entity "Picker" as picker {
   creation_date : timestamp
 }
 
-entity "Activity" as activity {
-  *id : UUID (PK)
-  --
-  label : string(50)
-  creation_date : timestamp
-  start_date: timestamp (nullable)
-  end_date: timestamp (nullable)
-  is_inprogress : boolean
-}
-
 entity "Tag" as tag {
   *id : UUID (PK)
   --
@@ -51,20 +41,21 @@ entity "Tag" as tag {
   creation_date : timestamp
 }
 
-entity "Assignment" as assignment {
+entity "Bucket" as bucket {
   *id : UUID (PK)
   --
-  tag_id : UUID (FK -> Tag)
-  picker_id : UUID (FK -> Picker)
-  activity_id : UUID (FK -> Activity)
+  tag : string
+  picker_id : UUID (FK -> Picker) (nullable)
+  seau_id : integer
   creation_date : date
 }
 
 entity "Record" as record {
   *id : UUID (PK)
   --
-  assignment_id : UUID (FK -> Assignment)
-  conforme : boolean
+  picker_id : UUID (FK -> Picker) (nullable)
+  tag_id: UUID (FK -> Tag)
+  conforme : Enum ('OUI','NON','CHEAT')
   creation_date : timestamp (nullable)
   comment : text (nullable)
 }
@@ -85,15 +76,16 @@ entity "Reader" as reader {
   comment : string(280) (nullable)
   creation_date : timestamp
 }
-  
+
 ' ===============================
 ' RELATIONS & CARDINALITÉS
 ' ===============================
 user ||--o{ log
-picker ||--o{ assignment
-activity ||--o{ assignment
-tag ||--o{ assignment
-assignment ||--o{ record
+picker ||--o{ bucket
+' activity ||--o{ assignment
+tag ||--o{ bucket
+picker ||--o{ record
 reader ||--o{ record
+tag }o--|| record
 
 @enduml

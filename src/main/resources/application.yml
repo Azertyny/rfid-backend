@@ -1,0 +1,5 @@
+spring:
+  application:
+    name: rfid-back
+  profiles:
+    active: dev

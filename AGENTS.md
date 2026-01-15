@@ -9,6 +9,7 @@ This Agents.md file provides comprehensive guidance for OpenAI Codex and other A
     - `/java/com/rfidback`: Source code of the application
     - `/ressources`: configuration files
       - `/openapi`: source file to generate code usefull for the api
+      - `application.yml`, `application-dev.yml` and `application-prod.yml`: application configuration files
   - `/test`: Test files that OpenAI Codex should maintain and extend
 - `/target`: OpenAI Codex should not edit these but uses and implements these for application source code
 - `/data`: Database files
