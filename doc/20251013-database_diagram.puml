@@ -14,16 +14,6 @@ skinparam classAttributeIconSize 0
 ' MAIN ENTITIES
 ' ===============================
 
-entity "User" as user {
-  *id : UUID (PK)
-  --
-  lastname : string(50)
-  firstname : string(50)
-  email : string(100) <<UNIQUE>>
-  password : string(255)
-  role : enum('ADMIN','CHEF_EQUIPE','OPERATEUR')
-  creation_date : timestamp
-}
 
 entity "Picker" as picker {
   *id : UUID (PK)
@@ -37,6 +27,7 @@ entity "Picker" as picker {
 entity "Tag" as tag {
   *id : UUID (PK)
   --
+  bucket_id : UUID (FK -> Bucket) (nullable)
   uid : string(50) <<UNIQUE>>
   creation_date : timestamp
 }
@@ -44,9 +35,8 @@ entity "Tag" as tag {
 entity "Bucket" as bucket {
   *id : UUID (PK)
   --
-  tag : string
   picker_id : UUID (FK -> Picker) (nullable)
-  seau_id : integer
+  number: integer <<UNIQUE>>
   creation_date : date
 }
 
@@ -55,17 +45,10 @@ entity "Record" as record {
   --
   picker_id : UUID (FK -> Picker) (nullable)
   tag_id: UUID (FK -> Tag)
-  conforme : Enum ('OUI','NON','CHEAT')
+  reader_id: UUID (FK -> Reader)
+  conformity : ENUM('OK','NOK','CHEAT')
   creation_date : timestamp (nullable)
   comment : text (nullable)
-}
-
-entity "Log" as log {
-  *id : UUID (PK)
-  --
-  user_id : UUID (FK -> User)
-  action : enum('CREATE','UPDATE','DELETE','LOGIN','LOGOUT')
-  date_action : timestamp
 }
 
 entity "Reader" as reader {
@@ -80,12 +63,10 @@ entity "Reader" as reader {
 ' ===============================
 ' RELATIONS & CARDINALITÉS
 ' ===============================
-user ||--o{ log
-picker ||--o{ bucket
-' activity ||--o{ assignment
-tag ||--o{ bucket
+picker ||--o| bucket
+tag }|--|| bucket
 picker ||--o{ record
 reader ||--o{ record
-tag }o--|| record
+tag ||--o{ record
 
 @enduml
