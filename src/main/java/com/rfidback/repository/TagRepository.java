@@ -14,4 +14,6 @@ public interface TagRepository extends JpaRepository<TagEntity, UUID> {
     Optional<TagEntity> findByUid(String uid);
 
     List<TagEntity> findAllByBucket(BucketEntity bucket);
+
+    List<TagEntity> findAllByBucketIn(List<BucketEntity> buckets);
 }
