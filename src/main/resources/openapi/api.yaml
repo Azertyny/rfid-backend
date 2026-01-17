@@ -153,44 +153,36 @@ paths:
   # -----------------------------------------------------------------------------------------------
   # Tag section
   # -----------------------------------------------------------------------------------------------
-  /tags/registerAll:
+  /tags/buckets/{bucketNumber}:
     post:
-      summary: Register a list of tags
+      summary: Register tags for a bucket
       description: >
-        Endpoint called by an RFID reader to register all scanned tags in the system during tag assignment or management.
-      operationId: registerAllTags
+        Register a list of tags for a specific bucket number. Existing associations
+        with this bucket are cleared before registering the provided tags.
+      operationId: registerTagsForBucket
       tags: [Tag]
+      parameters:
+        - in: path
+          name: bucketNumber
+          required: true
+          description: Bucket number to associate with the provided tags
+          schema:
+            type: integer
+            minimum: 1
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                uids:
-                  type: array
-                  description: |
-                    Unique IDs of scanned tags
-                  items:
-                    type: string
-                    example: E2000017221101891400A23G
-              required:
-                - uids
+              $ref: "#/components/schemas/RegisterTagsRequest"
       responses:
         "200":
-          description: |
-            All scanned tags have been registered in the system
+          description: Tags registered for the bucket
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  registeredCount:
-                    type: integer
-                    description: |
-                      Tags registered in the system
-                    example: 42
-        "401": { $ref: "#/components/responses/Unauthorized" }
+                $ref: "#/components/schemas/RegisterTagsResponse"
+        "400": { $ref: "#/components/responses/InvalidRequest" }
         "500": { $ref: "#/components/responses/InternalError" }
 
   /tags/scan:
@@ -219,6 +211,24 @@ paths:
                 $ref: "#/components/schemas/ScanTagResponse"
         "400": { $ref: "#/components/responses/InvalidRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  # -----------------------------------------------------------------------------------------------
+  # Bucket section
+  # -----------------------------------------------------------------------------------------------
+  /buckets:
+    get:
+      summary: List buckets with their tags
+      description: Retrieve all buckets with associated tags, if any.
+      operationId: listBuckets
+      tags: [Bucket]
+      responses:
+        "200":
+          description: Buckets list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BucketsList"
         "500": { $ref: "#/components/responses/InternalError" }
 
 # ---------------------------------------------------------------------------
@@ -446,6 +456,73 @@ components:
         - uid
         - isCompliant
         - processedAt
+
+    RegisterTagsRequest:
+      type: object
+      properties:
+        uids:
+          type: array
+          description: Unique IDs of scanned tags
+          minItems: 1
+          items:
+            type: string
+            minLength: 1
+            example: E2000017221101891400A23G
+      required:
+        - uids
+
+    RegisterTagsResponse:
+      type: object
+      properties:
+        bucketNumber:
+          type: integer
+          description: Bucket number associated with the registered tags
+          example: 12
+        registeredCount:
+          type: integer
+          description: Number of tags now associated with the bucket
+          example: 42
+      required:
+        - bucketNumber
+        - registeredCount
+
+    BucketWithTags:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Bucket unique identifier
+        number:
+          type: integer
+          description: Bucket number
+          example: 12
+        creationDate:
+          type: string
+          format: date-time
+          description: Bucket creation date
+          example: "2024-01-20T08:00:00Z"
+        tags:
+          type: array
+          description: Tags associated with this bucket
+          items:
+            type: string
+            example: E2000017221101891400A23G
+      required:
+        - id
+        - number
+        - creationDate
+        - tags
+
+    BucketsList:
+      type: object
+      properties:
+        buckets:
+          type: array
+          items:
+            $ref: "#/components/schemas/BucketWithTags"
+      required:
+        - buckets
 
   # ---------------------------------------------------------------------------
   securitySchemes:

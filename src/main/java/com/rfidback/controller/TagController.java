@@ -9,6 +9,8 @@ import org.springframework.stereotype.Service;
 
 import com.rfidback.entity.ReaderEntity;
 import com.rfidback.generated.api.TagApiDelegate;
+import com.rfidback.generated.model.RegisterTagsRequest;
+import com.rfidback.generated.model.RegisterTagsResponse;
 import com.rfidback.generated.model.ScanTagRequest;
 import com.rfidback.generated.model.ScanTagResponse;
 import com.rfidback.security.ReaderAuthentication;
@@ -27,6 +29,12 @@ public class TagController implements TagApiDelegate {
         ReaderEntity reader = resolveAuthenticatedReader()
                 .orElseThrow(() -> new IllegalStateException("Authenticated reader not found in context"));
         return ResponseEntity.ok(tagService.registerScan(reader, scanTagRequest));
+    }
+
+    @Override
+    public ResponseEntity<RegisterTagsResponse> registerTagsForBucket(Integer bucketNumber,
+            RegisterTagsRequest registerTagsRequest) {
+        return ResponseEntity.ok(tagService.registerTagsForBucket(bucketNumber, registerTagsRequest));
     }
 
     private Optional<ReaderEntity> resolveAuthenticatedReader() {

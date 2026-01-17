@@ -21,24 +21,24 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 @Entity
-@Table(name = "tag")
+@Table(name = "bucket")
 @Getter
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class TagEntity {
+public class BucketEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    @Column(nullable = false, unique = true, length = 50)
-    private String uid;
-
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "bucket_id")
-    private BucketEntity bucket;
+    @JoinColumn(name = "picker_id")
+    private PickerEntity picker;
+
+    @Column(nullable = false, unique = true)
+    private Integer number;
 
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
