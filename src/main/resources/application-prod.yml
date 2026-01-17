@@ -16,7 +16,7 @@ spring:
     password: ${DB_PASSWORD}
   jpa:
     hibernate:
-      ddl-auto: update # ou validate en prod
+      ddl-auto: validate
     show-sql: false
     properties:
       hibernate:

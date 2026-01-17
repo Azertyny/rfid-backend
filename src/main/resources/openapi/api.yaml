@@ -213,6 +213,24 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "500": { $ref: "#/components/responses/InternalError" }
 
+  # -----------------------------------------------------------------------------------------------
+  # Bucket section
+  # -----------------------------------------------------------------------------------------------
+  /buckets:
+    get:
+      summary: List buckets with their tags
+      description: Retrieve all buckets with associated tags, if any.
+      operationId: listBuckets
+      tags: [Bucket]
+      responses:
+        "200":
+          description: Buckets list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BucketsList"
+        "500": { $ref: "#/components/responses/InternalError" }
+
 # ---------------------------------------------------------------------------
 # COMMON DEFINITONS
 # ---------------------------------------------------------------------------
@@ -467,6 +485,44 @@ components:
       required:
         - bucketNumber
         - registeredCount
+
+    BucketWithTags:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Bucket unique identifier
+        number:
+          type: integer
+          description: Bucket number
+          example: 12
+        creationDate:
+          type: string
+          format: date-time
+          description: Bucket creation date
+          example: "2024-01-20T08:00:00Z"
+        tags:
+          type: array
+          description: Tags associated with this bucket
+          items:
+            type: string
+            example: E2000017221101891400A23G
+      required:
+        - id
+        - number
+        - creationDate
+        - tags
+
+    BucketsList:
+      type: object
+      properties:
+        buckets:
+          type: array
+          items:
+            $ref: "#/components/schemas/BucketWithTags"
+      required:
+        - buckets
 
   # ---------------------------------------------------------------------------
   securitySchemes:
