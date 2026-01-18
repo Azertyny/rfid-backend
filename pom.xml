@@ -153,6 +153,7 @@
                               <useResponseEntity>true</useResponseEntity>
                               <hideGenerationTimestamp>true</hideGenerationTimestamp>
                               <unhandledException>true</unhandledException>
+                              <openApiNullable>false</openApiNullable>
                               <!-- Use Jakarta EE packages (matches Spring Boot 3 / Java 21) -->
                               <useJakartaEe>true</useJakartaEe>
                           </configOptions>

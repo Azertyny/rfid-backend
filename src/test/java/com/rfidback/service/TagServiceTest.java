@@ -61,7 +61,7 @@ class TagServiceTest {
         assertEquals(request.getUid(), response.getUid());
         assertEquals(request.getIsCompliant(), response.getIsCompliant());
         assertEquals(OffsetDateTime.parse("2024-01-15T09:30:00Z"), response.getProcessedAt());
-        assertEquals(Optional.of("Tag enregistré comme non conforme"), response.getMessage());
+        assertEquals("Tag enregistré comme non conforme", response.getMessage());
     }
 
     @Test

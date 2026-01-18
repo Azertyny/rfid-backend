@@ -1,7 +1,6 @@
 package com.rfidback.service;
 
 import java.util.ArrayList;
-import java.util.Optional;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -37,8 +36,8 @@ public class ReaderService {
             Reader reader = new Reader();
             reader.setUid(readerEntity.getName());
             reader.setApitoken(readerEntity.getApitoken());
-            reader.setCreationDate(Optional.of(readerEntity.getCreationDate()));
-            reader.setUpdateDate(Optional.of(readerEntity.getUpdateDate()));
+            reader.setCreationDate(readerEntity.getCreationDate());
+            reader.setUpdateDate(readerEntity.getUpdateDate());
             readerArrayList.add(reader);
         }
         readersList.setReaders(readerArrayList);
