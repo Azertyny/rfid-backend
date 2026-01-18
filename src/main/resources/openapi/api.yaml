@@ -218,8 +218,8 @@ paths:
   # -----------------------------------------------------------------------------------------------
   /buckets:
     get:
-      summary: List buckets with their tags
-      description: Retrieve all buckets with associated tags, if any.
+      summary: List buckets with their tags and picker
+      description: Retrieve all buckets with associated tags and assigned picker, if any.
       operationId: listBuckets
       tags: [Bucket]
       responses:
@@ -229,6 +229,57 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BucketsList"
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /buckets/{bucketId}:
+    parameters:
+      - in: path
+        name: bucketId
+        required: true
+        description: Identifiant du seau
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: Get bucket detail with picker
+      description: Retrieve a bucket with its tags and assigned picker, if any.
+      operationId: getBucket
+      tags: [Bucket]
+      responses:
+        "200":
+          description: Bucket detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BucketWithTagsAndPicker"
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /buckets/{bucketId}/picker:
+    parameters:
+      - in: path
+        name: bucketId
+        required: true
+        description: Identifiant du seau
+        schema:
+          type: string
+          format: uuid
+    put:
+      summary: Assign a bucket to a picker
+      description: Assign an existing bucket to an existing picker.
+      operationId: assignBucketToPicker
+      tags: [Bucket]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssignBucketToPickerRequest"
+      responses:
+        "204":
+          description: Seau affecte au cueilleur
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/InternalError" }
 
 # ---------------------------------------------------------------------------
@@ -370,7 +421,10 @@ components:
               type: string
               format: date-time
               description: Picker creation date
-              example: "2024-01-10T15:00:00Z"
+            bucketNumber:
+              type: integer
+              description: Bucket number currently assigned to the picker
+              example: 12
           required:
             - id
             - creationDate
@@ -486,6 +540,16 @@ components:
         - bucketNumber
         - registeredCount
 
+    AssignBucketToPickerRequest:
+      type: object
+      properties:
+        pickerId:
+          type: string
+          format: uuid
+          description: Identifiant du cueilleur
+      required:
+        - pickerId
+
     BucketWithTags:
       type: object
       properties:
@@ -501,7 +565,6 @@ components:
           type: string
           format: date-time
           description: Bucket creation date
-          example: "2024-01-20T08:00:00Z"
         tags:
           type: array
           description: Tags associated with this bucket
@@ -514,13 +577,24 @@ components:
         - creationDate
         - tags
 
+    BucketWithTagsAndPicker:
+      allOf:
+        - $ref: "#/components/schemas/BucketWithTags"
+        - type: object
+          properties:
+            picker:
+              allOf:
+                - $ref: "#/components/schemas/CreatePicker"
+              nullable: true
+              description: Picker currently assigned to the bucket
+
     BucketsList:
       type: object
       properties:
         buckets:
           type: array
           items:
-            $ref: "#/components/schemas/BucketWithTags"
+            $ref: "#/components/schemas/BucketWithTagsAndPicker"
       required:
         - buckets
 

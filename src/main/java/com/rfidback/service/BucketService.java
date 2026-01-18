@@ -8,12 +8,18 @@ import java.util.UUID;
 
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.rfidback.entity.BucketEntity;
+import com.rfidback.entity.PickerEntity;
 import com.rfidback.entity.TagEntity;
-import com.rfidback.generated.model.BucketWithTags;
+import com.rfidback.exception.BucketNotFoundException;
+import com.rfidback.exception.PickerNotFoundException;
+import com.rfidback.generated.model.BucketWithTagsAndPicker;
+import com.rfidback.generated.model.BucketWithTagsAndPickerAllOfPicker;
 import com.rfidback.generated.model.BucketsList;
 import com.rfidback.repository.BucketRepository;
+import com.rfidback.repository.PickerRepository;
 import com.rfidback.repository.TagRepository;
 
 import lombok.RequiredArgsConstructor;
@@ -24,6 +30,7 @@ public class BucketService {
 
     private final BucketRepository bucketRepository;
     private final TagRepository tagRepository;
+    private final PickerRepository pickerRepository;
 
     public BucketsList listBuckets() {
         List<BucketEntity> buckets = bucketRepository.findAll(Sort.by(Sort.Order.asc("number")));
@@ -40,18 +47,61 @@ public class BucketService {
             }
         }
 
-        List<BucketWithTags> bucketModels = new ArrayList<>(buckets.size());
+        List<BucketWithTagsAndPicker> bucketModels = new ArrayList<>(buckets.size());
         for (BucketEntity bucket : buckets) {
-            BucketWithTags model = new BucketWithTags();
+            BucketWithTagsAndPicker model = new BucketWithTagsAndPicker();
             model.setId(bucket.getId());
             model.setNumber(bucket.getNumber());
             model.setCreationDate(bucket.getCreationDate());
             model.setTags(tagsByBucket.getOrDefault(bucket.getId(), List.of()));
+            PickerEntity picker = bucket.getPicker();
+            if (picker != null) {
+                model.setPicker(toPickerModel(picker));
+            }
             bucketModels.add(model);
         }
 
         BucketsList response = new BucketsList();
         response.setBuckets(bucketModels);
         return response;
+    }
+
+    public BucketWithTagsAndPicker getBucket(UUID bucketId) {
+        BucketEntity bucket = bucketRepository.findById(bucketId)
+                .orElseThrow(() -> new BucketNotFoundException("Bucket %s not found".formatted(bucketId)));
+        List<TagEntity> tags = tagRepository.findAllByBucket(bucket);
+
+        BucketWithTagsAndPicker model = new BucketWithTagsAndPicker();
+        model.setId(bucket.getId());
+        model.setNumber(bucket.getNumber());
+        model.setCreationDate(bucket.getCreationDate());
+        model.setTags(tags.stream().map(TagEntity::getUid).toList());
+
+        PickerEntity picker = bucket.getPicker();
+        if (picker != null) {
+            model.setPicker(toPickerModel(picker));
+        } else {
+            model.setPicker(null);
+        }
+        return model;
+    }
+
+    @Transactional
+    public void assignBucketToPicker(UUID bucketId, UUID pickerId) {
+        BucketEntity bucket = bucketRepository.findById(bucketId)
+                .orElseThrow(() -> new BucketNotFoundException("Bucket %s not found".formatted(bucketId)));
+        PickerEntity picker = pickerRepository.findById(pickerId)
+                .orElseThrow(() -> new PickerNotFoundException("Picker %s not found".formatted(pickerId)));
+
+        bucket.setPicker(picker);
+        bucketRepository.save(bucket);
+    }
+
+    private BucketWithTagsAndPickerAllOfPicker toPickerModel(PickerEntity entity) {
+        BucketWithTagsAndPickerAllOfPicker picker = new BucketWithTagsAndPickerAllOfPicker();
+        picker.setLastname(entity.getLastname());
+        picker.setFirstname(entity.getFirstname());
+        picker.setComment(entity.getComment());
+        return picker;
     }
 }
