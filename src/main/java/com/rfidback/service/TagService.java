@@ -3,7 +3,6 @@ package com.rfidback.service;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Optional;
 import java.util.Set;
 
 import org.springframework.stereotype.Service;
@@ -56,7 +55,7 @@ public class TagService {
         response.setUid(tag.getUid());
         response.setIsCompliant(isCompliant);
         response.setProcessedAt(saved.getCreationDate());
-        response.setMessage(Optional.ofNullable(saved.getComment()));
+        response.setMessage(saved.getComment());
         return response;
     }
 

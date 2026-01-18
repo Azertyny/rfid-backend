@@ -1,8 +1,9 @@
 package com.rfidback.service;
 
 import java.util.List;
-import java.util.Optional;
+import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -11,6 +12,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import com.rfidback.entity.BucketEntity;
 import com.rfidback.entity.PickerEntity;
 import com.rfidback.exception.PickerAlreadyExistsException;
 import com.rfidback.exception.PickerNotFoundException;
@@ -19,6 +21,7 @@ import com.rfidback.generated.model.PageMetadata;
 import com.rfidback.generated.model.Picker;
 import com.rfidback.generated.model.PickersPage;
 import com.rfidback.generated.model.UpdatePicker;
+import com.rfidback.repository.BucketRepository;
 import com.rfidback.repository.PickerRepository;
 
 import lombok.RequiredArgsConstructor;
@@ -30,12 +33,27 @@ public class PickerService {
     private static final Sort DEFAULT_SORT = Sort.by(Sort.Order.asc("lastname"), Sort.Order.asc("firstname"));
 
     private final PickerRepository pickerRepository;
+    private final BucketRepository bucketRepository;
 
     public PickersPage listPickers(int page, int size) {
         Pageable pageable = PageRequest.of(page, size, DEFAULT_SORT);
         Page<PickerEntity> pickerPage = pickerRepository.findAll(pageable);
 
-        List<Picker> content = pickerPage.map(this::toPickerModel).getContent();
+        List<PickerEntity> pickerEntities = pickerPage.getContent();
+        Map<UUID, Integer> bucketNumberByPickerId = pickerEntities.isEmpty()
+                ? Map.of()
+                : bucketRepository.findAllByPickerIn(pickerEntities).stream()
+                        .filter(bucket -> bucket.getPicker() != null)
+                        .collect(Collectors.toMap(bucket -> bucket.getPicker().getId(), BucketEntity::getNumber));
+
+        List<Picker> content = pickerEntities.stream()
+                .map(entity -> {
+                    Picker picker = toPickerModel(entity);
+                    Integer bucketNumber = bucketNumberByPickerId.get(entity.getId());
+                    picker.setBucketNumber(bucketNumber);
+                    return picker;
+                })
+                .toList();
         PageMetadata metadata = new PageMetadata();
         metadata.setPage(pickerPage.getNumber());
         metadata.setSize(pickerPage.getSize());
@@ -65,7 +83,11 @@ public class PickerService {
     }
 
     public Picker getPicker(UUID pickerId) {
-        return toPickerModel(loadPicker(pickerId));
+        PickerEntity entity = loadPicker(pickerId);
+        Picker picker = toPickerModel(entity);
+        bucketRepository.findByPicker(entity)
+                .ifPresent(bucket -> picker.setBucketNumber(bucket.getNumber()));
+        return picker;
     }
 
     public Picker updatePicker(UUID pickerId, UpdatePicker updatePicker) {
@@ -108,18 +130,16 @@ public class PickerService {
         picker.setLastname(entity.getLastname());
         picker.setFirstname(entity.getFirstname());
         picker.setCreationDate(entity.getCreationDate());
-        picker.setComment(Optional.ofNullable(entity.getComment()));
+        picker.setComment(entity.getComment());
         return picker;
     }
 
-    private String extractComment(Optional<String> comment) {
+    private String extractComment(String comment) {
         if (comment == null) {
             return null;
         }
-        return comment
-                .map(String::trim)
-                .filter(StringUtils::hasText)
-                .orElse(null);
+        String trimmed = comment.trim();
+        return StringUtils.hasText(trimmed) ? trimmed : null;
     }
 
     private String sanitize(String value) {
