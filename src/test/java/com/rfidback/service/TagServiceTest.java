@@ -52,7 +52,7 @@ class TagServiceTest {
             entity.setId(tagId);
             return entity;
         });
-        when(recordRepository.save(any(RecordEntity.class))).thenAnswer(invocation -> {
+        when(recordRepository.saveAndFlush(any(RecordEntity.class))).thenAnswer(invocation -> {
             RecordEntity entity = invocation.getArgument(0);
             entity.setCreationDate(OffsetDateTime.parse("2024-01-15T09:30:00Z"));
             return entity;
@@ -81,7 +81,7 @@ class TagServiceTest {
         TagEntity tag = TagEntity.builder().uid("E2000017221101891400A23G").bucket(bucket).build();
 
         when(tagRepository.findByUid("E2000017221101891400A23G")).thenReturn(Optional.of(tag));
-        when(recordRepository.save(any(RecordEntity.class))).thenAnswer(invocation -> {
+        when(recordRepository.saveAndFlush(any(RecordEntity.class))).thenAnswer(invocation -> {
             RecordEntity entity = invocation.getArgument(0);
             entity.setCreationDate(OffsetDateTime.parse("2024-01-15T09:30:00Z"));
             return entity;
@@ -92,7 +92,7 @@ class TagServiceTest {
         tagService.registerScan(reader, request);
 
         ArgumentCaptor<RecordEntity> captor = ArgumentCaptor.forClass(RecordEntity.class);
-        verify(recordRepository).save(captor.capture());
+        verify(recordRepository).saveAndFlush(captor.capture());
         assertEquals(picker, captor.getValue().getPicker());
     }
 }
