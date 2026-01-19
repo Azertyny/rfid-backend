@@ -12,6 +12,7 @@ import org.springframework.util.StringUtils;
 
 import com.rfidback.entity.BucketEntity;
 import com.rfidback.entity.ConformityStatus;
+import com.rfidback.entity.PickerEntity;
 import com.rfidback.entity.ReaderEntity;
 import com.rfidback.entity.RecordEntity;
 import com.rfidback.entity.TagEntity;
@@ -33,6 +34,7 @@ public class TagService {
     private final RecordRepository recordRepository;
     private final BucketRepository bucketRepository;
 
+    @Transactional
     public ScanTagResponse registerScan(ReaderEntity reader, ScanTagRequest scanTagRequest) {
         Assert.notNull(reader, "Reader must not be null");
 
@@ -42,14 +44,15 @@ public class TagService {
                 .orElseGet(() -> tagRepository.save(TagEntity.builder().uid(uid).build()));
 
         boolean isCompliant = Boolean.TRUE.equals(scanTagRequest.getIsCompliant());
+        PickerEntity picker = tag.getBucket() != null ? tag.getBucket().getPicker() : null;
         RecordEntity recordEntity = RecordEntity.builder()
                 .tag(tag)
                 .reader(reader)
+                .picker(picker)
                 .conformity(isCompliant ? ConformityStatus.OK : ConformityStatus.NOK)
-                .comment(buildMessage(isCompliant))
                 .build();
 
-        RecordEntity saved = recordRepository.save(recordEntity);
+        RecordEntity saved = recordRepository.saveAndFlush(recordEntity);
 
         ScanTagResponse response = new ScanTagResponse();
         response.setUid(tag.getUid());
@@ -95,10 +98,6 @@ public class TagService {
         response.setBucketNumber(bucketNumber);
         response.setRegisteredCount(tagsToSave.size());
         return response;
-    }
-
-    private String buildMessage(boolean conforme) {
-        return conforme ? "Tag enregistré comme conforme" : "Tag enregistré comme non conforme";
     }
 
     private String sanitizeUid(String uid) {

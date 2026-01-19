@@ -3,6 +3,7 @@ package com.rfidback.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.OffsetDateTime;
@@ -11,8 +12,11 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
+import com.rfidback.entity.BucketEntity;
+import com.rfidback.entity.PickerEntity;
 import com.rfidback.entity.ReaderEntity;
 import com.rfidback.entity.RecordEntity;
 import com.rfidback.entity.TagEntity;
@@ -48,7 +52,7 @@ class TagServiceTest {
             entity.setId(tagId);
             return entity;
         });
-        when(recordRepository.save(any(RecordEntity.class))).thenAnswer(invocation -> {
+        when(recordRepository.saveAndFlush(any(RecordEntity.class))).thenAnswer(invocation -> {
             RecordEntity entity = invocation.getArgument(0);
             entity.setCreationDate(OffsetDateTime.parse("2024-01-15T09:30:00Z"));
             return entity;
@@ -61,12 +65,34 @@ class TagServiceTest {
         assertEquals(request.getUid(), response.getUid());
         assertEquals(request.getIsCompliant(), response.getIsCompliant());
         assertEquals(OffsetDateTime.parse("2024-01-15T09:30:00Z"), response.getProcessedAt());
-        assertEquals("Tag enregistré comme non conforme", response.getMessage());
     }
 
     @Test
     void registerScan_withoutReaderFailsFast() {
         ScanTagRequest request = new ScanTagRequest().uid("E2000017221101891400A23G").isCompliant(true);
         assertThrows(IllegalArgumentException.class, () -> tagService.registerScan(null, request));
+    }
+
+    @Test
+    void registerScan_setsPickerFromTagBucket() {
+        ReaderEntity reader = ReaderEntity.builder().id(1).apitoken("token").name("Reader").build();
+        PickerEntity picker = PickerEntity.builder().firstname("Jane").lastname("Doe").build();
+        BucketEntity bucket = BucketEntity.builder().number(12).picker(picker).build();
+        TagEntity tag = TagEntity.builder().uid("E2000017221101891400A23G").bucket(bucket).build();
+
+        when(tagRepository.findByUid("E2000017221101891400A23G")).thenReturn(Optional.of(tag));
+        when(recordRepository.saveAndFlush(any(RecordEntity.class))).thenAnswer(invocation -> {
+            RecordEntity entity = invocation.getArgument(0);
+            entity.setCreationDate(OffsetDateTime.parse("2024-01-15T09:30:00Z"));
+            return entity;
+        });
+
+        ScanTagRequest request = new ScanTagRequest().uid("E2000017221101891400A23G").isCompliant(true);
+
+        tagService.registerScan(reader, request);
+
+        ArgumentCaptor<RecordEntity> captor = ArgumentCaptor.forClass(RecordEntity.class);
+        verify(recordRepository).saveAndFlush(captor.capture());
+        assertEquals(picker, captor.getValue().getPicker());
     }
 }
