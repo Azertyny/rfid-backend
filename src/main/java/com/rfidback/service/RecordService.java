@@ -2,7 +2,6 @@ package com.rfidback.service;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,11 +26,11 @@ public class RecordService {
     private final ReaderRepository readerRepository;
 
     @Transactional(readOnly = true)
-    public RecordsList listLatestRecordsForReader(UUID readerId) {
-        readerRepository.findById(readerId)
-                .orElseThrow(() -> new ReaderNotFoundException("Reader %s not found".formatted(readerId)));
+    public RecordsList listLatestRecordsForReader(String readerUid) {
+        readerRepository.findByName(readerUid)
+                .orElseThrow(() -> new ReaderNotFoundException("Reader %s not found".formatted(readerUid)));
 
-        List<RecordEntity> records = recordRepository.findTop10ByReader_IdOrderByCreationDateDesc(readerId);
+        List<RecordEntity> records = recordRepository.findTop10ByReader_NameOrderByCreationDateDesc(readerUid);
         List<RecordSummary> recordModels = new ArrayList<>(records.size());
         for (RecordEntity record : records) {
             recordModels.add(toRecordSummary(record));

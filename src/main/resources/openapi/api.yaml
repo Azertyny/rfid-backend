@@ -219,17 +219,16 @@ paths:
   /records/readers/{readerId}:
     get:
       summary: List latest records for a reader
-      description: Retrieve the 10 most recent records for the specified reader.
+      description: Retrieve the 10 most recent records for the specified reader uid.
       operationId: listLatestRecordsForReader
       tags: [Record]
       parameters:
         - in: path
           name: readerId
           required: true
-          description: Reader identifier
+          description: Reader uid
           schema:
             type: string
-            format: uuid
       responses:
         "200":
           description: Latest records list

@@ -10,4 +10,6 @@ import com.rfidback.entity.ReaderEntity;
 public interface ReaderRepository extends JpaRepository<ReaderEntity, UUID> {
 
     Optional<ReaderEntity> findByApitoken(String apitoken);
+
+    Optional<ReaderEntity> findByName(String name);
 }
