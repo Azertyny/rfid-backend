@@ -11,7 +11,6 @@ import org.springframework.util.Assert;
 import org.springframework.util.StringUtils;
 
 import com.rfidback.entity.BucketEntity;
-import com.rfidback.entity.ConformityStatus;
 import com.rfidback.entity.PickerEntity;
 import com.rfidback.entity.ReaderEntity;
 import com.rfidback.entity.RecordEntity;
@@ -49,7 +48,7 @@ public class TagService {
                 .tag(tag)
                 .reader(reader)
                 .picker(picker)
-                .conformity(isCompliant ? ConformityStatus.OK : ConformityStatus.NOK)
+                .compliant(isCompliant)
                 .build();
 
         RecordEntity saved = recordRepository.saveAndFlush(recordEntity);

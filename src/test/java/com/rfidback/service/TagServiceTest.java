@@ -43,7 +43,7 @@ class TagServiceTest {
 
     @Test
     void registerScan_persistsTagAndReturnsResponse() {
-        ReaderEntity reader = ReaderEntity.builder().id(1).apitoken("token").name("Reader").build();
+        ReaderEntity reader = ReaderEntity.builder().id(UUID.randomUUID()).apitoken("token").name("Reader").build();
         UUID tagId = UUID.fromString("11111111-1111-1111-1111-111111111111");
 
         when(tagRepository.findByUid("E2000017221101891400A23G")).thenReturn(Optional.empty());
@@ -75,7 +75,7 @@ class TagServiceTest {
 
     @Test
     void registerScan_setsPickerFromTagBucket() {
-        ReaderEntity reader = ReaderEntity.builder().id(1).apitoken("token").name("Reader").build();
+        ReaderEntity reader = ReaderEntity.builder().id(UUID.randomUUID()).apitoken("token").name("Reader").build();
         PickerEntity picker = PickerEntity.builder().firstname("Jane").lastname("Doe").build();
         BucketEntity bucket = BucketEntity.builder().number(12).picker(picker).build();
         TagEntity tag = TagEntity.builder().uid("E2000017221101891400A23G").bucket(bucket).build();
