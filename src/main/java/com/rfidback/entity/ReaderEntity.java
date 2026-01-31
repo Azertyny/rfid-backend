@@ -1,6 +1,7 @@
 package com.rfidback.entity;
 
 import java.time.OffsetDateTime;
+import java.util.UUID;
 
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
@@ -24,8 +25,8 @@ import lombok.*;
 public class ReaderEntity {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.AUTO)
-    private Integer id;
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
 
     @Column(nullable = false, unique = true)
     private String name;

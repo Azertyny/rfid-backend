@@ -214,6 +214,58 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
 
   # -----------------------------------------------------------------------------------------------
+  # Record section
+  # -----------------------------------------------------------------------------------------------
+  /records/readers/{readerId}:
+    get:
+      summary: List latest records for a reader
+      description: Retrieve the 10 most recent records for the specified reader uid.
+      operationId: listLatestRecordsForReader
+      tags: [Record]
+      parameters:
+        - in: path
+          name: readerId
+          required: true
+          description: Reader uid
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Latest records list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordsList"
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /records/{recordId}/conformity:
+    patch:
+      summary: Update record conformity
+      description: Update compliance state for a record.
+      operationId: updateRecordConformity
+      tags: [Record]
+      parameters:
+        - in: path
+          name: recordId
+          required: true
+          description: Record identifier
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateRecordConformityRequest"
+      responses:
+        "204":
+          description: Record conformity updated
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  # -----------------------------------------------------------------------------------------------
   # Bucket section
   # -----------------------------------------------------------------------------------------------
   /buckets:
@@ -539,6 +591,57 @@ components:
       required:
         - bucketNumber
         - registeredCount
+
+    RecordSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Record unique identifier
+        tagUid:
+          type: string
+          description: Tag UID (business identifier)
+          example: E2000017221101891400A23G
+        pickerId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Picker identifier associated with the record
+        isCompliant:
+          type: boolean
+          description: Indicates whether the record is compliant
+          example: true
+        creationDate:
+          type: string
+          format: date-time
+          description: Record creation date
+          example: "2024-01-15T09:30:00Z"
+      required:
+        - id
+        - tagUid
+        - isCompliant
+        - creationDate
+
+    RecordsList:
+      type: object
+      properties:
+        records:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecordSummary"
+      required:
+        - records
+
+    UpdateRecordConformityRequest:
+      type: object
+      properties:
+        isCompliant:
+          type: boolean
+          description: Indicates whether the record is compliant
+          example: true
+      required:
+        - isCompliant
 
     AssignBucketToPickerRequest:
       type: object

@@ -8,4 +8,5 @@ import com.rfidback.entity.RecordEntity;
 
 public interface RecordRepository extends JpaRepository<RecordEntity, UUID> {
 
+    java.util.List<RecordEntity> findTop10ByReader_NameOrderByCreationDateDesc(String readerUid);
 }
