@@ -17,7 +17,7 @@ public class RecordController implements RecordApiDelegate {
     private final RecordService recordService;
 
     @Override
-    public ResponseEntity<RecordsList> listLatestRecordsForReader(java.util.UUID readerId) {
+    public ResponseEntity<RecordsList> listLatestRecordsForReader(String readerId) {
         return ResponseEntity.ok(recordService.listLatestRecordsForReader(readerId));
     }
 
