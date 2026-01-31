@@ -28,7 +28,7 @@ public class CorsConfig {
                 registry.addMapping("/**")
                         // on peut séparer plusieurs domaines par une virgule
                         .allowedOrigins(origins)
-                        .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
+                        .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
                         .allowedHeaders("*")
                         .allowCredentials(false);
             }
