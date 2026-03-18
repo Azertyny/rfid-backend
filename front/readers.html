@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lecteurs RFID - Admin</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        body { background-color: #f0f2f5; font-family: 'Segoe UI', sans-serif; }
+        .token-box { 
+            background: #e9ecef; 
+            padding: 4px 8px; 
+            border-radius: 4px; 
+            font-family: monospace; 
+            font-size: 0.9em; 
+            color: #d63384;
+            max-width: 200px; 
+            display: inline-block; 
+            white-space: nowrap;
+            overflow: hidden; 
+            text-overflow: ellipsis; 
+            vertical-align: middle;
+            cursor: pointer;
+            border: 1px solid #dee2e6;
+        }
+        .token-box:hover { background: #dee2e6; }
+        .table-hover tbody tr:hover { background-color: #f1f1f1; }
+    </style>
+</head>
+<body class="d-flex flex-column h-100">
+
+    <!-- MENU DE NAVIGATION HARMONISÉ -->
+    <nav class="navbar navbar-expand navbar-dark bg-dark shadow-sm">
+        <div class="container-fluid max-w-7xl mx-auto px-4">
+            <a class="navbar-brand fw-bold" href="index.html">
+                <i class="fas fa-wifi me-2"></i>RFID Admin
+            </a>
+            <div class="navbar-nav ms-auto gap-2">
+                <a href="index.html" class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-chart-line me-1"></i>Dashboard
+                </a>
+                <a href="pickers.html" class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-users me-1"></i>Opérateurs
+                </a>
+                <a href="readers.html" class="btn btn-sm btn-primary">
+                    <i class="fas fa-satellite-dish me-1"></i>Lecteurs
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid max-w-7xl mx-auto py-4">
+        
+        <!-- En-tête -->
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <div>
+                <h3 class="fw-bold text-primary mb-0">Déclaration des Lecteurs</h3>
+                <small class="text-muted">Générez ici les clés API pour vos lecteurs de tag</small>
+            </div>
+            <button class="btn btn-success shadow-sm" onclick="openModal()">
+                <i class="fas fa-plus me-1"></i> Nouveau Lecteur
+            </button>
+        </div>
+
+        <!-- Tableau -->
+        <div class="card shadow-sm border-0">
+            <div class="card-body p-0">
+                <table class="table table-hover table-striped mb-0 align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width: 25%">Nom (UID)</th>
+                            <th style="width: 35%">Clé API (Token)</th>
+                            <th style="width: 20%">Créé le</th>
+                            <th style="width: 20%">Mis à jour le</th>
+                        </tr>
+                    </thead>
+                    <tbody id="readersTable">
+                        <tr><td colspan="4" class="text-center py-4 text-muted">Chargement...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL AJOUT -->
+    <div class="modal fade" id="readerModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Nouveau lecteur</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="readerForm">
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Nom du lecteur (UID)</label>
+                            <input type="text" class="form-control" id="readerUid" required placeholder="Ex: Ligne Carotte - Entrée">
+                            <div class="form-text text-warning"><i class="fas fa-exclamation-circle"></i> Attention : Le nom ne pourra plus être modifié ensuite.</div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn btn-primary" onclick="createReader()">Générer Clé</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL SUCCÈS (TOKEN) -->
+    <div class="modal fade" id="successModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header bg-success text-white">
+                    <h5 class="modal-title"><i class="fas fa-check-circle me-2"></i>Lecteur créé avec succès !</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body text-center py-4">
+                    <h4>Clé API pour <span id="newReaderName" class="fw-bold"></span> :</h4>
+                    
+                    <div class="alert alert-light border d-flex align-items-center justify-content-between p-3 mt-3 shadow-sm">
+                        <code id="newTokenDisplay" class="fs-5 text-break text-primary fw-bold">...</code>
+                        <button class="btn btn-outline-secondary ms-3" onclick="copyNewToken()">
+                            <i class="fas fa-copy"></i> Copier
+                        </button>
+                    </div>
+                    
+                    <p class="text-muted small mt-3">
+                        <i class="fas fa-info-circle me-1"></i>
+                        Ajoutez cette clé dans le fichier <code>docker-compose.yml</code> du M715Q correspondant.
+                    </p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-success" data-bs-dismiss="modal">Terminé</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // CONFIGURATION
+        const API_URL = "https://api.apolog.fr/api";
+        const ADMIN_TOKEN = "176c77ca6757494f9729784263c6022d";
+        
+        let readerModal, successModal;
+
+        document.addEventListener('DOMContentLoaded', () => {
+            readerModal = new bootstrap.Modal(document.getElementById('readerModal'));
+            successModal = new bootstrap.Modal(document.getElementById('successModal'));
+            fetchReaders();
+        });
+
+        // 1. LISTER LES LECTEURS (GET /readers)
+        async function fetchReaders() {
+            try {
+                const response = await fetch(`${API_URL}/readers`, {
+                    headers: { 'x-api-token': ADMIN_TOKEN }
+                });
+                
+                if(response.ok) {
+                    const data = await response.json();
+                    // Selon ReaderApiDelegate.java, la réponse est un objet ReadersList contenant une liste "readers"
+                    const list = data.readers || [];
+                    renderTable(list);
+                } else {
+                    showError("Impossible de charger les lecteurs");
+                }
+            } catch (e) {
+                console.error(e);
+                showError("Erreur réseau");
+            }
+        }
+
+        function renderTable(readers) {
+            const tbody = document.getElementById('readersTable');
+            tbody.innerHTML = '';
+
+            if(readers.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">Aucun lecteur déclaré</td></tr>';
+                return;
+            }
+
+            readers.forEach(r => {
+                // Formatage des dates (Java envoie du ISO8601 ex: 2024-01-01T12:00:00Z)
+                const dateCreation = r.creationDate ? new Date(r.creationDate).toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit', year:'numeric'}) : '-';
+                const dateUpdate = r.updateDate ? new Date(r.updateDate).toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit', year:'numeric'}) : '-';
+
+                const html = `
+                    <tr>
+                        <td class="fw-bold text-primary">${r.uid}</td>
+                        <td>
+                            <span class="token-box" onclick="copyToClipboard('${r.apitoken}')" title="Cliquez pour copier">
+                                ${r.apitoken}
+                            </span>
+                        </td>
+                        <td class="text-muted small">${dateCreation}</td>
+                        <td class="text-muted small">${dateUpdate}</td>
+                    </tr>`;
+                tbody.innerHTML += html;
+            });
+        }
+
+        // 2. CRÉER UN LECTEUR (POST /readers)
+        async function createReader() {
+            const uid = document.getElementById('readerUid').value;
+            if(!uid) return;
+
+            // Le DTO CreateReader attend probablement un champ "uid"
+            const payload = { uid: uid };
+
+            try {
+                const response = await fetch(`${API_URL}/readers`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-api-token': ADMIN_TOKEN
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                if (response.ok || response.status === 201) {
+                    const newReader = await response.json();
+                    
+                    // On ferme et on affiche le succès
+                    readerModal.hide();
+                    document.getElementById('newReaderName').innerText = newReader.uid;
+                    document.getElementById('newTokenDisplay').innerText = newReader.apitoken;
+                    successModal.show();
+                    
+                    fetchReaders(); // Rafraichissement
+                } else {
+                    alert("Erreur création : Ce nom existe peut-être déjà ?");
+                }
+            } catch (e) {
+                alert("Erreur réseau");
+            }
+        }
+
+        // --- UTILITAIRES ---
+        function openModal() {
+            document.getElementById('readerForm').reset();
+            readerModal.show();
+            setTimeout(() => document.getElementById('readerUid').focus(), 500);
+        }
+
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                // Petit feedback (optionnel, l'alerte native suffit souvent)
+            });
+        }
+
+        function copyNewToken() {
+            const token = document.getElementById('newTokenDisplay').innerText;
+            navigator.clipboard.writeText(token);
+            alert("Token copié dans le presse-papier !");
+        }
+
+        function showError(msg) {
+            document.getElementById('readersTable').innerHTML = `<tr><td colspan="4" class="text-center text-danger">${msg}</td></tr>`;
+        }
+    </script>
+</body>
+</html>

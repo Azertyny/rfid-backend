@@ -13,6 +13,7 @@ This Agents.md file provides comprehensive guidance for OpenAI Codex and other A
   - `/test`: Test files that OpenAI Codex should maintain and extend
 - `/target`: OpenAI Codex should not edit these but uses and implements these for application source code
 - `/data`: Database files
+- `/front`: Front source files
 - `/doc`: usefull documentation about project (Diagram as plantuml format)
 
 ## Coding Conventions for OpenAI Codex

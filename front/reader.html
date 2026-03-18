@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interface Contrôle Qualité</title>
+    <script src="config.js"></script>
+    <style>
+        /* --- GLOBAL --- */
+        * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
+        body { margin: 0; background-color: #000; font-family: 'Segoe UI', sans-serif; color: white; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+
+        /* --- ÉCRAN DE SÉLECTION (SETUP) --- */
+        #setup-screen {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: #080808; z-index: 100;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+        }
+        .setup-title { font-size: 2rem; margin-bottom: 40px; color: #888; text-transform: uppercase; letter-spacing: 2px; }
+        
+        #readers-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px; width: 80%; max-width: 1000px;
+        }
+
+        .reader-btn {
+            background: #1a1a1a; border: 2px solid #333; padding: 30px;
+            border-radius: 10px; cursor: pointer; text-align: center;
+            transition: all 0.2s;
+        }
+        .reader-btn:active { transform: scale(0.95); background: #333; }
+        .reader-btn h3 { margin: 0; font-size: 1.5rem; color: #fff; }
+        .reader-btn p { color: #666; margin-top: 10px; font-size: 0.9rem; font-family: monospace; }
+
+        /* --- UI PRINCIPALE (MONITORING) --- */
+        #main-interface { display: none; height: 100%; flex-direction: column; }
+
+        /* Header */
+        header { height: 15vh; background: #121212; border-bottom: 2px solid #333; display: flex; justify-content: space-between; align-items: center; padding: 0 40px; }
+        .header-col { display: flex; flex-direction: column; }
+        .label { font-size: 1rem; color: #888; text-transform: uppercase; }
+        .value { font-size: 2rem; font-weight: 700; }
+        
+        /* Convoyeur */
+        #conveyor-belt { flex-grow: 1; position: relative; background: #050505; display: flex; align-items: center; padding-left: 180px; overflow: hidden; }
+        .rail-guide { position: absolute; top: 50%; left: 0; width: 100%; height: 4px; background: #333; transform: translateY(-50%); z-index: 0; }
+        
+        /* Scanner */
+        .scanner-zone { position: absolute; left: 0; top: 0; bottom: 0; width: 150px; background: #1a1a1a; border-right: 4px solid #444; z-index: 5; display: flex; align-items: center; justify-content: center; }
+        .scanner-icon { font-size: 3rem; color: #555; writing-mode: vertical-rl; font-weight: bold; letter-spacing: 10px; }
+
+        /* Caisses */
+        #track-area { display: flex; gap: 20px; z-index: 2; padding: 20px; width: 100%; }
+        
+        .box-container { height: 60vh; width: 280px; min-width: 280px; cursor: pointer; transition: all 0.3s; }
+        .box-card { width: 100%; height: 100%; background: #000; border: 6px solid #fff; border-radius: 12px; display: flex; flex-direction: column; justify-content: center; align-items: center; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        
+        /* Contenu Caisse */
+        .main-text { font-size: 1.8rem; font-weight: 800; text-align: center; word-break: break-all; padding: 0 10px; }
+        .sub-text { font-size: 0.9rem; color: #666; font-family: monospace; margin: 10px 0; }
+        .timestamp { font-size: 1.5rem; color: #aaa; font-family: monospace; }
+        .status-icon { font-size: 4rem; margin-bottom: 20px; }
+
+        /* États */
+        .defect .box-card { background: #FFD700; border-color: #FFD700; box-shadow: 0 0 40px rgba(255,215,0,0.4); }
+        .defect .main-text { color: #000; }
+        .defect .sub-text, .defect .timestamp { color: #333; }
+
+        /* Indicateurs */
+        #status-indicator { position: fixed; bottom: 10px; right: 10px; font-size: 0.8rem; opacity: 0.5; }
+        .error-state { color: red !important; opacity: 1 !important; }
+    </style>
+</head>
+<body>
+
+    <div id="setup-screen">
+        <div class="setup-title">Sélectionnez la ligne</div>
+        <div id="readers-grid">
+            <div style="color:#666">Chargement des lecteurs...</div>
+        </div>
+    </div>
+
+    <div id="main-interface">
+        <header>
+            <div class="header-col">
+                <span class="label">Ligne / Lecteur</span>
+                <span class="value" id="reader-uid-display">--</span>
+            </div>
+            
+            <div style="text-align:center;">
+                <span id="system-dot" style="display:inline-block; width:15px; height:15px; background:gray; border-radius:50%;"></span>
+                <span id="system-text" style="margin-left:5px; opacity:0.7;">CONNEXION...</span>
+            </div>
+
+            <div class="header-col" style="text-align:right;">
+                <span class="label">Heure</span>
+                <span class="value" id="clock" style="font-family:'Courier New';">--:--:--</span>
+            </div>
+        </header>
+
+        <div id="conveyor-belt">
+            <div class="rail-guide"></div>
+            <div class="scanner-zone">
+                <div class="scanner-icon">SCAN</div>
+            </div>
+            <div id="track-area"></div>
+        </div>
+    </div>
+
+    <div id="status-indicator">Initialisation...</div>
+
+    <script>
+        // --- ÉTAT ---
+        let CURRENT_READER = {
+            uid: null,
+            token: null
+        };
+        let currentRecordsHash = "";
+
+        // --- PHASE 1 : SETUP ---
+        
+        async function loadReaders() {
+            const grid = document.getElementById('readers-grid');
+            try {
+                // GET /readers
+                const res = await fetch(`${CONFIG.API_URL}/readers`);
+                if(!res.ok) throw new Error("Erreur chargement lecteurs");
+                
+                const data = await res.json();
+                grid.innerHTML = ""; // Vide le chargement
+
+                // Le YAML dit que data.readers est une liste
+                if (!data.readers || data.readers.length === 0) {
+                    grid.innerHTML = "<div style='color:red'>Aucun lecteur configuré dans l'API</div>";
+                    return;
+                }
+
+                data.readers.forEach(reader => {
+                    const btn = document.createElement('div');
+                    btn.className = 'reader-btn';
+                    // YAML: reader.uid est l'identifiant lisible, reader.apitoken est la clé
+                    btn.innerHTML = `
+                        <h3>${reader.uid}</h3>
+                    `;
+                    btn.onclick = () => selectReader(reader);
+                    grid.appendChild(btn);
+                });
+
+            } catch (e) {
+                grid.innerHTML = `<div style='color:red'>${e.message}<br>Vérifiez l'URL dans config.js</div>`;
+            }
+        }
+
+        function selectReader(reader) {
+            if (!reader.apitoken) {
+                alert("Erreur: Ce lecteur n'a pas de Token API !");
+                return;
+            }
+
+            // Enregistrement de la config
+            CURRENT_READER.uid = reader.uid; // L'identifiant (ex: "Reader 1")
+            CURRENT_READER.token = reader.apitoken; // Le token de sécurité
+
+            // Mise à jour UI
+            document.getElementById('reader-uid-display').innerText = reader.uid;
+            
+            // Transition
+            document.getElementById('setup-screen').style.display = 'none';
+            document.getElementById('main-interface').style.display = 'flex';
+
+            // Lancement du polling
+            startApp();
+        }
+
+        // --- PHASE 2 : APP RUNTIME ---
+
+        function startApp() {
+            // Horloge
+            setInterval(() => {
+                document.getElementById('clock').innerText = new Date().toLocaleTimeString('fr-FR');
+            }, 1000);
+
+            // Premier fetch immédiat
+            fetchRecords();
+            // Polling régulier
+            setInterval(fetchRecords, CONFIG.POLLING_INTERVAL);
+        }
+
+        async function fetchRecords() {
+            if (!CURRENT_READER.uid) return;
+
+            try {
+                // GET /records/readers/{readerId}
+                // Attention: le readerId dans l'URL est bien l'UID du lecteur
+                const response = await fetch(`${CONFIG.API_URL}/records/readers/${CURRENT_READER.uid}`, {
+                    method: 'GET',
+                    headers: {
+                        'x-api-token': CURRENT_READER.token, // Token récupéré dynamiquement
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                if (!response.ok) throw new Error(`API: ${response.status}`);
+                const data = await response.json();
+
+                // Indicateurs Vie
+                updateSystemStatus(true);
+                
+                // Rendu
+                if (data.records) renderBoxes(data.records);
+
+            } catch (error) {
+                console.error(error);
+                updateSystemStatus(false, error.message);
+            }
+        }
+
+        function renderBoxes(records) {
+            const newHash = JSON.stringify(records);
+            if (newHash === currentRecordsHash) return;
+            currentRecordsHash = newHash;
+
+            const area = document.getElementById('track-area');
+            area.innerHTML = ''; 
+
+            records.slice(0, 5).forEach(record => {
+                const el = document.createElement('div');
+                el.className = `box-container ${!record.isCompliant ? 'defect' : ''}`;
+                
+                const timeStr = new Date(record.creationDate).toLocaleTimeString('fr-FR');
+                const title = record.tagUid || "TAG ???";
+                // Affichage propre du pickerId s'il existe
+                const subtitle = record.pickerId ? `Picker: ...${record.pickerId.slice(-4)}` : "Non assigné";
+
+                el.innerHTML = `
+                    <div class="box-card">
+                        <div class="status-icon">${record.isCompliant ? '✅' : '⚠️'}</div>
+                        <div class="timestamp">${timeStr}</div>
+                    </div>
+                `;
+
+                // Interaction PATCH
+                el.addEventListener('click', () => toggleCompliance(record, el));
+                area.appendChild(el);
+            });
+        }
+
+        async function toggleCompliance(record, element) {
+            const newStatus = !record.isCompliant;
+            
+            // UI Optimiste
+            const icon = element.querySelector('.status-icon');
+            if (!newStatus) { element.classList.add('defect'); icon.innerText = '⚠️'; }
+            else { element.classList.remove('defect'); icon.innerText = '✅'; }
+
+            try {
+                // PATCH /records/{recordId}/conformity
+                await fetch(`${CONFIG.API_URL}/records/${record.id}/conformity`, {
+                    method: 'PATCH',
+                    headers: {
+                        'x-api-token': CURRENT_READER.token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ isCompliant: newStatus })
+                });
+                fetchRecords(); // Refresh
+            } catch (e) {
+                alert("Erreur mise à jour");
+                // Rollback visuel simple : le prochain fetchRecords corrigera l'état
+            }
+        }
+
+        function updateSystemStatus(isOk, msg = "") {
+            const dot = document.getElementById('system-dot');
+            const txt = document.getElementById('system-text');
+            const indic = document.getElementById('status-indicator');
+
+            if (isOk) {
+                dot.style.background = "limegreen";
+                txt.innerText = "SYSTÈME ACTIF";
+                indic.className = "";
+                indic.innerText = "Synchro OK " + new Date().toLocaleTimeString();
+            } else {
+                dot.style.background = "red";
+                txt.innerText = "ERREUR LIAISON";
+                indic.className = "error-state";
+                indic.innerText = msg;
+            }
+        }
+
+        // Démarrage : Charge la liste des lecteurs
+        window.onload = loadReaders;
+
+    </script>
+</body>
+</html>

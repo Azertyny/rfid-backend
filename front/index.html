@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Suivi Lavage - Production</title>
+    
+    <!-- Bootstrap 5 & FontAwesome -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        body { background-color: #f9fafb; font-family: 'Segoe UI', system-ui, sans-serif; color: #1f2937; }
+        .card { border: none; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); transition: all 0.2s; background: white; }
+        .card:hover { box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        
+        .btn-line { height: 70px; display: flex; flex-direction: column; justify-content: center; align-items: center; border-radius: 12px; border: 2px solid #e5e7eb; background: white; color: #4b5563; transition: all 0.2s; }
+        .btn-line:hover { background: #f3f4f6; border-color: #d1d5db; }
+        .btn-line.active { background: #16a34a; border-color: #16a34a; color: white; }
+        .btn-line .vegetable { font-size: 0.85em; opacity: 0.9; font-weight: normal; }
+        .btn-line .name { font-weight: 700; font-size: 1.1em; }
+
+        .icon-box { width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; }
+        .bg-green-soft { background-color: #dcfce7; color: #16a34a; }
+        .bg-blue-soft { background-color: #dbeafe; color: #2563eb; }
+        .bg-purple-soft { background-color: #f3e8ff; color: #9333ea; }
+
+        .rank-1 { background: linear-gradient(to right, #fffbeb, #ffffff); border: 1px solid #fcd34d; }
+        .rank-2 { background: linear-gradient(to right, #f9fafb, #ffffff); border: 1px solid #e5e7eb; }
+        .rank-3 { background: linear-gradient(to right, #fff7ed, #ffffff); border: 1px solid #fdba74; }
+        
+        .status-badge { position: fixed; top: 70px; right: 20px; z-index: 1000; font-size: 0.8rem; padding: 5px 10px; border-radius: 20px;}
+    </style>
+</head>
+<body class="d-flex flex-column h-100">
+
+    <!-- MENU DE NAVIGATION HARMONISÉ -->
+    <nav class="navbar navbar-expand navbar-dark bg-dark shadow-sm">
+        <div class="container-fluid max-w-7xl mx-auto px-4">
+            <a class="navbar-brand fw-bold" href="index.html">
+                <i class="fas fa-wifi me-2"></i>RFID Admin
+            </a>
+            <div class="navbar-nav ms-auto gap-2">
+                <a href="index.html" class="btn btn-sm btn-primary">
+                    <i class="fas fa-chart-line me-1"></i>Dashboard
+                </a>
+                <a href="pickers.html" class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-users me-1"></i>Opérateurs
+                </a>
+                <a href="readers.html" class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-satellite-dish me-1"></i>Lecteurs
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <span id="apiStatus" class="badge bg-secondary status-badge"><i class="fas fa-circle-notch fa-spin me-1"></i> Connexion...</span>
+
+    <div class="container-fluid max-w-7xl mx-auto py-4">
+        
+        <!-- Sous-Titre et Date -->
+        <div class="d-flex align-items-center justify-content-between mb-4">
+            <div class="d-flex align-items-center gap-3">
+                <div class="icon-box bg-primary text-white rounded-3">
+                    <i class="fas fa-tint"></i>
+                </div>
+                <div>
+                    <h4 class="mb-0 fw-bold text-dark">Suivi Lavage - Production</h4>
+                    <small class="text-muted" id="currentDate">Chargement...</small>
+                </div>
+            </div>
+        </div>
+
+        <!-- SELECTEUR DE LIGNE -->
+        <div class="row g-3 mb-4" id="lineSelector">
+            <div class="col-12 text-center text-muted">Chargement des lignes...</div>
+        </div>
+
+        <!-- STATS COMPACTES -->
+        <div class="row g-3 mb-4">
+            <div class="col-md-4">
+                <div class="card p-3 h-100">
+                    <div class="d-flex align-items-center gap-3">
+                        <div class="icon-box bg-green-soft"><i class="fas fa-box"></i></div>
+                        <div>
+                            <p class="text-muted small mb-0 fw-semibold">Total Caisses (Conformes)</p>
+                            <h2 class="mb-0 fw-bold text-success" id="statTotalCrates">0</h2>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card p-3 h-100">
+                    <div class="d-flex align-items-center gap-3">
+                        <div class="icon-box bg-blue-soft"><i class="fas fa-users"></i></div>
+                        <div>
+                            <p class="text-muted small mb-0 fw-semibold">Opérateurs Actifs</p>
+                            <h2 class="mb-0 fw-bold text-primary" id="statTotalPickers">0</h2>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card p-3 h-100">
+                    <div class="d-flex align-items-center gap-3">
+                        <div class="icon-box bg-purple-soft"><i class="fas fa-chart-line"></i></div>
+                        <div>
+                            <p class="text-muted small mb-0 fw-semibold">Moyenne / Opérateur</p>
+                            <h2 class="mb-0 fw-bold" style="color: #9333ea" id="statAvg">0</h2>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- CONTENU PRINCIPAL -->
+        <div class="row g-3 h-100">
+            <!-- GRAPHIQUE CADENCE -->
+            <div class="col-lg-7">
+                <div class="card h-100 p-3">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="fw-bold mb-0">Cadence (Caisses/h)</h5>
+                        <div class="d-flex gap-3 text-end">
+                            <div>
+                                <small class="text-muted d-block">Actuel</small>
+                                <span class="fw-bold text-primary fs-5" id="currentRate">0</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div style="position: relative; height: 300px; width: 100%;">
+                        <canvas id="speedChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CLASSEMENT -->
+            <div class="col-lg-5">
+                <div class="card h-100 p-3">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="fw-bold mb-0">Classement Opérateurs</h5>
+                        <span class="badge bg-light text-dark border">Top Productivité</span>
+                    </div>
+                    <div class="d-flex flex-column gap-2 overflow-auto" style="max-height: 300px;" id="pickersList">
+                        <div class="text-center text-muted py-5">En attente de données...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- LOGIQUE JS -->
+    <script>
+        const API_URL = "https://api.apolog.fr/api";
+        const API_TOKEN = "176c77ca6757494f9729784263c6022d";
+        
+        let LINES = [{ id: "all", name: "Global", vegetable: "Toutes les lignes" }];
+        let currentLine = "all";
+        let chartInstance = null;
+        let pickersMap = {};
+
+        document.addEventListener('DOMContentLoaded', () => {
+            updateDate();
+            initChart();
+            Promise.all([fetchReaders(), fetchPickersInfo()]).then(() => {
+                fetchData();
+                setInterval(fetchData, 3000);
+            });
+            setInterval(updateDate, 60000);
+        });
+
+        function updateDate() {
+            const now = new Date();
+            document.getElementById('currentDate').innerText = now.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute:'2-digit' });
+        }
+
+        async function fetchReaders() {
+            try {
+                const response = await fetch(`${API_URL}/readers`, { headers: { 'x-api-token': API_TOKEN }});
+                if (response.ok) {
+                    const data = await response.json();
+                    const readers = data.readers || [];
+                    LINES = [{ id: "all", name: "Global", vegetable: "Toutes les lignes" }];
+                    readers.forEach(r => { LINES.push({ id: r.uid, name: r.uid, vegetable: "Ligne de lavage" }); });
+                    renderLineSelector();
+                }
+            } catch (e) { console.error("Err Readers", e); }
+        }
+
+        function renderLineSelector() {
+            const container = document.getElementById('lineSelector');
+            container.innerHTML = LINES.map(line => `
+                <div class="col-md-${LINES.length > 4 ? '2' : Math.max(3, 12/LINES.length)} col-6">
+                    <button class="btn btn-line w-100 ${currentLine === line.id ? 'active' : ''}" onclick="changeLine('${line.id}')">
+                        <span class="name text-truncate w-100">${line.name}</span>
+                        <span class="vegetable text-truncate w-100">${line.vegetable}</span>
+                    </button>
+                </div>`).join('');
+        }
+
+        function changeLine(lineId) {
+            currentLine = lineId;
+            renderLineSelector();
+            fetchData();
+        }
+
+        async function fetchPickersInfo() {
+            try {
+                const response = await fetch(`${API_URL}/pickers?size=500`, { headers: { 'x-api-token': API_TOKEN }});
+                if (response.ok) {
+                    const data = await response.json();
+                    (data.content || []).forEach(p => { pickersMap[p.id] = `${p.firstname} ${p.lastname}`; });
+                }
+            } catch (e) { console.error("Err Pickers", e); }
+        }
+
+        async function fetchData() {
+            try {
+                const response = await fetch(`${API_URL}/tags?size=3000&_t=${Date.now()}`, { headers: { 'x-api-token': API_TOKEN }});
+                if (response.ok) {
+                    const data = await response.json();
+                    updateStatus(true);
+                    processBusinessLogic(data.content || data || []);
+                } else { updateStatus(false); }
+            } catch (e) { updateStatus(false); }
+        }
+
+        function processBusinessLogic(allTags) {
+            const todayStr = new Date().toDateString();
+            const validTags = allTags.filter(t => {
+                const timeField = t.processedAt || t.processed_at || t.timestamp || t.scanDate;
+                const isToday = new Date(timeField).toDateString() === todayStr;
+                const complianceField = t.isCompliant !== undefined ? t.isCompliant : t.conforme;
+                const isCompliant = (complianceField === true || complianceField === undefined);
+                const tagReaderId = t.readerId || t.reader_id;
+                const isLineMatch = currentLine === 'all' || tagReaderId == currentLine;
+                return isToday && isCompliant && isLineMatch;
+            });
+
+            const totalCrates = validTags.length;
+            const uniqueBadges = new Set(validTags.map(t => t.uid || t.tagId));
+            const totalPickersCount = uniqueBadges.size;
+            const avg = totalPickersCount > 0 ? Math.round(totalCrates / totalPickersCount) : 0;
+
+            animateValue("statTotalCrates", parseInt(document.getElementById("statTotalCrates").innerText), totalCrates, 500);
+            document.getElementById("statTotalPickers").innerText = totalPickersCount;
+            document.getElementById("statAvg").innerText = avg;
+
+            updatePickersGrid(validTags);
+            updateChart(validTags);
+        }
+
+        function updatePickersGrid(tags) {
+            const counts = {};
+            tags.forEach(t => { const uid = t.uid || t.tagId; counts[uid] = (counts[uid] || 0) + 1; });
+            const sorted = Object.entries(counts).sort(([,a], [,b]) => b - a).slice(0, 10);
+            const list = document.getElementById('pickersList');
+
+            if (sorted.length === 0) { list.innerHTML = '<div class="text-center text-muted py-4">Aucune production</div>'; return; }
+
+            list.innerHTML = sorted.map(([uid, count], index) => {
+                const name = pickersMap[uid] || `Badge ${uid.substring(0, 6)}...`;
+                let rankClass = "bg-white border";
+                let icon = `<span class="badge bg-light text-dark border">#${index+1}</span>`;
+                if (index === 0) { rankClass = "rank-1"; icon = '<i class="fas fa-trophy text-warning"></i>'; }
+                if (index === 1) { rankClass = "rank-2"; icon = '<i class="fas fa-medal text-secondary"></i>'; }
+                if (index === 2) { rankClass = "rank-3"; icon = '<i class="fas fa-award" style="color: #cd7f32"></i>'; }
+
+                return `
+                <div class="d-flex justify-content-between align-items-center p-2 rounded ${rankClass}">
+                    <div class="d-flex align-items-center gap-3 overflow-hidden">
+                        <div style="width: 24px; text-align: center;">${icon}</div>
+                        <div class="text-truncate">
+                            <div class="fw-bold text-dark">${name}</div>
+                            <div class="text-muted small" style="font-size: 0.75em">${uid}</div>
+                        </div>
+                    </div>
+                    <span class="badge bg-primary rounded-pill fs-6">${count}</span>
+                </div>`;
+            }).join('');
+        }
+
+        function initChart() {
+            const ctx = document.getElementById('speedChart').getContext('2d');
+            chartInstance = new Chart(ctx, {
+                type: 'line',
+                data: { labels: [], datasets: [{ label: 'Vitesse (Caisses/h)', data: [], borderColor: '#2563eb', backgroundColor: 'rgba(37, 99, 235, 0.1)', borderWidth: 2, tension: 0.3, fill: true, pointRadius: 4 }] },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, grid: { borderDash: [5, 5] } }, x: { grid: { display: false } } } }
+            });
+        }
+
+        function updateChart(tags) {
+            const buckets = {};
+            const labels = [];
+            const startH = 6; const endH = 20;
+            for(let h=startH; h<=endH; h++) { [`${h.toString().padStart(2,'0')}:00`, `${h.toString().padStart(2,'0')}:30`].forEach(slot => { buckets[slot] = 0; labels.push(slot); }); }
+
+            tags.forEach(t => {
+                const timeField = t.processedAt || t.processed_at || t.timestamp || t.scanDate;
+                const d = new Date(timeField);
+                const h = d.getHours();
+                const m = d.getMinutes();
+                if (h >= startH && h <= endH) {
+                    const slot = m < 30 ? `${h.toString().padStart(2,'0')}:00` : `${h.toString().padStart(2,'0')}:30`;
+                    if (buckets[slot] !== undefined) buckets[slot]++;
+                }
+            });
+
+            const data = labels.map(l => buckets[l] * 2);
+            chartInstance.data.labels = labels;
+            chartInstance.data.datasets[0].data = data;
+            chartInstance.update();
+
+            const now = new Date();
+            const curSlot = now.getMinutes() < 30 ? `${now.getHours().toString().padStart(2,'0')}:00` : `${now.getHours().toString().padStart(2,'0')}:30`;
+            document.getElementById('currentRate').innerText = (buckets[curSlot] || 0) * 2;
+        }
+
+        function updateStatus(isOnline) {
+            const el = document.getElementById('apiStatus');
+            if (isOnline) { el.className = 'badge bg-success status-badge'; el.innerHTML = '<i class="fas fa-check"></i> En ligne'; }
+            else { el.className = 'badge bg-danger status-badge'; el.innerHTML = '<i class="fas fa-wifi"></i> Erreur API'; }
+        }
+
+        function animateValue(id, start, end, duration) {
+            if (start === end) return;
+            const obj = document.getElementById(id);
+            obj.innerHTML = end; 
+        }
+    </script>
+</body>
+</html>
