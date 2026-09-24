@@ -1,54 +1,104 @@
 package com.rfidback.service;
 
 import java.util.ArrayList;
+import java.util.UUID;
 
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
+import org.springframework.web.server.ResponseStatusException;
 
 import com.rfidback.entity.ReaderEntity;
 import com.rfidback.entity.Role;
+import com.rfidback.exception.ReaderAlreadyExistsException;
+import com.rfidback.exception.ReaderNotFoundException;
 import com.rfidback.generated.model.CreateReader;
 import com.rfidback.generated.model.Reader;
 import com.rfidback.generated.model.ReadersList;
+import com.rfidback.generated.model.UpdateReader;
 import com.rfidback.repository.ReaderRepository;
 
+import lombok.RequiredArgsConstructor;
+
 @Service
+@RequiredArgsConstructor
 public class ReaderService {
 
-    @Autowired
-    ReaderRepository readerRepository;
+    private static final String DUPLICATE_UID_MESSAGE = "A reader with the same uid already exists";
+
+    private final ReaderRepository readerRepository;
 
     public Reader createReader(CreateReader createReader) throws Exception {
-        // Here you would add logic to save the reader to a database
-        // For demonstration, we will just create a Reader object and return it
+        String uid = createReader.getUid();
+        if (!StringUtils.hasText(uid)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "uid must not be blank");
+        }
+        uid = uid.trim();
+        if (readerRepository.existsByNameIgnoreCase(uid)) {
+            throw new ReaderAlreadyExistsException(DUPLICATE_UID_MESSAGE);
+        }
 
-        ReaderEntity readerEntity = ReaderEntity.builder().name(createReader.getUid()).build();
-        ReaderEntity readerEntitySaved = readerRepository.save(readerEntity);
-        Reader reader = new Reader();
-        reader.setUid(readerEntitySaved.getName());
-        reader.setApitoken(readerEntitySaved.getApitoken());
-        return reader;
+        ReaderEntity readerEntitySaved;
+        try {
+            readerEntitySaved = readerRepository.saveAndFlush(ReaderEntity.builder().name(uid).build());
+        } catch (DataIntegrityViolationException exception) {
+            // Another request created the same uid between the check above and this insert.
+            throw new ReaderAlreadyExistsException(DUPLICATE_UID_MESSAGE);
+        }
+        // Only Administrateurs can create a reader, and they need its token to configure the device.
+        return toModel(readerEntitySaved, true);
     }
 
     public ReadersList getReaders() {
         boolean includeApiTokens = currentUserIsAdministrator();
-        ReadersList readersList = new ReadersList();
         ArrayList<Reader> readerArrayList = new ArrayList<>();
         for (ReaderEntity readerEntity : readerRepository.findAll()) {
-            Reader reader = new Reader();
-            reader.setUid(readerEntity.getName());
-            if (includeApiTokens) {
-                reader.setApitoken(readerEntity.getApitoken());
-            }
-            reader.setCreationDate(readerEntity.getCreationDate());
-            reader.setUpdateDate(readerEntity.getUpdateDate());
-            readerArrayList.add(reader);
+            readerArrayList.add(toModel(readerEntity, includeApiTokens));
         }
+        ReadersList readersList = new ReadersList();
         readersList.setReaders(readerArrayList);
-
         return readersList;
+    }
+
+    /** A disabled reader keeps its token and its records, but the token is refused on /tags/scan. */
+    @Transactional
+    public Reader updateReader(UUID readerId, UpdateReader request) {
+        if (request.getActive() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Provide an active state");
+        }
+        ReaderEntity readerEntity = loadReader(readerId);
+        readerEntity.setActive(request.getActive());
+        return toModel(readerRepository.save(readerEntity), true);
+    }
+
+    /** The old token is refused from the next scan on: the scan filter reads the token from the database. */
+    @Transactional
+    public Reader rotateToken(UUID readerId) {
+        ReaderEntity readerEntity = loadReader(readerId);
+        readerEntity.setApitoken(ReaderEntity.newApitoken());
+        return toModel(readerRepository.save(readerEntity), true);
+    }
+
+    private ReaderEntity loadReader(UUID readerId) {
+        return readerRepository.findById(readerId)
+                .orElseThrow(() -> new ReaderNotFoundException("Reader %s not found".formatted(readerId)));
+    }
+
+    private Reader toModel(ReaderEntity readerEntity, boolean includeApiToken) {
+        Reader reader = new Reader();
+        reader.setId(readerEntity.getId());
+        reader.setUid(readerEntity.getName());
+        reader.setActive(readerEntity.isActive());
+        if (includeApiToken) {
+            reader.setApitoken(readerEntity.getApitoken());
+        }
+        reader.setCreationDate(readerEntity.getCreationDate());
+        reader.setUpdateDate(readerEntity.getUpdateDate());
+        return reader;
     }
 
     private static boolean currentUserIsAdministrator() {

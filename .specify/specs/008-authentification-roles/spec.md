@@ -115,7 +115,7 @@ Un Administrateur crée des comptes (identifiant, mot de passe initial, rôle), 
 | `GET /api/pickers`, `GET /api/pickers/{id}` | — | ✓ | ✓ | spec `007` (noms sur le tableau de bord) |
 | `POST/PUT/DELETE /api/pickers/**` | — | — | ✓ | spec `001` |
 | `GET /api/readers` | — | ✓ sans `apitoken` | ✓ avec `apitoken` | specs `002`, `007` |
-| `POST /api/readers` (et futures routes de rotation/suppression, changement de mode) | — | — | ✓ | specs `002`, `003` |
+| `POST /api/readers`, `PATCH /api/readers/{id}` (désactivation), `POST /api/readers/{id}/token` (rotation), et future route de changement de mode | — | — | ✓ | specs `002`, `003` |
 | `POST /api/tags/buckets/{bucketNumber}` | — | — | ✓ | spec `003` |
 | Futures routes des lectures temporaires d'enregistrement (démarrer, consulter, effacer) | — | — | ✓ | spec `003` |
 | `/api/buckets/**` | — | — | ✓ | spec `006` |

@@ -12,4 +12,6 @@ public interface ReaderRepository extends JpaRepository<ReaderEntity, UUID> {
     Optional<ReaderEntity> findByApitoken(String apitoken);
 
     Optional<ReaderEntity> findByName(String name);
+
+    boolean existsByNameIgnoreCase(String name);
 }

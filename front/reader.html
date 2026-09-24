@@ -33,6 +33,8 @@
         .reader-btn:active { transform: scale(0.95); background: #333; }
         .reader-btn h3 { margin: 0; font-size: 1.5rem; color: #fff; }
         .reader-btn p { color: #666; margin-top: 10px; font-size: 0.9rem; font-family: monospace; }
+        .reader-btn.inactive { opacity: .5; }
+        .reader-btn small { display: block; margin-top: 8px; color: #888; }
 
         /* --- UI PRINCIPALE (MONITORING) --- */
         #main-interface { display: none; height: 100%; flex-direction: column; }
@@ -143,6 +145,11 @@
                     btn.innerHTML = `
                         <h3>${reader.uid}</h3>
                     `;
+                    // Un lecteur désactivé reste sélectionnable pour consulter ses dernières lectures.
+                    if (reader.active === false) {
+                        btn.classList.add('inactive');
+                        btn.insertAdjacentHTML('beforeend', '<small>désactivé</small>');
+                    }
                     btn.onclick = () => selectReader(reader);
                     grid.appendChild(btn);
                 });
