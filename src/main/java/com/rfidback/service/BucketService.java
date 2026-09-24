@@ -97,6 +97,15 @@ public class BucketService {
         bucketRepository.save(bucket);
     }
 
+    @Transactional
+    public void unassignBucketFromPicker(UUID bucketId) {
+        BucketEntity bucket = bucketRepository.findById(bucketId)
+                .orElseThrow(() -> new BucketNotFoundException("Bucket %s not found".formatted(bucketId)));
+
+        bucket.setPicker(null);
+        bucketRepository.save(bucket);
+    }
+
     private BucketWithTagsAndPickerAllOfPicker toPickerModel(PickerEntity entity) {
         BucketWithTagsAndPickerAllOfPicker picker = new BucketWithTagsAndPickerAllOfPicker();
         picker.setLastname(entity.getLastname());

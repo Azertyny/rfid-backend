@@ -211,10 +211,13 @@
 
         async function fetchPickersInfo() {
             try {
-                const response = await apiFetch(`/pickers?size=500`);
-                if (response.ok) {
+                // The API serves at most 100 pickers per page: walk the pages until there is no next one.
+                for (let page = 0; ; page++) {
+                    const response = await apiFetch(`/pickers?size=100&page=${page}`);
+                    if (!response.ok) break;
                     const data = await response.json();
                     (data.content || []).forEach(p => { pickersMap[p.id] = `${p.firstname} ${p.lastname}`; });
+                    if (!data.metadata || !data.metadata.hasNext) break;
                 }
             } catch (e) { console.error("Err Pickers", e); }
         }

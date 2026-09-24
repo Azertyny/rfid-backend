@@ -46,7 +46,7 @@ public class PickerController implements PickerApiDelegate {
             Optional<String> sort) {
         int requestedPage = page.orElse(0);
         int requestedSize = size.orElse(20);
-        return ResponseEntity.ok(pickerService.listPickers(requestedPage, requestedSize));
+        return ResponseEntity.ok(pickerService.listPickers(requestedPage, requestedSize, sort.orElse(null)));
     }
 
     @Override

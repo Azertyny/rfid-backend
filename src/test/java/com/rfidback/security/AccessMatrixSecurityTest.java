@@ -67,6 +67,7 @@ class AccessMatrixSecurityTest {
                 new Route(HttpMethod.GET, "/api/buckets/" + ID, null, ADMIN_ONLY),
                 new Route(HttpMethod.PUT, "/api/buckets/" + ID + "/picker", "{\"pickerId\":\"" + ID + "\"}",
                         ADMIN_ONLY),
+                new Route(HttpMethod.DELETE, "/api/buckets/" + ID + "/picker", null, ADMIN_ONLY),
                 new Route(HttpMethod.GET, "/api/records/readers/unknown-reader", null, LOGGED_IN),
                 new Route(HttpMethod.PATCH, "/api/records/" + ID + "/conformity", "{\"isCompliant\":true}",
                         LOGGED_IN),

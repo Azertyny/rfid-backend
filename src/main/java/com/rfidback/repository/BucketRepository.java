@@ -16,4 +16,6 @@ public interface BucketRepository extends JpaRepository<BucketEntity, UUID> {
     Optional<BucketEntity> findByPicker(PickerEntity picker);
 
     List<BucketEntity> findAllByPickerIn(List<PickerEntity> pickers);
+
+    boolean existsByPicker(PickerEntity picker);
 }
