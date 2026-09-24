@@ -1,8 +1,11 @@
 package com.rfidback.controller;
 
+import java.util.stream.Collectors;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -16,6 +19,8 @@ import jakarta.validation.ConstraintViolationException;
 /**
  * The generated APIs are {@code @Validated}: an out-of-range query parameter (e.g. {@code size=500}) throws
  * {@link ConstraintViolationException}, which Spring would otherwise answer with 500.
+ * An invalid {@code @Valid} body (e.g. a blank scanned uid) gets a {@link ProblemDetail} naming the fields, since
+ * Spring Boot's default error body leaves the message out.
  * Also renders the 409 answers whose body carries data the page needs, which {@code @ResponseStatus} cannot.
  */
 @RestControllerAdvice
@@ -25,6 +30,15 @@ public class ApiExceptionHandler {
     public ResponseEntity<ProblemDetail> handleConstraintViolation(ConstraintViolationException exception) {
         return ResponseEntity.badRequest()
                 .body(ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, exception.getMessage()));
+    }
+
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<ProblemDetail> handleInvalidBody(MethodArgumentNotValidException exception) {
+        String detail = exception.getBindingResult().getFieldErrors().stream()
+                .map(error -> error.getField() + ": " + error.getDefaultMessage())
+                .collect(Collectors.joining(", "));
+        return ResponseEntity.badRequest()
+                .body(ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, detail));
     }
 
     @ExceptionHandler(TagsInOtherBucketsException.class)

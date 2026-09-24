@@ -16,6 +16,9 @@ app:
   registration:
     # A tag-registration session without reads or page activity for this long is closed (spec 003).
     session-timeout: 5m
+  scan:
+    # A scan of the same tag by the same reader within this time after its latest record creates no new record (spec 004, FR-008). 0s disables it.
+    duplicate-window: 10s
   security:
     bootstrap-admin:
       username: ${APP_BOOTSTRAP_ADMIN_USERNAME:}

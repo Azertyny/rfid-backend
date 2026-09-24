@@ -110,6 +110,17 @@ class ReaderScanSecurityTest {
         assertThat(recordRepository.count()).isEqualTo(recordsBefore);
     }
 
+    @Test
+    void scan_fromEnregistrementReader_withBlankUid_returns400() throws Exception {
+        ReaderEntity registrationReader = readerRepository.save(ReaderEntity.builder()
+                .name("Reader registration blank scan test").mode(ReaderMode.ENREGISTREMENT).build());
+
+        mockMvc.perform(post("/api/tags/scan").header("x-api-token", registrationReader.getApitoken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"uid\":\"   \",\"isCompliant\":true}"))
+                .andExpect(status().isBadRequest());
+    }
+
     private static MockHttpServletRequestBuilder scan() {
         return post("/api/tags/scan").contentType(MediaType.APPLICATION_JSON).content(SCAN_BODY);
     }
