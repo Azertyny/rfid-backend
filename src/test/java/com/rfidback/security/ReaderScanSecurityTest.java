@@ -1,9 +1,11 @@
 package com.rfidback.security;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -19,7 +21,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rfidback.entity.ReaderEntity;
+import com.rfidback.entity.ReaderMode;
 import com.rfidback.repository.ReaderRepository;
+import com.rfidback.repository.RecordRepository;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -34,6 +38,9 @@ class ReaderScanSecurityTest {
 
     @Autowired
     private ReaderRepository readerRepository;
+
+    @Autowired
+    private RecordRepository recordRepository;
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -85,6 +92,22 @@ class ReaderScanSecurityTest {
 
         mockMvc.perform(scan().header("x-api-token", readerToken)).andExpect(status().isUnauthorized());
         mockMvc.perform(scan().header("x-api-token", newToken)).andExpect(status().isOk());
+    }
+
+    @Test
+    void scan_fromEnregistrementReader_returns200WithoutRecord() throws Exception {
+        ReaderEntity registrationReader = readerRepository.save(
+                ReaderEntity.builder().name("Reader registration scan test").mode(ReaderMode.ENREGISTREMENT).build());
+        long recordsBefore = recordRepository.count();
+
+        mockMvc.perform(post("/api/tags/scan").header("x-api-token", registrationReader.getApitoken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"uid\":\"E2000017221101891400A23G\",\"isCompliant\":false}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.isCompliant").value(true))
+                .andExpect(header().doesNotExist("Set-Cookie"));
+
+        assertThat(recordRepository.count()).isEqualTo(recordsBefore);
     }
 
     private static MockHttpServletRequestBuilder scan() {

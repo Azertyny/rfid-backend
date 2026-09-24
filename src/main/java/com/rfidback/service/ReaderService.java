@@ -13,6 +13,7 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.rfidback.entity.ReaderEntity;
+import com.rfidback.entity.ReaderMode;
 import com.rfidback.entity.Role;
 import com.rfidback.exception.ReaderAlreadyExistsException;
 import com.rfidback.exception.ReaderNotFoundException;
@@ -31,6 +32,7 @@ public class ReaderService {
     private static final String DUPLICATE_UID_MESSAGE = "A reader with the same uid already exists";
 
     private final ReaderRepository readerRepository;
+    private final RegistrationService registrationService;
 
     public Reader createReader(CreateReader createReader) throws Exception {
         String uid = createReader.getUid();
@@ -64,14 +66,25 @@ public class ReaderService {
         return readersList;
     }
 
-    /** A disabled reader keeps its token and its records, but the token is refused on /tags/scan. */
+    /**
+     * A disabled reader keeps its token and its records, but the token is refused on /tags/scan. A reader that ends
+     * up disabled or in PRODUCTION mode loses its open registration session, which could never get reads again.
+     */
     @Transactional
     public Reader updateReader(UUID readerId, UpdateReader request) {
-        if (request.getActive() == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Provide an active state");
+        if (request.getActive() == null && request.getMode() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Provide an active state and/or a mode");
         }
         ReaderEntity readerEntity = loadReader(readerId);
-        readerEntity.setActive(request.getActive());
+        if (request.getActive() != null) {
+            readerEntity.setActive(request.getActive());
+        }
+        if (request.getMode() != null) {
+            readerEntity.setMode(ReaderMode.valueOf(request.getMode().name()));
+        }
+        if (!readerEntity.isActive() || readerEntity.getMode() != ReaderMode.ENREGISTREMENT) {
+            registrationService.closeForReader(readerEntity);
+        }
         return toModel(readerRepository.save(readerEntity), true);
     }
 
@@ -93,6 +106,7 @@ public class ReaderService {
         reader.setId(readerEntity.getId());
         reader.setUid(readerEntity.getName());
         reader.setActive(readerEntity.isActive());
+        reader.setMode(com.rfidback.generated.model.ReaderMode.fromValue(readerEntity.getMode().name()));
         if (includeApiToken) {
             reader.setApitoken(readerEntity.getApitoken());
         }
