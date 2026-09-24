@@ -266,6 +266,10 @@ paths:
         401 is also returned when the reader is disabled.
         For a reader in ENREGISTREMENT mode, the read is kept for tag registration (or ignored when
         no registration session is open), no record is created, and isCompliant is always true.
+        A blank uid is rejected with 400. For a reader in PRODUCTION mode, a scan of the same tag by the same
+        reader within app.scan.duplicate-window (10 s by default) of that tag's latest record creates no new
+        record: the response carries the existing record and the message "Duplicate read ignored". If that
+        repeat reports isCompliant false and the record is compliant, the record becomes non-compliant.
       operationId: scanTag
       tags: [Tag]
       security:
@@ -899,7 +903,8 @@ components:
       properties:
         uid:
           type: string
-          description: Unique identifier of the scanned tag
+          pattern: '.*\S.*'
+          description: Unique identifier of the scanned tag. Must contain at least one non-blank character; surrounding spaces are removed.
           example: E2000017221101891400A23G
         isCompliant:
           type: boolean
@@ -927,8 +932,10 @@ components:
           example: "2024-01-15T09:30:00Z"
         message:
           type: string
-          description: Compliance processing message
-          example: Tag marked as non-compliant due to missing validation
+          description: >
+            Processing message. "Duplicate read ignored" when the scan repeated a recent one (no new record);
+            registration messages for readers in ENREGISTREMENT mode; absent otherwise.
+          example: Duplicate read ignored
       required:
         - uid
         - isCompliant

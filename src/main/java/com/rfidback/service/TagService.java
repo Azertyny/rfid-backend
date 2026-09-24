@@ -1,13 +1,18 @@
 package com.rfidback.service;
 
+import java.time.Clock;
+import java.time.Duration;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,18 +35,30 @@ import com.rfidback.repository.BucketRepository;
 import com.rfidback.repository.RecordRepository;
 import com.rfidback.repository.TagRepository;
 
-import lombok.RequiredArgsConstructor;
 
 @Service
-@RequiredArgsConstructor
 public class TagService {
 
     /** FR-011: one registration covers at most this many tags; the API also declares it as maxItems. */
     public static final int MAX_TAGS_PER_REGISTRATION = 100;
 
+    static final String DUPLICATE_READ_IGNORED = "Duplicate read ignored";
+
     private final TagRepository tagRepository;
     private final RecordRepository recordRepository;
     private final BucketRepository bucketRepository;
+    private final Clock clock;
+    private final Duration duplicateWindow;
+
+    public TagService(TagRepository tagRepository, RecordRepository recordRepository,
+            BucketRepository bucketRepository, Clock clock,
+            @Value("${app.scan.duplicate-window}") Duration duplicateWindow) {
+        this.tagRepository = tagRepository;
+        this.recordRepository = recordRepository;
+        this.bucketRepository = bucketRepository;
+        this.clock = clock;
+        this.duplicateWindow = duplicateWindow;
+    }
 
     @Transactional
     public ScanTagResponse registerScan(ReaderEntity reader, ScanTagRequest scanTagRequest) {
@@ -49,10 +66,16 @@ public class TagService {
 
         String uid = sanitizeUid(scanTagRequest.getUid());
         Assert.isTrue(StringUtils.hasText(uid), "Tag uid must not be blank");
-        TagEntity tag = tagRepository.findByUid(uid)
-                .orElseGet(() -> tagRepository.save(TagEntity.builder().uid(uid).build()));
-
         boolean isCompliant = Boolean.TRUE.equals(scanTagRequest.getIsCompliant());
+        Optional<TagEntity> existingTag = tagRepository.findByUid(uid);
+        if (existingTag.isPresent()) {
+            Optional<RecordEntity> recent = findRecentRecord(reader, existingTag.get());
+            if (recent.isPresent()) {
+                return ignoreDuplicate(recent.get(), isCompliant);
+            }
+        }
+        TagEntity tag = existingTag.orElseGet(() -> tagRepository.save(TagEntity.builder().uid(uid).build()));
+
         PickerEntity picker = tag.getBucket() != null ? tag.getBucket().getPicker() : null;
         RecordEntity recordEntity = RecordEntity.builder()
                 .tag(tag)
@@ -68,6 +91,30 @@ public class TagService {
         response.setIsCompliant(isCompliant);
         response.setProcessedAt(saved.getCreationDate());
         response.setMessage(saved.getComment());
+        return response;
+    }
+
+    /** FR-008: a Record of this tag by this reader within the duplicate window; a new tag has none. */
+    private Optional<RecordEntity> findRecentRecord(ReaderEntity reader, TagEntity tag) {
+        if (duplicateWindow.isZero() || duplicateWindow.isNegative()) {
+            return Optional.empty();
+        }
+        OffsetDateTime cutoff = OffsetDateTime.now(clock).minus(duplicateWindow);
+        return recordRepository.findFirstByReaderAndTagAndCreationDateAfterOrderByCreationDateDesc(reader, tag,
+                cutoff);
+    }
+
+    /** A repeated read creates no Record; a non-compliant one still lowers the Record (never raises it). */
+    private ScanTagResponse ignoreDuplicate(RecordEntity existing, boolean isCompliant) {
+        if (!isCompliant && existing.isCompliant()) {
+            existing.setCompliant(false);
+            existing = recordRepository.saveAndFlush(existing);
+        }
+        ScanTagResponse response = new ScanTagResponse();
+        response.setUid(existing.getTag().getUid());
+        response.setIsCompliant(existing.isCompliant());
+        response.setProcessedAt(existing.getCreationDate());
+        response.setMessage(DUPLICATE_READ_IGNORED);
         return response;
     }
 

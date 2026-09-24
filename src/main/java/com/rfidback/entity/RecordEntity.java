@@ -11,6 +11,7 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
@@ -21,7 +22,9 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 @Entity
-@Table(name = "record")
+// Serves the duplicate-read lookup of a scan (spec 004, FR-008).
+@Table(name = "record", indexes = @Index(name = "idx_record_reader_tag_date",
+        columnList = "reader_id, tag_id, creation_date"))
 @Getter
 @Setter
 @NoArgsConstructor
