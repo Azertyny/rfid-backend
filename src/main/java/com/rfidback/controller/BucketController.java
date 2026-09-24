@@ -33,4 +33,10 @@ public class BucketController implements BucketApiDelegate {
         bucketService.assignBucketToPicker(bucketId, assignBucketToPickerRequest.getPickerId());
         return ResponseEntity.noContent().build();
     }
+
+    @Override
+    public ResponseEntity<Void> unassignBucketFromPicker(java.util.UUID bucketId) {
+        bucketService.unassignBucketFromPicker(bucketId);
+        return ResponseEntity.noContent().build();
+    }
 }

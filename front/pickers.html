@@ -214,7 +214,12 @@
             try {
                 const response = await apiFetch(`/pickers/${pickerToDeleteId}`, { method: 'DELETE' });
                 
-                if (response.ok) { 
+                if (response.ok) {
+                    deleteModal.hide();
+                    fetchPickers(currentPage);
+                } else if (response.status === 409) {
+                    alert("Ce cueilleur a encore un seau affecté : désaffectez-le avant de le supprimer.");
+                } else if (response.status === 404) {
                     deleteModal.hide();
                     fetchPickers(currentPage);
                 } else {

@@ -151,7 +151,7 @@ paths:
         "204":
           description: Cueilleur supprimé
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { $ref: "#/components/responses/AlreadyExist" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "500": { $ref: "#/components/responses/InternalError" }
 
   # -----------------------------------------------------------------------------------------------
@@ -337,6 +337,15 @@ paths:
         "400": { $ref: "#/components/responses/InvalidRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/InternalError" }
+    delete:
+      summary: Unassign the picker from a bucket
+      operationId: unassignBucketFromPicker
+      tags: [Bucket]
+      responses:
+        "204":
+          description: Seau désaffecté (aussi quand il n'avait pas de cueilleur)
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
 
   # -----------------------------------------------------------------------------------------------
   # Auth section
@@ -499,6 +508,8 @@ components:
       description: Retourné lorsqu'une ressource a été supprimée
     AlreadyExist:
       description: Retourné lorsqu'une ressource existe déjà
+    Conflict:
+      description: Retourné lorsque l'action est impossible car la ressource est encore utilisée
     NotFound:
       description: Retourné lorsqu'une ressource est introuvable
     InvalidRequest:
@@ -535,8 +546,11 @@ components:
       name: sort
       in: query
       description: |
-        Filtering and sorting criteria. Format: `field1,asc|desc`.
-        example: : `lastname,asc`.
+        Sort order, format `field,direction`.
+        Allowed fields: `lastname`, `firstname`, `creationDate`.
+        Allowed directions: `asc`, `desc` (case-insensitive).
+        Default when missing: `lastname,asc` then `firstname,asc`.
+        Any other value returns 400.
       schema:
         type: string
       example: lastname,asc
