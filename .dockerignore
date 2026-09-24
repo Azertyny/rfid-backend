@@ -5,3 +5,5 @@ target
 .vscode
 data
 doc
+.env
+*.log

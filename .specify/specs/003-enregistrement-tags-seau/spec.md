@@ -1,0 +1,86 @@
+# Feature Specification: Enregistrement des TAGs sur un seau
+
+**Feature Branch**: `N/A — reverse-engineered from codebase, not developed on a dedicated branch`
+
+**Created**: 2026-09-24
+
+**Status**: As-Is (reverse-engineered) — describes current behavior, not a target design
+
+**Input**: User description: "Parcours le dépôt. Pour chaque fonctionnalité métier identifiée, crée .specify/specs/NNN-nom-feature/spec.md ... Décris le comportement ACTUEL (as-is) ... cite les fichiers ... Marque [NEEDS CLARIFICATION] ..."
+
+## Clarifications
+
+### Session 2026-09-24
+
+- Q: POST /tags/buckets/{bucketNumber} currently auto-creates a bucket if the number doesn't exist yet. What should the target behavior be for an unknown bucket number? → A: Keep auto-create (recommended) — preserve current behavior as the target design; no separate bucket-creation step needed.
+- Q: doc/ describes a full admin UI for tag registration, but no such page exists in /front. Is a front-end page still expected, or is this meant to stay API-only? → A: API-only, external tool (recommended) — consumed by an external RFID handheld/scanner tool outside this repo; doc/'s UI-flow wording describes that external tool, not a web page to build. **Superseded** by the answer given during `/speckit-plan` (see last bullet).
+- Q: doc/ implies a step showing "tags currently present on the reader" with no backend equivalent. Should this be backed by a new API endpoint, or handled by the external tool reading the reader hardware directly? → A: External tool reads hardware directly (recommended) — no new backend endpoint needed; the external tool queries the reader hardware/SDK directly, then calls POST /tags/buckets/{n} once the operator picks a bucket number. **Superseded**: there is no external tool (see last bullet); this step is open again.
+- Q (asked during `/speckit-plan` on auth and roles): how should the external tool authenticate? → A: It is not an external tool — tag registration is part of the web front, used by a logged-in Administrateur at a station equipped with a reader.
+- Q: How should the tag-registration page get the list of tags currently seen by the station's reader? → A: Reader sends to backend (recommended) — the station's reader is a registered reader in "registration" mode; it posts its reads to the backend, which keeps them as temporary reads (not compliance Records); the page polls the tags seen by that reader. A browser cannot access the reader hardware directly here (plain HTTP on the local network, no secure context).
+- Q: How should the station's reader send its reads, and who sets it to registration mode? → A: Same endpoint, mode on server (recommended) — the reader keeps posting to /tags/scan unchanged; an Administrateur marks that reader as "registration" in the app, and the backend routes its reads to temporary storage instead of creating Records.
+- Q: Which reads should the registration page show, so tags from the previous bucket don't get mixed into the next one? → A: Since "Start", cleared after save (recommended) — the page shows only tags read after the Administrateur clicks "Start"; saving the bucket or cancelling clears those reads.
+- Q: When a tag being registered already belongs to another bucket, what should happen? → A: Warn, confirm to move (recommended) — the page flags those tags with their current bucket, and the Administrateur must confirm before saving; then they are moved.
+
+## User Scenarios & Testing *(mandatory)*
+
+### User Story 1 - Associer une liste de TAGs à un numéro de seau (Priority: P1)
+
+Un opérateur (via un outil non identifié dans le dépôt — voir Edge Cases) associe une liste d'UID de tags RFID à un numéro de seau, en remplaçant toute association précédente pour ce seau. Cible (Clarifications 2026-09-24) : un Administrateur connecté le fait depuis une page du front web, à partir des tags lus par le lecteur du poste.
+
+**Evidence**: `controller/TagController.java:35-38` (`registerTagsForBucket`), `service/TagService.java:64-100`, `api.yaml:156-186`.
+
+**Acceptance Scenarios**:
+
+1. **Given** un `bucketNumber` déjà connu ou non, **When** `POST /api/tags/buckets/{bucketNumber}` est appelé avec `{"uids": [...]}`, **Then** le seau est créé s'il n'existait pas (`bucketRepository.findByNumber(...).orElseGet(save new)`), toute association tag→seau précédente pour ce seau est retirée (`tag.setBucket(null)` sur tous les tags précédemment liés), puis chaque UID de la requête est associé au seau — en créant le tag s'il n'existait pas encore. Evidence: `TagService.java:66-94`.
+2. **Given** la liste `uids` contient des doublons ou des chaînes vides, **When** la requête est envoyée, **Then** les doublons sont dédupliqués (`LinkedHashSet`) et les valeurs vides/blanches sont ignorées silencieusement. Evidence: `TagService.java:75-82`.
+3. **Given** l'association réussie, **When** la réponse est renvoyée, **Then** elle contient `bucketNumber` et `registeredCount` (nombre de tags désormais associés). Evidence: `TagService.java:96-99`.
+
+### Edge Cases
+
+- **Aucune interface utilisateur** : `doc/20251116-use_cases.md:61-78` ("Enregistrer un ou plusieurs TAG grâce au lecteur") décrit un parcours UI complet : "L'utilisateur accède à la page de gestion des TAGs", "ouvre la fenêtre d'enregistrement", "Le système affiche la liste des TAGs présents sur le lecteur RFID". Aucune de ces pages n'existe dans `/front` (`front/index.html`, `pickers.html`, `readers.html`, `reader.html` ne référencent jamais `POST /tags/buckets/...`, vérifié par recherche de `tags/buckets` dans `front/*.html`). **Résolu (2026-09-24, révisé lors de `/speckit-plan`)** : il n'y a pas d'outil externe — l'enregistrement des tags fait partie du front web, utilisé par un Administrateur connecté sur un poste équipé d'un lecteur. Une page `/front` est à construire, conformément au parcours de `doc/20251116-use_cases.md:61-78`.
+- **Pas d'étape "lister les TAGs présents sur le lecteur"** : le document métier suppose une étape où "le système affiche la liste des TAGs présents sur le lecteur RFID" avant saisie du numéro de seau. Aucun endpoint de ce type n'existe dans `api.yaml` (aucune route ne renvoie "les tags actuellement vus par un lecteur physique"). **Résolu (2026-09-24, session de clarification rouverte)** : le lecteur du poste est un lecteur enregistré en mode "enregistrement". Il envoie ses lectures au backend comme les lecteurs de production, mais le backend les conserve comme lectures temporaires, **sans** créer de `Record` de conformité (elles ne doivent apparaître ni dans les 10 dernières lectures, spec `005`, ni sur le tableau de bord, spec `007`). La page interroge le backend pour obtenir les tags vus par ce lecteur. Un accès direct du navigateur au lecteur est exclu : le déploiement est en HTTP simple sur le réseau local (`deploy/INSTALL.md`), or les API navigateur d'accès USB/série exigent HTTPS ou `localhost`.
+- **Aucune authentification** : contrairement à `/api/tags/scan`, cette route n'est protégée par aucun jeton ni session (`SecurityConfig.java:32-36`), alors que `doc/` la classe comme une action "Administrateur" nécessitant d'être connecté. **Décision (Clarifications 2026-09-24, réutilisée de la spec `001`)** : écart à corriger — cette route devra aussi devenir authentifiée une fois le système d'authentification cible en place.
+- **Création implicite de seau** : un `bucketNumber` inconnu crée silencieusement un nouveau `BucketEntity`, sans validation de plage ni confirmation. `doc/` ne mentionne jamais la création d'un seau à cette occasion — le texte métier suppose un numéro de seau déjà existant ("L'utilisateur saisit un numéro de seau"). **Résolu (2026-09-24)** : voulue — la création implicite du seau reste le comportement cible.
+- **Tag déjà associé à un autre seau** : `TagService.registerTagsForBucket` réutilise le tag existant et remplace son seau (`TagService.java:86-88`) ; l'ancien seau perd ce tag sans aucun avertissement. **Résolu (2026-09-24)** : la page signale ces tags avec leur seau actuel, et l'Administrateur doit confirmer avant l'enregistrement ; ils sont alors déplacés. Côté API, sans confirmation explicite dans la requête, l'enregistrement est refusé (`409`) avec la liste des tags concernés, afin qu'aucun client ne puisse déplacer un tag par inadvertance.
+- **Aucun test** : `registerTagsForBucket` n'est couvert par aucun test (`TagServiceTest` ne teste que `registerScan`).
+
+## Requirements *(mandatory)*
+
+### Functional Requirements
+
+- **FR-001**: Le système DOIT accepter une liste d'UID de tags pour un numéro de seau donné et remplacer entièrement les associations tag→seau existantes pour ce seau. Evidence: `TagService.java:66-94`.
+- **FR-002**: Le système DOIT créer le seau s'il n'existe pas encore pour le numéro donné. Evidence: `TagService.java:66-67`. **Décision (Clarifications 2026-09-24)** : confirmé comme comportement cible, pas un défaut à corriger.
+- **FR-003**: Le système DOIT créer chaque tag référencé par son UID s'il n'existe pas encore. Evidence: `TagService.java:86-90`.
+- **FR-004**: Le système DOIT dédupliquer les UID fournis et ignorer les valeurs vides. Evidence: `TagService.java:75-82`.
+- **FR-005**: État actuel — le système ne DOIT imposer aucune authentification sur cette route. Evidence: `SecurityConfig.java:32-36`. **Décision (Clarifications 2026-09-24, réutilisée de la spec `001`)** : écart à corriger, cohérent avec la décision d'authentification globale.
+- **FR-006** (révisé lors de `/speckit-plan`) : une page du front web DOIT permettre à un Administrateur connecté d'enregistrer des tags sur un seau. Elle obtient les tags présents sur le lecteur du poste en interrogeant le backend (voir FR-007).
+- **FR-007** (nouveau, Clarifications 2026-09-24) : un lecteur DOIT porter un mode, "production" (défaut) ou "enregistrement", modifiable par un Administrateur dans l'application. Le lecteur continue d'appeler `POST /api/tags/scan` sans aucun changement de son côté ; c'est le backend qui, selon le mode du lecteur authentifié, oriente la lecture. En mode "enregistrement", ses lectures DOIVENT être conservées comme lectures temporaires consultables par la page d'enregistrement, et NE DOIVENT PAS créer de `Record` de conformité. Non implémenté aujourd'hui : tout scan crée un `Record` (`TagService.java:36-62`).
+- **FR-008** (nouveau, Clarifications 2026-09-24) : la page d'enregistrement DOIT n'afficher que les tags lus par le lecteur du poste après le clic sur "Démarrer" ; l'enregistrement du seau ou l'annulation DOIT effacer ces lectures temporaires. Une lecture répétée du même tag n'apparaît qu'une fois.
+- **FR-009** (nouveau, Clarifications 2026-09-24) : pour chaque tag lu, la page DOIT indiquer s'il est déjà associé à un autre seau (et lequel). L'enregistrement DOIT être refusé (`409`, avec la liste des tags concernés) tant que la requête ne confirme pas explicitement le déplacement ; une fois confirmé, ces tags sont retirés de leur ancien seau. Aujourd'hui le déplacement est silencieux (`TagService.java:86-88`).
+
+### Key Entities
+
+- **Tag** (`tag` table) : `id` (UUID), `uid` (string 50, unique), `bucket` (FK nullable vers `Bucket`), `creationDate`. Evidence: `TagEntity.java`.
+- **Bucket** (`bucket` table) : `id` (UUID), `number` (integer, unique), `picker` (FK nullable), `creationDate`. Evidence: `BucketEntity.java`. Voir aussi spec `006-gestion-seaux-affectation`.
+- **Reader** (spec `002`) — cible (Clarifications 2026-09-24) : nouveau champ `mode` (`PRODUCTION` par défaut, ou `ENREGISTREMENT`), modifiable par un Administrateur.
+- **Lecture temporaire** (nouvelle entité cible, non implémentée) : un tag vu par un lecteur en mode "enregistrement" — lecteur, UID du tag, date de lecture. Ne crée pas de `Record` ; sert uniquement à la page d'enregistrement. Durée de vie : de "Démarrer" jusqu'à l'enregistrement du seau ou l'annulation, puis effacée.
+
+## Success Criteria *(mandatory)*
+
+### Measurable Outcomes
+
+- **SC-001** (observé) : une association réussie renvoie un `registeredCount` égal au nombre d'UID uniques et non vides fournis.
+- **SC-002**: [NEEDS CLARIFICATION: aucun test automatisé ne couvre ce comportement ; aucune métrique de performance/volumétrie (nombre de tags par seau, fréquence d'appel) n'est documentée.]
+
+## Assumptions
+
+- **Révisé lors de `/speckit-plan`** : le "lecteur RFID" mentionné dans `doc/` est un lecteur installé sur le poste de l'Administrateur ; le parcours se fait dans le front web, pas dans un outil externe.
+- Aucune limite de nombre de tags par seau n'est imposée par le code (`RegisterTagsRequest.uids` a `minItems: 1` mais pas de `maxItems`, `api.yaml:566-578`).
+
+## Drift vs `doc/`
+
+| Point documenté (`doc/20251116-use_cases.md:61-78`) | Comportement réel | Fichiers |
+|---|---|---|
+| Parcours UI en 5 étapes avec page dédiée et fenêtre d'enregistrement | Aucune page front n'implémente ce flux ; cible (révisée lors de `/speckit-plan`) = page du front web pour un Administrateur connecté | `front/*.html` (absence), `TagController.java:35-38` |
+| "Le système affiche la liste des TAGs présents sur le lecteur RFID" | Aucun endpoint ne renvoie l'état courant d'un lecteur physique ; cible (Clarifications 2026-09-24) = lecteur du poste en mode "enregistrement", lectures temporaires conservées par le backend et interrogées par la page | `api.yaml` (absence de route correspondante) |
+| Précondition "L'utilisateur est connecté" | Aucune authentification exigée | `SecurityConfig.java:32-36` |

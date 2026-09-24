@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Interface Contrôle Qualité</title>
     <script src="config.js"></script>
+    <script src="auth.js"></script>
     <style>
         /* --- GLOBAL --- */
         * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
@@ -113,8 +114,7 @@
     <script>
         // --- ÉTAT ---
         let CURRENT_READER = {
-            uid: null,
-            token: null
+            uid: null
         };
         let currentRecordsHash = "";
 
@@ -124,7 +124,7 @@
             const grid = document.getElementById('readers-grid');
             try {
                 // GET /readers
-                const res = await fetch(`${CONFIG.API_URL}/readers`);
+                const res = await apiFetch(`/readers`);
                 if(!res.ok) throw new Error("Erreur chargement lecteurs");
                 
                 const data = await res.json();
@@ -139,7 +139,7 @@
                 data.readers.forEach(reader => {
                     const btn = document.createElement('div');
                     btn.className = 'reader-btn';
-                    // YAML: reader.uid est l'identifiant lisible, reader.apitoken est la clé
+                    // reader.uid est l'identifiant lisible du lecteur
                     btn.innerHTML = `
                         <h3>${reader.uid}</h3>
                     `;
@@ -153,14 +153,8 @@
         }
 
         function selectReader(reader) {
-            if (!reader.apitoken) {
-                alert("Erreur: Ce lecteur n'a pas de Token API !");
-                return;
-            }
-
             // Enregistrement de la config
             CURRENT_READER.uid = reader.uid; // L'identifiant (ex: "Reader 1")
-            CURRENT_READER.token = reader.apitoken; // Le token de sécurité
 
             // Mise à jour UI
             document.getElementById('reader-uid-display').innerText = reader.uid;
@@ -193,13 +187,7 @@
             try {
                 // GET /records/readers/{readerId}
                 // Attention: le readerId dans l'URL est bien l'UID du lecteur
-                const response = await fetch(`${CONFIG.API_URL}/records/readers/${CURRENT_READER.uid}`, {
-                    method: 'GET',
-                    headers: {
-                        'x-api-token': CURRENT_READER.token, // Token récupéré dynamiquement
-                        'Content-Type': 'application/json'
-                    }
-                });
+                const response = await apiFetch(`/records/readers/${encodeURIComponent(CURRENT_READER.uid)}`, { silent: true });
 
                 if (!response.ok) throw new Error(`API: ${response.status}`);
                 const data = await response.json();
@@ -256,12 +244,9 @@
 
             try {
                 // PATCH /records/{recordId}/conformity
-                await fetch(`${CONFIG.API_URL}/records/${record.id}/conformity`, {
+                await apiFetch(`/records/${record.id}/conformity`, {
                     method: 'PATCH',
-                    headers: {
-                        'x-api-token': CURRENT_READER.token,
-                        'Content-Type': 'application/json'
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ isCompliant: newStatus })
                 });
                 fetchRecords(); // Refresh
@@ -290,7 +275,10 @@
         }
 
         // Démarrage : Charge la liste des lecteurs
-        window.onload = loadReaders;
+        window.onload = async () => {
+            await requireRole('ADMINISTRATEUR', 'OPERATEUR');
+            loadReaders();
+        };
 
     </script>
 </body>

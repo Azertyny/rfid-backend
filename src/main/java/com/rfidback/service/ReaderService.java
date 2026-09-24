@@ -3,9 +3,12 @@ package com.rfidback.service;
 import java.util.ArrayList;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 
 import com.rfidback.entity.ReaderEntity;
+import com.rfidback.entity.Role;
 import com.rfidback.generated.model.CreateReader;
 import com.rfidback.generated.model.Reader;
 import com.rfidback.generated.model.ReadersList;
@@ -30,12 +33,15 @@ public class ReaderService {
     }
 
     public ReadersList getReaders() {
+        boolean includeApiTokens = currentUserIsAdministrator();
         ReadersList readersList = new ReadersList();
         ArrayList<Reader> readerArrayList = new ArrayList<>();
         for (ReaderEntity readerEntity : readerRepository.findAll()) {
             Reader reader = new Reader();
             reader.setUid(readerEntity.getName());
-            reader.setApitoken(readerEntity.getApitoken());
+            if (includeApiTokens) {
+                reader.setApitoken(readerEntity.getApitoken());
+            }
             reader.setCreationDate(readerEntity.getCreationDate());
             reader.setUpdateDate(readerEntity.getUpdateDate());
             readerArrayList.add(reader);
@@ -43,6 +49,12 @@ public class ReaderService {
         readersList.setReaders(readerArrayList);
 
         return readersList;
+    }
+
+    private static boolean currentUserIsAdministrator() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        return authentication != null && authentication.getAuthorities().stream()
+                .anyMatch(authority -> Role.ADMINISTRATEUR.authority().equals(authority.getAuthority()));
     }
 
 }

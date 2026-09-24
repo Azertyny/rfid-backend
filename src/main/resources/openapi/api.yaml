@@ -10,6 +10,10 @@ servers:
   - url: https://api.apolog.fr/api
     description: Serveur de production
 
+# Default: a logged-in user session. /tags/scan uses the reader token, /auth/login is public.
+security:
+  - SessionCookie: []
+
 # -----------------------------------------------------------------------------------------------
 # Endpoints section
 # -----------------------------------------------------------------------------------------------
@@ -334,6 +338,151 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/InternalError" }
 
+  # -----------------------------------------------------------------------------------------------
+  # Auth section
+  # -----------------------------------------------------------------------------------------------
+  /auth/login:
+    post:
+      summary: Log in and open a session
+      operationId: login
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Logged in; session cookie set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentUser"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /auth/logout:
+    post:
+      summary: Log out and invalidate the session
+      operationId: logout
+      tags: [Auth]
+      responses:
+        "204":
+          description: Logged out
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /auth/me:
+    get:
+      summary: Current logged-in user
+      operationId: getCurrentUser
+      tags: [Auth]
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentUser"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  # -----------------------------------------------------------------------------------------------
+  # User section (Administrateur only)
+  # -----------------------------------------------------------------------------------------------
+  /users:
+    get:
+      summary: List users
+      operationId: listUsers
+      tags: [User]
+      responses:
+        "200":
+          description: Users list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsersList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      summary: Create a user
+      operationId: createUser
+      tags: [User]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUser"
+      responses:
+        "201":
+          description: Created user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/AlreadyExist" }
+
+  /users/{userId}:
+    parameters:
+      - in: path
+        name: userId
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      summary: Change role and/or enabled state
+      operationId: updateUser
+      tags: [User]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUser"
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Would leave no enabled Administrateur
+
+  /users/{userId}/password:
+    parameters:
+      - in: path
+        name: userId
+        required: true
+        schema:
+          type: string
+          format: uuid
+    put:
+      summary: Reset a user's password
+      operationId: resetUserPassword
+      tags: [User]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResetPassword"
+      responses:
+        "204":
+          description: Password reset; the user's sessions are closed
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
 # ---------------------------------------------------------------------------
 # COMMON DEFINITONS
 # ---------------------------------------------------------------------------
@@ -359,7 +508,9 @@ components:
     UnexpectedError:
       description: Retourné lorsqu'une nouvelle ressource a été créée
     Unauthorized:
-      description: Jeton API manquant ou invalide
+      description: Jeton API manquant ou invalide, ou utilisateur non connecté
+    Forbidden:
+      description: Rôle insuffisant
 
   # ---------------------------------------------------------------------------
   parameters:
@@ -409,7 +560,7 @@ components:
           properties:
             apitoken:
               type: string
-              description: API token used by the reader to authenticate requests
+              description: API token used by the reader to authenticate requests. Only returned to Administrateurs.
               example: abcd1234efgh5678ijkl9012mnop3456
             creationDate:
               type: string
@@ -421,8 +572,6 @@ components:
               format: date-time
               description: Last update date of the reader
               example: "2024-01-02T12:00:00Z"
-          required:
-            - apitoken
 
     ReadersList:
       type: object
@@ -701,8 +850,110 @@ components:
       required:
         - buckets
 
+    Role:
+      type: string
+      enum: [ADMINISTRATEUR, OPERATEUR]
+
+    LoginRequest:
+      type: object
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+      required:
+        - username
+        - password
+
+    CurrentUser:
+      type: object
+      properties:
+        username:
+          type: string
+        role:
+          $ref: "#/components/schemas/Role"
+      required:
+        - username
+        - role
+
+    CreateUser:
+      type: object
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 50
+          pattern: "^[A-Za-z0-9._-]+$"
+        password:
+          type: string
+          format: password
+          minLength: 8
+        role:
+          $ref: "#/components/schemas/Role"
+      required:
+        - username
+        - password
+        - role
+
+    UpdateUser:
+      type: object
+      description: At least one field must be present.
+      properties:
+        role:
+          $ref: "#/components/schemas/Role"
+        enabled:
+          type: boolean
+
+    ResetPassword:
+      type: object
+      properties:
+        password:
+          type: string
+          format: password
+          minLength: 8
+      required:
+        - password
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        role:
+          $ref: "#/components/schemas/Role"
+        enabled:
+          type: boolean
+        creationDate:
+          type: string
+          format: date-time
+      required:
+        - id
+        - username
+        - role
+        - enabled
+        - creationDate
+
+    UsersList:
+      type: object
+      properties:
+        users:
+          type: array
+          items:
+            $ref: "#/components/schemas/User"
+      required:
+        - users
+
   # ---------------------------------------------------------------------------
   securitySchemes:
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: JSESSIONID
+      description: Session opened by POST /auth/login. State-changing requests also need the X-XSRF-TOKEN header (value of the XSRF-TOKEN cookie).
     ReaderApiToken:
       type: apiKey
       in: header
