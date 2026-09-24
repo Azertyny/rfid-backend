@@ -41,7 +41,7 @@ or opened directly; talks to the backend through `front/config.js`.
 `src/main/resources/openapi/api.yaml` is the source of truth for the REST API. The `openapi-generator-maven-plugin`
 (configured in `pom.xml`, runs on `generate-sources`) generates, into `target/generated-sources/openapi`:
 - `com.rfidback.generated.api.*ApiDelegate` interfaces (one per OpenAPI tag: Reader, Picker, Tag, Bucket, Record,
-  Auth, User)
+  Auth, User, Registration)
 - `com.rfidback.generated.model.*` request/response DTOs
 
 Hand-written controllers in `src/main/java/com/rfidback/controller` implement the generated `*ApiDelegate`

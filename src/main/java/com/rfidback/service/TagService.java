@@ -1,24 +1,31 @@
 package com.rfidback.service;
 
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.Assert;
 import org.springframework.util.StringUtils;
+import org.springframework.web.server.ResponseStatusException;
 
 import com.rfidback.entity.BucketEntity;
 import com.rfidback.entity.PickerEntity;
 import com.rfidback.entity.ReaderEntity;
 import com.rfidback.entity.RecordEntity;
 import com.rfidback.entity.TagEntity;
+import com.rfidback.exception.TagsInOtherBucketsException;
 import com.rfidback.generated.model.RegisterTagsRequest;
 import com.rfidback.generated.model.RegisterTagsResponse;
 import com.rfidback.generated.model.ScanTagRequest;
 import com.rfidback.generated.model.ScanTagResponse;
+import com.rfidback.generated.model.TagInOtherBucket;
 import com.rfidback.repository.BucketRepository;
 import com.rfidback.repository.RecordRepository;
 import com.rfidback.repository.TagRepository;
@@ -28,6 +35,9 @@ import lombok.RequiredArgsConstructor;
 @Service
 @RequiredArgsConstructor
 public class TagService {
+
+    /** FR-011: one registration covers at most this many tags; the API also declares it as maxItems. */
+    public static final int MAX_TAGS_PER_REGISTRATION = 100;
 
     private final TagRepository tagRepository;
     private final RecordRepository recordRepository;
@@ -63,40 +73,70 @@ public class TagService {
 
     @Transactional
     public RegisterTagsResponse registerTagsForBucket(Integer bucketNumber, RegisterTagsRequest request) {
+        List<String> uids = request == null || request.getUids() == null ? List.of() : request.getUids();
+        boolean moveConfirmed = request != null && Boolean.TRUE.equals(request.getMoveConfirmed());
+        return registerTagsForBucket(bucketNumber, uids, moveConfirmed);
+    }
+
+    /**
+     * Adds the tags to the bucket (created if unknown). The bucket's other tags stay linked. Tags linked to another
+     * bucket are moved only when {@code moveConfirmed}; otherwise nothing is written and the answer is 409.
+     */
+    @Transactional
+    public RegisterTagsResponse registerTagsForBucket(Integer bucketNumber, Collection<String> uids,
+            boolean moveConfirmed) {
+        Set<String> uniqueUids = new LinkedHashSet<>();
+        for (String uid : uids) {
+            if (StringUtils.hasText(uid)) {
+                uniqueUids.add(uid.trim());
+            }
+        }
+        if (uniqueUids.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Provide at least one non-blank tag uid");
+        }
+        // Also checked here for callers that bypass the API validation (a registration session's save).
+        if (uniqueUids.size() > MAX_TAGS_PER_REGISTRATION) {
+            throw tooManyTags();
+        }
+
+        Map<String, TagEntity> existingTags = new HashMap<>();
+        for (TagEntity tag : tagRepository.findAllByUidIn(uniqueUids)) {
+            existingTags.put(tag.getUid(), tag);
+        }
+
+        // Compare numbers, not entities: the target bucket may not exist yet.
+        List<TagInOtherBucket> tagsInOtherBuckets = new ArrayList<>();
+        for (String uid : uniqueUids) {
+            TagEntity tag = existingTags.get(uid);
+            if (tag != null && tag.getBucket() != null && !bucketNumber.equals(tag.getBucket().getNumber())) {
+                tagsInOtherBuckets.add(new TagInOtherBucket(uid, tag.getBucket().getNumber()));
+            }
+        }
+        if (!tagsInOtherBuckets.isEmpty() && !moveConfirmed) {
+            throw new TagsInOtherBucketsException(tagsInOtherBuckets);
+        }
+
         BucketEntity bucket = bucketRepository.findByNumber(bucketNumber)
                 .orElseGet(() -> bucketRepository.save(BucketEntity.builder().number(bucketNumber).build()));
 
-        List<TagEntity> previousTags = tagRepository.findAllByBucket(bucket);
-        if (!previousTags.isEmpty()) {
-            previousTags.forEach(tag -> tag.setBucket(null));
-            tagRepository.saveAll(previousTags);
-        }
-
-        Set<String> uniqueUids = new LinkedHashSet<>();
-        if (request != null && request.getUids() != null) {
-            for (String uid : request.getUids()) {
-                if (StringUtils.hasText(uid)) {
-                    uniqueUids.add(uid.trim());
-                }
-            }
-        }
-
         List<TagEntity> tagsToSave = new ArrayList<>();
         for (String uid : uniqueUids) {
-            TagEntity tag = tagRepository.findByUid(uid)
-                    .orElseGet(() -> TagEntity.builder().uid(uid).build());
+            TagEntity tag = existingTags.getOrDefault(uid, TagEntity.builder().uid(uid).build());
             tag.setBucket(bucket);
             tagsToSave.add(tag);
         }
-
-        if (!tagsToSave.isEmpty()) {
-            tagRepository.saveAll(tagsToSave);
-        }
+        tagRepository.saveAll(tagsToSave);
 
         RegisterTagsResponse response = new RegisterTagsResponse();
         response.setBucketNumber(bucketNumber);
         response.setRegisteredCount(tagsToSave.size());
+        response.setTotalCount(Math.toIntExact(tagRepository.countByBucket(bucket)));
         return response;
+    }
+
+    public static ResponseStatusException tooManyTags() {
+        return new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "A registration covers at most %d tags".formatted(MAX_TAGS_PER_REGISTRATION));
     }
 
     private String sanitizeUid(String uid) {

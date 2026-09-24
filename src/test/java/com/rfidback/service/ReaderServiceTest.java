@@ -41,7 +41,7 @@ class ReaderServiceTest {
     @BeforeEach
     void setUp() {
         readerRepository = Mockito.mock(ReaderRepository.class);
-        readerService = new ReaderService(readerRepository);
+        readerService = new ReaderService(readerRepository, Mockito.mock(RegistrationService.class));
         // Stand in for JPA: saving assigns an id, the timestamps and (through @PrePersist) the token.
         Answer<ReaderEntity> persist = invocation -> {
             ReaderEntity entity = invocation.getArgument(0);

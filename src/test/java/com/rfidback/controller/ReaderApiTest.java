@@ -12,6 +12,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.time.OffsetDateTime;
 import java.util.Map;
 import java.util.UUID;
 
@@ -28,7 +29,13 @@ import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rfidback.entity.ReaderEntity;
+import com.rfidback.entity.ReaderMode;
+import com.rfidback.entity.RegistrationSessionEntity;
+import com.rfidback.entity.Role;
+import com.rfidback.entity.UserEntity;
 import com.rfidback.repository.ReaderRepository;
+import com.rfidback.repository.RegistrationSessionRepository;
+import com.rfidback.repository.UserRepository;
 
 /** HTTP-level checks of the reader routes (spec 002). */
 @SpringBootTest
@@ -44,6 +51,12 @@ class ReaderApiTest {
 
     @Autowired
     private ReaderRepository readerRepository;
+
+    @Autowired
+    private UserRepository userRepository;
+
+    @Autowired
+    private RegistrationSessionRepository registrationSessionRepository;
 
     @Test
     void list_asAdmin_returns200() throws Exception {
@@ -162,6 +175,60 @@ class ReaderApiTest {
         rotate(readerId)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.active").value(false));
+    }
+
+    @Test
+    void create_defaultsToProductionMode() throws Exception {
+        JsonNode created = createReader(unique("Mode"));
+        assertThat(created.get("mode").asText()).isEqualTo("PRODUCTION");
+
+        mockMvc.perform(get("/api/readers").with(operator()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.readers[?(@.id == '" + created.get("id").asText() + "')].mode")
+                        .value(contains("PRODUCTION")));
+    }
+
+    @Test
+    void patch_mode_switchesToEnregistrementAndBack() throws Exception {
+        String readerId = createReader(unique("Switch")).get("id").asText();
+
+        patchReader(readerId, "{\"mode\":\"ENREGISTREMENT\"}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mode").value("ENREGISTREMENT"))
+                .andExpect(jsonPath("$.active").value(true));
+        patchReader(readerId, "{\"mode\":\"PRODUCTION\"}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mode").value("PRODUCTION"));
+    }
+
+    @Test
+    void patch_modeToProduction_closesOpenSession() throws Exception {
+        ReaderEntity reader = readerWithOpenSession("CloseOnMode");
+
+        patchReader(reader.getId().toString(), "{\"mode\":\"PRODUCTION\"}").andExpect(status().isOk());
+
+        assertThat(registrationSessionRepository.findByReader(reader)).isEmpty();
+    }
+
+    @Test
+    void patch_disable_closesOpenSession() throws Exception {
+        ReaderEntity reader = readerWithOpenSession("CloseOnDisable");
+
+        patchReader(reader.getId().toString(), "{\"active\":false}").andExpect(status().isOk());
+
+        assertThat(registrationSessionRepository.findByReader(reader)).isEmpty();
+    }
+
+    private ReaderEntity readerWithOpenSession(String prefix) {
+        ReaderEntity reader = readerRepository.save(
+                ReaderEntity.builder().name(unique(prefix)).mode(ReaderMode.ENREGISTREMENT).build());
+        UserEntity owner = userRepository.save(UserEntity.builder()
+                .username(("owner-" + UUID.randomUUID()).substring(0, 20)).passwordHash("hash")
+                .role(Role.ADMINISTRATEUR).enabled(true).build());
+        OffsetDateTime now = OffsetDateTime.now();
+        registrationSessionRepository.save(RegistrationSessionEntity.builder()
+                .reader(reader).startedBy(owner).startedAt(now).lastActivityAt(now).build());
+        return reader;
     }
 
     private ResultActions rotate(String readerId) throws Exception {

@@ -9,6 +9,8 @@ import org.hibernate.annotations.UpdateTimestamp;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -40,6 +42,13 @@ public class ReaderEntity {
     @ColumnDefault("true")
     @Column(nullable = false)
     private boolean active = true;
+
+    // The inner quotes make the default a SQL string literal, so ddl-auto can add the column over existing readers.
+    @Builder.Default
+    @ColumnDefault("'PRODUCTION'")
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    private ReaderMode mode = ReaderMode.PRODUCTION;
 
     @CreationTimestamp
     @Column(nullable = false, updatable = false)

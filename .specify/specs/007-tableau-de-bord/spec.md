@@ -43,7 +43,7 @@ Un utilisateur ouvre `front/index.html` pour voir un tableau de bord : sélecteu
 
 ### Functional Requirements
 
-- **FR-001**: La page DOIT afficher la liste des lecteurs et des cueilleurs en interrogeant `GET /api/readers` et `GET /api/pickers?size=500`. Evidence: `front/index.html:177-215`.
+- **FR-001**: La page DOIT afficher la liste des lecteurs et des cueilleurs en interrogeant `GET /api/readers` et `GET /api/pickers?size=500`. Evidence: `front/index.html:177-215`. **Note (feature `003`)** : les lecteurs en mode `ENREGISTREMENT` ne forment pas de ligne de production (spec `003`, research R9).
 - **FR-002**: La page TENTE d'interroger `GET /api/tags?size=3000` pour construire la grille et le graphique de cadence — endpoint absent de l'API réelle. Evidence: `front/index.html:217-226` vs `api.yaml` (absence de route `GET /tags`). **Décision (Clarifications 2026-09-24)** : aucun endpoint ajouté pour l'instant ; la page est conservée et reste sans données jusqu'à une itération ultérieure.
 - **FR-003**: État actuel — la page envoie un jeton d'API codé en dur (`x-api-token`) sur chacun de ces appels. Evidence: `front/index.html:155,179,209,219`. **Décision (Clarifications 2026-09-24)** : la page NE DOIT PAS contenir de jeton ; le jeton exposé DOIT être régénéré via la rotation prévue en spec `002`.
 - **FR-004** (nouveau, Clarifications 2026-09-24) : la page DOIT être accessible aux utilisateurs connectés de rôle Opérateur ou Administrateur, en lecture seule. Non implémenté aujourd'hui (aucune authentification).

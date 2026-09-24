@@ -46,6 +46,9 @@
                 <a href="readers.html" data-admin-only class="btn btn-sm btn-primary">
                     <i class="fas fa-satellite-dish me-1"></i>Lecteurs
                 </a>
+                <a href="tags.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-tags me-1"></i>Tags
+                </a>
                 <a href="users.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
                     <i class="fas fa-user-shield me-1"></i>Utilisateurs
                 </a>
@@ -75,16 +78,17 @@
                 <table class="table table-hover table-striped mb-0 align-middle">
                     <thead class="table-light">
                         <tr>
-                            <th style="width: 25%">Nom (UID)</th>
-                            <th style="width: 10%">État</th>
-                            <th style="width: 25%">Clé API (Token)</th>
-                            <th style="width: 12%">Créé le</th>
-                            <th style="width: 12%">Mis à jour le</th>
-                            <th style="width: 16%">Actions</th>
+                            <th style="width: 20%">Nom (UID)</th>
+                            <th style="width: 8%">État</th>
+                            <th style="width: 10%">Mode</th>
+                            <th style="width: 20%">Clé API (Token)</th>
+                            <th style="width: 10%">Créé le</th>
+                            <th style="width: 10%">Mis à jour le</th>
+                            <th style="width: 22%">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="readersTable">
-                        <tr><td colspan="6" class="text-center py-4 text-muted">Chargement...</td></tr>
+                        <tr><td colspan="7" class="text-center py-4 text-muted">Chargement...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -183,7 +187,7 @@
             tbody.innerHTML = '';
 
             if(readers.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">Aucun lecteur déclaré</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">Aucun lecteur déclaré</td></tr>';
                 return;
             }
 
@@ -198,6 +202,9 @@
                         <td>${r.active === false
                             ? '<span class="badge bg-secondary">Désactivé</span>'
                             : '<span class="badge bg-success">Actif</span>'}</td>
+                        <td>${r.mode === 'ENREGISTREMENT'
+                            ? '<span class="badge bg-info text-dark">Enregistrement</span>'
+                            : '<span class="badge bg-light text-dark border">Production</span>'}</td>
                         <td>
                             <span class="token-box" onclick="copyToClipboard('${r.apitoken}')" title="Cliquez pour copier">
                                 ${r.apitoken}
@@ -208,6 +215,9 @@
                         <td class="text-nowrap">
                             <button class="btn btn-sm btn-outline-secondary" onclick="toggleReader('${r.id}', ${r.active !== false})">
                                 ${r.active === false ? 'Réactiver' : 'Désactiver'}
+                            </button>
+                            <button class="btn btn-sm btn-outline-info" onclick="switchMode('${r.id}', '${r.mode === 'ENREGISTREMENT' ? 'PRODUCTION' : 'ENREGISTREMENT'}')">
+                                ${r.mode === 'ENREGISTREMENT' ? 'Passer en production' : 'Passer en enregistrement'}
                             </button>
                             <button class="btn btn-sm btn-outline-warning" onclick="rotateToken('${r.id}')">
                                 Régénérer la clé
@@ -274,7 +284,29 @@
             }
         }
 
-        // 4. RÉGÉNÉRER LA CLÉ (POST /readers/{id}/token)
+        // 4. CHANGER DE MODE (PATCH /readers/{id})
+        // En mode enregistrement, les lectures servent à la page Tags et ne créent aucune lecture de conformité.
+        async function switchMode(id, mode) {
+            const warning = mode === 'ENREGISTREMENT'
+                ? "Les lectures de ce lecteur ne seront plus comptées en production : elles serviront à enregistrer des tags. Continuer ?"
+                : "Le lecteur reprendra les lectures de production. Une session d'enregistrement en cours sera annulée. Continuer ?";
+            if (!confirm(warning)) return;
+            try {
+                const response = await apiFetch(`/readers/${id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mode })
+                });
+                if (!response.ok) {
+                    alert(`Erreur de mise à jour (code ${response.status}).`);
+                }
+                fetchReaders();
+            } catch (e) {
+                alert("Erreur réseau");
+            }
+        }
+
+        // 5. RÉGÉNÉRER LA CLÉ (POST /readers/{id}/token)
         async function rotateToken(id) {
             if (!confirm("L'ancienne clé cessera immédiatement de fonctionner. Il faudra reconfigurer le lecteur. Continuer ?")) return;
             try {
@@ -313,7 +345,7 @@
         }
 
         function showError(msg) {
-            document.getElementById('readersTable').innerHTML = `<tr><td colspan="6" class="text-center text-danger">${msg}</td></tr>`;
+            document.getElementById('readersTable').innerHTML = `<tr><td colspan="7" class="text-center text-danger">${msg}</td></tr>`;
         }
     </script>
 </body>

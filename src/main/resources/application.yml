@@ -13,6 +13,9 @@ server:
         same-site: lax
 
 app:
+  registration:
+    # A tag-registration session without reads or page activity for this long is closed (spec 003).
+    session-timeout: 5m
   security:
     bootstrap-admin:
       username: ${APP_BOOTSTRAP_ADMIN_USERNAME:}
