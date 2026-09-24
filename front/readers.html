@@ -76,13 +76,15 @@
                     <thead class="table-light">
                         <tr>
                             <th style="width: 25%">Nom (UID)</th>
-                            <th style="width: 35%">Clé API (Token)</th>
-                            <th style="width: 20%">Créé le</th>
-                            <th style="width: 20%">Mis à jour le</th>
+                            <th style="width: 10%">État</th>
+                            <th style="width: 25%">Clé API (Token)</th>
+                            <th style="width: 12%">Créé le</th>
+                            <th style="width: 12%">Mis à jour le</th>
+                            <th style="width: 16%">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="readersTable">
-                        <tr><td colspan="4" class="text-center py-4 text-muted">Chargement...</td></tr>
+                        <tr><td colspan="6" class="text-center py-4 text-muted">Chargement...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -101,7 +103,7 @@
                     <form id="readerForm">
                         <div class="mb-3">
                             <label class="form-label fw-bold">Nom du lecteur (UID)</label>
-                            <input type="text" class="form-control" id="readerUid" required placeholder="Ex: Ligne Carotte - Entrée">
+                            <input type="text" class="form-control" id="readerUid" required maxlength="50" placeholder="Ex: Ligne Carotte - Entrée">
                             <div class="form-text text-warning"><i class="fas fa-exclamation-circle"></i> Attention : Le nom ne pourra plus être modifié ensuite.</div>
                         </div>
                     </form>
@@ -181,7 +183,7 @@
             tbody.innerHTML = '';
 
             if(readers.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">Aucun lecteur déclaré</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-4">Aucun lecteur déclaré</td></tr>';
                 return;
             }
 
@@ -193,6 +195,9 @@
                 const html = `
                     <tr>
                         <td class="fw-bold text-primary">${r.uid}</td>
+                        <td>${r.active === false
+                            ? '<span class="badge bg-secondary">Désactivé</span>'
+                            : '<span class="badge bg-success">Actif</span>'}</td>
                         <td>
                             <span class="token-box" onclick="copyToClipboard('${r.apitoken}')" title="Cliquez pour copier">
                                 ${r.apitoken}
@@ -200,6 +205,14 @@
                         </td>
                         <td class="text-muted small">${dateCreation}</td>
                         <td class="text-muted small">${dateUpdate}</td>
+                        <td class="text-nowrap">
+                            <button class="btn btn-sm btn-outline-secondary" onclick="toggleReader('${r.id}', ${r.active !== false})">
+                                ${r.active === false ? 'Réactiver' : 'Désactiver'}
+                            </button>
+                            <button class="btn btn-sm btn-outline-warning" onclick="rotateToken('${r.id}')">
+                                Régénérer la clé
+                            </button>
+                        </td>
                     </tr>`;
                 tbody.innerHTML += html;
             });
@@ -207,7 +220,7 @@
 
         // 2. CRÉER UN LECTEUR (POST /readers)
         async function createReader() {
-            const uid = document.getElementById('readerUid').value;
+            const uid = document.getElementById('readerUid').value.trim();
             if(!uid) return;
 
             // Le DTO CreateReader attend probablement un champ "uid"
@@ -230,9 +243,51 @@
                     successModal.show();
                     
                     fetchReaders(); // Rafraichissement
+                } else if (response.status === 409) {
+                    alert("Un lecteur porte déjà ce nom (sans tenir compte des majuscules).");
+                } else if (response.status === 400) {
+                    alert("Nom invalide : 1 à 50 caractères.");
                 } else {
-                    alert("Erreur création : Ce nom existe peut-être déjà ?");
+                    alert(`Erreur création (code ${response.status}).`);
                 }
+            } catch (e) {
+                alert("Erreur réseau");
+            }
+        }
+
+        // 3. DÉSACTIVER / RÉACTIVER (PATCH /readers/{id})
+        // Les actions ne reçoivent que l'id (UUID) du lecteur, jamais son nom saisi librement.
+        async function toggleReader(id, active) {
+            if (active && !confirm("Le lecteur ne pourra plus envoyer de lectures. Continuer ?")) return;
+            try {
+                const response = await apiFetch(`/readers/${id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ active: !active })
+                });
+                if (!response.ok) {
+                    alert(`Erreur de mise à jour (code ${response.status}).`);
+                }
+                fetchReaders();
+            } catch (e) {
+                alert("Erreur réseau");
+            }
+        }
+
+        // 4. RÉGÉNÉRER LA CLÉ (POST /readers/{id}/token)
+        async function rotateToken(id) {
+            if (!confirm("L'ancienne clé cessera immédiatement de fonctionner. Il faudra reconfigurer le lecteur. Continuer ?")) return;
+            try {
+                const response = await apiFetch(`/readers/${id}/token`, { method: 'POST' });
+                if (response.ok) {
+                    const reader = await response.json();
+                    document.getElementById('newReaderName').textContent = reader.uid;
+                    document.getElementById('newTokenDisplay').textContent = reader.apitoken;
+                    successModal.show();
+                } else {
+                    alert(`Erreur de régénération (code ${response.status}).`);
+                }
+                fetchReaders();
             } catch (e) {
                 alert("Erreur réseau");
             }
@@ -258,7 +313,7 @@
         }
 
         function showError(msg) {
-            document.getElementById('readersTable').innerHTML = `<tr><td colspan="4" class="text-center text-danger">${msg}</td></tr>`;
+            document.getElementById('readersTable').innerHTML = `<tr><td colspan="6" class="text-center text-danger">${msg}</td></tr>`;
         }
     </script>
 </body>

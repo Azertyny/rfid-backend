@@ -57,6 +57,10 @@ public class ReaderApiTokenAuthenticationFilter extends OncePerRequestFilter {
             response.sendError(HttpStatus.UNAUTHORIZED.value(), "Invalid API token");
             return;
         }
+        if (!reader.isActive()) {
+            response.sendError(HttpStatus.UNAUTHORIZED.value(), "Reader disabled");
+            return;
+        }
 
         try {
             ReaderAuthentication authentication = new ReaderAuthentication(reader);

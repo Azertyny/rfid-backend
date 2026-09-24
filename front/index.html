@@ -186,7 +186,8 @@
                     const data = await response.json();
                     const readers = data.readers || [];
                     LINES = [{ id: "all", name: "Global", vegetable: "Toutes les lignes" }];
-                    readers.forEach(r => { LINES.push({ id: r.uid, name: r.uid, vegetable: "Ligne de lavage" }); });
+                    // Un lecteur désactivé ne peut plus scanner : sa ligne resterait vide.
+                    readers.filter(r => r.active !== false).forEach(r => { LINES.push({ id: r.uid, name: r.uid, vegetable: "Ligne de lavage" }); });
                     renderLineSelector();
                 }
             } catch (e) { console.error("Err Readers", e); }

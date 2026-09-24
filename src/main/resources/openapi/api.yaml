@@ -33,6 +33,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ReadersList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "500": { $ref: "#/components/responses/InternalError" }
     post:
       summary: Create a new reader
@@ -52,7 +54,64 @@ paths:
               schema:
                 $ref: "#/components/schemas/Reader"
         "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/AlreadyExist" }
         "500": { $ref: "#/components/responses/InternalError" }
+
+  /readers/{readerId}:
+    parameters:
+      - in: path
+        name: readerId
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      summary: Enable or disable a reader
+      operationId: updateReader
+      tags: [Reader]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateReader"
+      responses:
+        "200":
+          description: Updated reader
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Reader"
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /readers/{readerId}/token:
+    parameters:
+      - in: path
+        name: readerId
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      summary: Generate a new API token for a reader
+      description: The previous token is refused on /tags/scan from the next request on.
+      operationId: rotateReaderToken
+      tags: [Reader]
+      responses:
+        "200":
+          description: Reader with its new apitoken
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Reader"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   # -----------------------------------------------------------------------------------------------
   # Picker section
@@ -195,6 +254,7 @@ paths:
       description: >
         Endpoint called by an RFID reader to report whether a scanned tag is compliant.
         Accessible only with the API token generated during reader registration.
+        401 is also returned when the reader is disabled.
       operationId: scanTag
       tags: [Tag]
       security:
@@ -562,16 +622,33 @@ components:
       properties:
         uid:
           type: string
-          description: Reader uid
+          description: Reader uid. Trimmed; must not be blank; unique ignoring case.
           example: Reader 1
+          maxLength: 50
       required:
         - uid
+
+    UpdateReader:
+      type: object
+      description: At least one field must be present.
+      properties:
+        active:
+          type: boolean
 
     Reader:
       allOf:
         - $ref: "#/components/schemas/CreateReader"
         - type: object
+          required:
+            - id
+            - active
           properties:
+            id:
+              type: string
+              format: uuid
+            active:
+              type: boolean
+              description: False when the reader is disabled; its token is then refused on /tags/scan.
             apitoken:
               type: string
               description: API token used by the reader to authenticate requests. Only returned to Administrateurs.
