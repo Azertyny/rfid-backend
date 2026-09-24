@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Utilisateurs - Admin</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>body { background-color: #f8f9fa; font-family: 'Segoe UI', sans-serif; }</style>
+</head>
+<body class="d-flex flex-column h-100">
+
+    <!-- MENU DE NAVIGATION HARMONISÉ -->
+    <nav class="navbar navbar-expand navbar-dark bg-dark shadow-sm">
+        <div class="container-fluid max-w-7xl mx-auto px-4">
+            <a class="navbar-brand fw-bold" href="index.html">
+                <i class="fas fa-wifi me-2"></i>RFID Admin
+            </a>
+            <div class="navbar-nav ms-auto gap-2">
+                <a href="index.html" class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-chart-line me-1"></i>Dashboard
+                </a>
+                <a href="pickers.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-users me-1"></i>Opérateurs
+                </a>
+                <a href="readers.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-satellite-dish me-1"></i>Lecteurs
+                </a>
+                <a href="users.html" data-admin-only class="btn btn-sm btn-primary">
+                    <i class="fas fa-user-shield me-1"></i>Utilisateurs
+                </a>
+                <button class="btn btn-sm btn-outline-light border-0" onclick="logout()">
+                    <i class="fas fa-sign-out-alt me-1"></i>Déconnexion
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid max-w-7xl mx-auto py-4">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <div>
+                <h3 class="fw-bold text-primary mb-0">Utilisateurs</h3>
+                <small class="text-muted">Comptes Administrateur et Opérateur</small>
+            </div>
+            <button class="btn btn-success shadow-sm" onclick="openCreateModal()">
+                <i class="fas fa-plus me-1"></i> Nouvel utilisateur
+            </button>
+        </div>
+
+        <div class="alert alert-danger d-none" id="pageError"></div>
+
+        <div class="card shadow-sm border-0">
+            <div class="card-body p-0">
+                <table class="table table-hover table-striped mb-0 align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Identifiant</th>
+                            <th>Rôle</th>
+                            <th>Actif</th>
+                            <th>Créé le</th>
+                            <th class="text-end">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="usersTable">
+                        <tr><td colspan="5" class="text-center py-4 text-muted">Chargement...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL CRÉATION -->
+    <div class="modal fade" id="createModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Nouvel utilisateur</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="createForm">
+                        <div class="mb-3">
+                            <label class="form-label" for="newUsername">Identifiant</label>
+                            <input type="text" class="form-control" id="newUsername" required
+                                   minlength="3" maxlength="50" pattern="[A-Za-z0-9._\-]+">
+                            <div class="form-text">3 à 50 caractères : lettres, chiffres, point, tiret, tiret bas.</div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label" for="newPassword">Mot de passe initial</label>
+                            <input type="password" class="form-control" id="newPassword" required minlength="8"
+                                   autocomplete="new-password">
+                            <div class="form-text">8 caractères minimum.</div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label" for="newRole">Rôle</label>
+                            <select class="form-select" id="newRole">
+                                <option value="OPERATEUR">Opérateur</option>
+                                <option value="ADMINISTRATEUR">Administrateur</option>
+                            </select>
+                        </div>
+                        <div class="alert alert-danger py-2 small d-none" id="createError"></div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn btn-primary" onclick="createUser()">Créer</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="config.js"></script>
+    <script src="auth.js"></script>
+    <script>
+        const ROLE_LABELS = { ADMINISTRATEUR: 'Administrateur', OPERATEUR: 'Opérateur' };
+        let createModal;
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            createModal = new bootstrap.Modal(document.getElementById('createModal'));
+            await requireRole('ADMINISTRATEUR');
+            fetchUsers();
+        });
+
+        async function errorMessage(response, fallback) {
+            if (response.status === 409) {
+                return response.url.includes('/users/')
+                    ? 'Il doit rester au moins un Administrateur actif.'
+                    : 'Cet identifiant existe déjà.';
+            }
+            if (response.status === 400) return 'Données invalides : vérifiez les champs.';
+            return fallback;
+        }
+
+        function showPageError(message) {
+            const box = document.getElementById('pageError');
+            box.textContent = message;
+            box.classList.toggle('d-none', !message);
+        }
+
+        async function fetchUsers() {
+            const response = await apiFetch('/users');
+            if (!response.ok) { showPageError('Impossible de charger les utilisateurs.'); return; }
+            const data = await response.json();
+            renderTable(data.users || []);
+        }
+
+        // Built with DOM nodes and textContent: user data is never interpreted as HTML.
+        function renderTable(users) {
+            const tbody = document.getElementById('usersTable');
+            tbody.replaceChildren();
+            users.forEach(user => {
+                const row = document.createElement('tr');
+
+                const nameCell = document.createElement('td');
+                nameCell.className = 'fw-bold';
+                nameCell.textContent = user.username;
+
+                const roleCell = document.createElement('td');
+                const roleSelect = document.createElement('select');
+                roleSelect.className = 'form-select form-select-sm w-auto';
+                Object.entries(ROLE_LABELS).forEach(([value, label]) => {
+                    const option = new Option(label, value, false, value === user.role);
+                    roleSelect.add(option);
+                });
+                roleSelect.addEventListener('change', () => updateUser(user.id, { role: roleSelect.value }));
+                roleCell.appendChild(roleSelect);
+
+                const enabledCell = document.createElement('td');
+                const switchWrapper = document.createElement('div');
+                switchWrapper.className = 'form-check form-switch';
+                const enabledSwitch = document.createElement('input');
+                enabledSwitch.type = 'checkbox';
+                enabledSwitch.className = 'form-check-input';
+                enabledSwitch.checked = user.enabled;
+                enabledSwitch.addEventListener('change', () => updateUser(user.id, { enabled: enabledSwitch.checked }));
+                switchWrapper.appendChild(enabledSwitch);
+                enabledCell.appendChild(switchWrapper);
+
+                const dateCell = document.createElement('td');
+                dateCell.className = 'text-muted small';
+                dateCell.textContent = user.creationDate
+                    ? new Date(user.creationDate).toLocaleDateString('fr-FR') : '-';
+
+                const actionsCell = document.createElement('td');
+                actionsCell.className = 'text-end';
+                const resetButton = document.createElement('button');
+                resetButton.className = 'btn btn-outline-secondary btn-sm';
+                resetButton.innerHTML = '<i class="fas fa-key me-1"></i>Réinitialiser le mot de passe';
+                resetButton.addEventListener('click', () => resetPassword(user));
+                actionsCell.appendChild(resetButton);
+
+                row.append(nameCell, roleCell, enabledCell, dateCell, actionsCell);
+                tbody.appendChild(row);
+            });
+        }
+
+        function openCreateModal() {
+            document.getElementById('createForm').reset();
+            document.getElementById('createError').classList.add('d-none');
+            createModal.show();
+            setTimeout(() => document.getElementById('newUsername').focus(), 500);
+        }
+
+        async function createUser() {
+            const form = document.getElementById('createForm');
+            if (!form.reportValidity()) return;
+            const response = await apiFetch('/users', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    username: document.getElementById('newUsername').value,
+                    password: document.getElementById('newPassword').value,
+                    role: document.getElementById('newRole').value
+                })
+            });
+            if (response.ok) {
+                createModal.hide();
+                fetchUsers();
+            } else {
+                const box = document.getElementById('createError');
+                box.textContent = await errorMessage(response, 'Erreur lors de la création.');
+                box.classList.remove('d-none');
+            }
+        }
+
+        async function updateUser(userId, changes) {
+            showPageError('');
+            const response = await apiFetch(`/users/${userId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(changes)
+            });
+            if (!response.ok) {
+                showPageError(await errorMessage(response, 'Erreur lors de la mise à jour.'));
+            }
+            // Changing your own role logs you out: the next call redirects to the login page.
+            fetchUsers();
+        }
+
+        async function resetPassword(user) {
+            const password = prompt(`Nouveau mot de passe pour ${user.username} (8 caractères minimum) :`);
+            if (password === null) return;
+            if (password.length < 8) { showPageError('Le mot de passe doit faire au moins 8 caractères.'); return; }
+            const response = await apiFetch(`/users/${user.id}/password`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password })
+            });
+            showPageError(response.ok ? '' : await errorMessage(response, 'Erreur lors de la réinitialisation.'));
+            if (response.ok) alert(`Mot de passe de ${user.username} réinitialisé. Ses sessions ont été fermées.`);
+        }
+    </script>
+</body>
+</html>

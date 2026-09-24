@@ -40,12 +40,18 @@
                 <a href="index.html" class="btn btn-sm btn-outline-light border-0">
                     <i class="fas fa-chart-line me-1"></i>Dashboard
                 </a>
-                <a href="pickers.html" class="btn btn-sm btn-outline-light border-0">
+                <a href="pickers.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
                     <i class="fas fa-users me-1"></i>Opérateurs
                 </a>
-                <a href="readers.html" class="btn btn-sm btn-primary">
+                <a href="readers.html" data-admin-only class="btn btn-sm btn-primary">
                     <i class="fas fa-satellite-dish me-1"></i>Lecteurs
                 </a>
+                <a href="users.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-user-shield me-1"></i>Utilisateurs
+                </a>
+                <button class="btn btn-sm btn-outline-light border-0" onclick="logout()">
+                    <i class="fas fa-sign-out-alt me-1"></i>Déconnexion
+                </button>
             </div>
         </div>
     </nav>
@@ -139,25 +145,22 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="config.js"></script>
+    <script src="auth.js"></script>
     <script>
-        // CONFIGURATION
-        const API_URL = "/api";
-        const ADMIN_TOKEN = "176c77ca6757494f9729784263c6022d";
-        
         let readerModal, successModal;
 
-        document.addEventListener('DOMContentLoaded', () => {
+        document.addEventListener('DOMContentLoaded', async () => {
             readerModal = new bootstrap.Modal(document.getElementById('readerModal'));
             successModal = new bootstrap.Modal(document.getElementById('successModal'));
+            await requireRole('ADMINISTRATEUR');
             fetchReaders();
         });
 
         // 1. LISTER LES LECTEURS (GET /readers)
         async function fetchReaders() {
             try {
-                const response = await fetch(`${API_URL}/readers`, {
-                    headers: { 'x-api-token': ADMIN_TOKEN }
-                });
+                const response = await apiFetch(`/readers`);
                 
                 if(response.ok) {
                     const data = await response.json();
@@ -211,12 +214,9 @@
             const payload = { uid: uid };
 
             try {
-                const response = await fetch(`${API_URL}/readers`, {
+                const response = await apiFetch(`/readers`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'x-api-token': ADMIN_TOKEN
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
 

@@ -17,11 +17,19 @@ RFID Back — a Spring Boot 3.5.7 (Java 21) backend for tracking fruit-harvest l
 
 ```zsh
 mvn clean install     # full build check (also regenerates OpenAPI sources)
-mvn test              # run all tests
-mvn test -Dtest=TagServiceTest                 # run a single test class
-mvn test -Dtest=TagServiceTest#methodName       # run a single test method
-mvn spring-boot:run   # run the app locally (dev profile active by default, port 8080)
+mvn clean test        # run all tests
+mvn clean test -Dtest=TagServiceTest            # run a single test class
+mvn clean test -Dtest=TagServiceTest#methodName # run a single test method
+APP_BOOTSTRAP_ADMIN_USERNAME=admin APP_BOOTSTRAP_ADMIN_PASSWORD=change-me mvn spring-boot:run
+                      # run locally (dev profile, port 8080); the variables create the first Administrateur
 ```
+
+If tests fail with `NoClassDefFoundError` on a class name without its package (e.g. `TagRepository`) or an
+"Unresolved compilation problem", it is not the code: the VS Code Java extension compiles into the same
+`target/classes` and races Maven's build. Rerun `mvn clean test`, pause the extension, or build in a copy of the repo.
+
+Tests run on the `test` profile (`src/test/resources/application-test.yml`, in-memory H2), never on `dev`, whose
+H2 database is a file in the repo.
 
 Frontend (`/front`) is plain static HTML/JS with no build step — served via `deploy/front` (nginx config)
 or opened directly; talks to the backend through `front/config.js`.
@@ -32,7 +40,8 @@ or opened directly; talks to the backend through `front/config.js`.
 
 `src/main/resources/openapi/api.yaml` is the source of truth for the REST API. The `openapi-generator-maven-plugin`
 (configured in `pom.xml`, runs on `generate-sources`) generates, into `target/generated-sources/openapi`:
-- `com.rfidback.generated.api.*ApiDelegate` interfaces (one per OpenAPI tag: Reader, Picker, Tag, Bucket, Record)
+- `com.rfidback.generated.api.*ApiDelegate` interfaces (one per OpenAPI tag: Reader, Picker, Tag, Bucket, Record,
+  Auth, User)
 - `com.rfidback.generated.model.*` request/response DTOs
 
 Hand-written controllers in `src/main/java/com/rfidback/controller` implement the generated `*ApiDelegate`
@@ -45,10 +54,24 @@ regenerate before the IDE/compiler will recognize a changed signature.
 
 Standard layered structure under `src/main/java/com/rfidback/`:
 `controller` (implements generated delegates) → `service` → `repository` (Spring Data JPA) → `entity`.
-`security` holds reader-token authentication (`ReaderApiTokenAuthenticationFilter`, `ReaderAuthentication`); readers
-authenticate as a distinct principal type from any admin/user login — controllers that act on behalf of a reader
-pull it out of `SecurityContextHolder` as a `ReaderAuthentication` (see `TagController.scanTag`), not from
-`@AuthenticationPrincipal` in the usual user sense. `configuration` holds `SecurityConfig` and `CorsConfig`.
+`configuration` holds `SecurityConfig`, `PasswordConfig` and `CorsConfig`; `security` holds the authentication pieces.
+
+### Security: two kinds of callers, two filter chains
+
+`SecurityConfig` defines two `SecurityFilterChain`s:
+- **Reader devices** (`@Order(1)`, only `POST /api/tags/scan`): stateless, `x-api-token` header checked by
+  `ReaderApiTokenAuthenticationFilter`. Controllers acting for a reader take it from `SecurityContextHolder` as a
+  `ReaderAuthentication` (see `TagController.scanTag`). This filter is a `@Component` whose automatic servlet
+  registration is disabled on purpose, so it only runs inside its chain.
+- **Human users** (`@Order(2)`, everything else): server-side session opened by `POST /api/auth/login`
+  (`AuthService`), with two roles `ADMINISTRATEUR` / `OPERATEUR` (`entity/Role`, users in table `app_user`). The
+  route × role matrix lives in this chain's `authorizeHttpRequests` (spec `.specify/specs/008-*/spec.md`); unlisted
+  routes are denied. Writes need CSRF: the `XSRF-TOKEN` cookie echoed as the `X-XSRF-TOKEN` header, which
+  `front/auth.js` (`apiFetch`) does for every page.
+
+The first Administrateur is created at startup from `APP_BOOTSTRAP_ADMIN_USERNAME` / `APP_BOOTSTRAP_ADMIN_PASSWORD`
+(`BootstrapAdminRunner`) when no enabled Administrateur exists; others are managed through `/api/users`. Disabling
+a user, changing their role or resetting their password expires their open sessions (`SessionRegistry`).
 
 ### Persistence
 

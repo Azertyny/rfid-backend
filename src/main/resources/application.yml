@@ -3,3 +3,17 @@ spring:
     name: rfid-back
   profiles:
     active: dev
+
+server:
+  servlet:
+    session:
+      timeout: 30m
+      cookie:
+        http-only: true
+        same-site: lax
+
+app:
+  security:
+    bootstrap-admin:
+      username: ${APP_BOOTSTRAP_ADMIN_USERNAME:}
+      password: ${APP_BOOTSTRAP_ADMIN_PASSWORD:}

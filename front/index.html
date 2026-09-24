@@ -45,12 +45,18 @@
                 <a href="index.html" class="btn btn-sm btn-primary">
                     <i class="fas fa-chart-line me-1"></i>Dashboard
                 </a>
-                <a href="pickers.html" class="btn btn-sm btn-outline-light border-0">
+                <a href="pickers.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
                     <i class="fas fa-users me-1"></i>Opérateurs
                 </a>
-                <a href="readers.html" class="btn btn-sm btn-outline-light border-0">
+                <a href="readers.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
                     <i class="fas fa-satellite-dish me-1"></i>Lecteurs
                 </a>
+                <a href="users.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-user-shield me-1"></i>Utilisateurs
+                </a>
+                <button class="btn btn-sm btn-outline-light border-0" onclick="logout()">
+                    <i class="fas fa-sign-out-alt me-1"></i>Déconnexion
+                </button>
             </div>
         </div>
     </nav>
@@ -150,22 +156,21 @@
     </div>
 
     <!-- LOGIQUE JS -->
+    <script src="config.js"></script>
+    <script src="auth.js"></script>
     <script>
-        const API_URL = "/api";
-        const API_TOKEN = "176c77ca6757494f9729784263c6022d";
-        
+
         let LINES = [{ id: "all", name: "Global", vegetable: "Toutes les lignes" }];
         let currentLine = "all";
         let chartInstance = null;
         let pickersMap = {};
 
-        document.addEventListener('DOMContentLoaded', () => {
+        document.addEventListener('DOMContentLoaded', async () => {
+            await requireRole('ADMINISTRATEUR', 'OPERATEUR');
             updateDate();
             initChart();
-            Promise.all([fetchReaders(), fetchPickersInfo()]).then(() => {
-                fetchData();
-                setInterval(fetchData, 3000);
-            });
+            // The dashboard data source (GET /api/tags) does not exist yet (spec 007): no polling until it does.
+            Promise.all([fetchReaders(), fetchPickersInfo()]).then(() => updateStatus(false));
             setInterval(updateDate, 60000);
         });
 
@@ -176,7 +181,7 @@
 
         async function fetchReaders() {
             try {
-                const response = await fetch(`${API_URL}/readers`, { headers: { 'x-api-token': API_TOKEN }});
+                const response = await apiFetch(`/readers`);
                 if (response.ok) {
                     const data = await response.json();
                     const readers = data.readers || [];
@@ -206,7 +211,7 @@
 
         async function fetchPickersInfo() {
             try {
-                const response = await fetch(`${API_URL}/pickers?size=500`, { headers: { 'x-api-token': API_TOKEN }});
+                const response = await apiFetch(`/pickers?size=500`);
                 if (response.ok) {
                     const data = await response.json();
                     (data.content || []).forEach(p => { pickersMap[p.id] = `${p.firstname} ${p.lastname}`; });
@@ -216,7 +221,7 @@
 
         async function fetchData() {
             try {
-                const response = await fetch(`${API_URL}/tags?size=3000&_t=${Date.now()}`, { headers: { 'x-api-token': API_TOKEN }});
+                const response = await apiFetch(`/tags?size=3000&_t=${Date.now()}`, { silent: true });
                 if (response.ok) {
                     const data = await response.json();
                     updateStatus(true);

@@ -1,49 +1,204 @@
 package com.rfidback.configuration;
 
+import static org.springframework.security.config.Customizer.withDefaults;
+
+import java.util.List;
+
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.ProviderManager;
+import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.core.session.SessionRegistry;
+import org.springframework.security.core.session.SessionRegistryImpl;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.authentication.session.ChangeSessionIdAuthenticationStrategy;
+import org.springframework.security.web.authentication.session.CompositeSessionAuthenticationStrategy;
+import org.springframework.security.web.authentication.session.ConcurrentSessionControlAuthenticationStrategy;
+import org.springframework.security.web.authentication.session.RegisterSessionAuthenticationStrategy;
+import org.springframework.security.web.authentication.session.SessionAuthenticationStrategy;
+import org.springframework.security.web.authentication.www.BasicAuthenticationFilter;
+import org.springframework.security.web.context.DelegatingSecurityContextRepository;
+import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
+import org.springframework.security.web.context.RequestAttributeSecurityContextRepository;
+import org.springframework.security.web.context.SecurityContextRepository;
+import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
+import org.springframework.security.web.csrf.CsrfAuthenticationStrategy;
+import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
+import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
+import org.springframework.security.web.session.HttpSessionEventPublisher;
+import org.springframework.security.web.util.matcher.RequestMatcher;
 
+import com.rfidback.entity.Role;
+import com.rfidback.security.AppUserDetailsService;
+import com.rfidback.security.CsrfCookieFilter;
 import com.rfidback.security.ReaderApiTokenAuthenticationFilter;
-import static org.springframework.security.config.Customizer.withDefaults;
+
+import jakarta.servlet.DispatcherType;
 
 @Configuration
 public class SecurityConfig {
 
-    private final ReaderApiTokenAuthenticationFilter readerApiTokenAuthenticationFilter;
+    private static final String READER_SCAN_PATH = "/api/tags/scan";
+    private static final String ADMINISTRATEUR = Role.ADMINISTRATEUR.name();
+    private static final String OPERATEUR = Role.OPERATEUR.name();
 
     @Value("${app.security.allow-h2-console:false}")
     private boolean allowH2Console;
 
-    public SecurityConfig(ReaderApiTokenAuthenticationFilter readerApiTokenAuthenticationFilter) {
-        this.readerApiTokenAuthenticationFilter = readerApiTokenAuthenticationFilter;
+    // Reader devices and human users are authenticated differently: readers send a stateless API token
+    // on /api/tags/scan only, users hold a server-side session protected by CSRF. Each gets its own chain.
+    @Bean
+    @Order(1)
+    public SecurityFilterChain readerSecurityFilterChain(HttpSecurity http,
+            ReaderApiTokenAuthenticationFilter readerApiTokenAuthenticationFilter) throws Exception {
+        http
+                .securityMatcher(path(null, READER_SCAN_PATH))
+                .cors(withDefaults())
+                .csrf(csrf -> csrf.disable())
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .addFilterBefore(readerApiTokenAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
+                .authorizeHttpRequests(auth -> auth
+                        .requestMatchers(path(HttpMethod.OPTIONS, READER_SCAN_PATH)).permitAll()
+                        .anyRequest().authenticated())
+                .exceptionHandling(exceptions -> exceptions
+                        .authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
+                .formLogin(form -> form.disable())
+                .httpBasic(basic -> basic.disable());
+        return http.build();
     }
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    @Order(2)
+    public SecurityFilterChain userSecurityFilterChain(HttpSecurity http,
+            CookieCsrfTokenRepository csrfTokenRepository,
+            SecurityContextRepository securityContextRepository,
+            SessionRegistry sessionRegistry) throws Exception {
         http
                 .cors(withDefaults())
-                .csrf(csrf -> csrf.disable()) // pas nécessaire pour API REST
-                .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                        .requestMatchers("/api/tags/scan").authenticated()
-                        .anyRequest().permitAll()
-                )
-                .addFilterBefore(readerApiTokenAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
-                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                .formLogin(form -> form.disable()) // désactive la mire
-                .httpBasic(basic -> basic.disable()) // désactive le basic auth
+                .csrf(csrf -> {
+                    csrf.csrfTokenRepository(csrfTokenRepository)
+                            .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
+                            .ignoringRequestMatchers(path(HttpMethod.POST, "/api/auth/login"));
+                    if (allowH2Console) {
+                        csrf.ignoringRequestMatchers(path(null, "/h2-console/**"));
+                    }
+                })
+                .addFilterAfter(new CsrfCookieFilter(), BasicAuthenticationFilter.class)
+                .securityContext(context -> context.securityContextRepository(securityContextRepository))
+                .sessionManagement(session -> session
+                        .sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED)
+                        .sessionFixation(fixation -> fixation.changeSessionId())
+                        .sessionConcurrency(concurrency -> concurrency
+                                .maximumSessions(-1)
+                                .sessionRegistry(sessionRegistry)
+                                .expiredSessionStrategy(event -> event.getResponse()
+                                        .setStatus(HttpStatus.UNAUTHORIZED.value()))))
+                // Anonymous 401s must not create a session just to remember the request.
+                .requestCache(cache -> cache.disable())
+                .authorizeHttpRequests(auth -> {
+                    auth.dispatcherTypeMatchers(DispatcherType.ERROR, DispatcherType.FORWARD).permitAll()
+                            .requestMatchers(path(HttpMethod.OPTIONS, "/**")).permitAll()
+                            .requestMatchers(path(HttpMethod.POST, "/api/auth/login")).permitAll()
+                            .requestMatchers(path(HttpMethod.GET, "/actuator/health")).permitAll();
+                    if (allowH2Console) {
+                        auth.requestMatchers(path(null, "/h2-console/**")).permitAll();
+                    }
+                    // Access matrix of spec 008, most specific rules first; anything not listed is denied.
+                    auth.requestMatchers(path(null, "/api/users/**")).hasRole(ADMINISTRATEUR)
+                            .requestMatchers(path(HttpMethod.GET, "/api/pickers")).hasAnyRole(ADMINISTRATEUR, OPERATEUR)
+                            .requestMatchers(path(HttpMethod.GET, "/api/pickers/*")).hasAnyRole(ADMINISTRATEUR, OPERATEUR)
+                            .requestMatchers(path(null, "/api/pickers/**")).hasRole(ADMINISTRATEUR)
+                            .requestMatchers(path(HttpMethod.GET, "/api/readers")).hasAnyRole(ADMINISTRATEUR, OPERATEUR)
+                            .requestMatchers(path(null, "/api/readers/**")).hasRole(ADMINISTRATEUR)
+                            .requestMatchers(path(null, "/api/tags/**")).hasRole(ADMINISTRATEUR)
+                            .requestMatchers(path(null, "/api/buckets/**")).hasRole(ADMINISTRATEUR)
+                            .requestMatchers(path(null, "/api/records/**")).hasAnyRole(ADMINISTRATEUR, OPERATEUR)
+                            .requestMatchers(path(null, "/api/auth/**")).authenticated()
+                            .anyRequest().denyAll();
+                })
+                .exceptionHandling(exceptions -> exceptions
+                        .authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
+                .formLogin(form -> form.disable())
+                .httpBasic(basic -> basic.disable())
+                .logout(logout -> logout.disable())
                 .headers(headers -> {
                     if (allowH2Console) {
                         headers.frameOptions(frameOptions -> frameOptions.disable());
                     }
                 });
-
         return http.build();
+    }
+
+    @Bean
+    public FilterRegistrationBean<ReaderApiTokenAuthenticationFilter> readerApiTokenFilterRegistration(
+            ReaderApiTokenAuthenticationFilter readerApiTokenAuthenticationFilter) {
+        // The filter is a @Component: keep Spring Boot from also running it as a global servlet filter.
+        FilterRegistrationBean<ReaderApiTokenAuthenticationFilter> registration =
+                new FilterRegistrationBean<>(readerApiTokenAuthenticationFilter);
+        registration.setEnabled(false);
+        return registration;
+    }
+
+    @Bean
+    public AuthenticationManager authenticationManager(AppUserDetailsService userDetailsService,
+            PasswordEncoder passwordEncoder) {
+        DaoAuthenticationProvider provider = new DaoAuthenticationProvider(userDetailsService);
+        provider.setPasswordEncoder(passwordEncoder);
+        return new ProviderManager(provider);
+    }
+
+    @Bean
+    public SessionRegistry sessionRegistry() {
+        return new SessionRegistryImpl();
+    }
+
+    @Bean
+    public HttpSessionEventPublisher httpSessionEventPublisher() {
+        return new HttpSessionEventPublisher();
+    }
+
+    @Bean
+    public CookieCsrfTokenRepository csrfTokenRepository() {
+        return CookieCsrfTokenRepository.withHttpOnlyFalse();
+    }
+
+    @Bean
+    public SecurityContextRepository securityContextRepository() {
+        return new DelegatingSecurityContextRepository(
+                new RequestAttributeSecurityContextRepository(),
+                new HttpSessionSecurityContextRepository());
+    }
+
+    // What formLogin would apply automatically; the JSON login endpoint must call it explicitly.
+    @Bean
+    public SessionAuthenticationStrategy sessionAuthenticationStrategy(SessionRegistry sessionRegistry,
+            CookieCsrfTokenRepository csrfTokenRepository) {
+        ConcurrentSessionControlAuthenticationStrategy concurrentSessions =
+                new ConcurrentSessionControlAuthenticationStrategy(sessionRegistry);
+        concurrentSessions.setMaximumSessions(-1);
+        CsrfAuthenticationStrategy csrfStrategy = new CsrfAuthenticationStrategy(csrfTokenRepository);
+        csrfStrategy.setRequestHandler(new CsrfTokenRequestAttributeHandler());
+        return new CompositeSessionAuthenticationStrategy(List.of(
+                concurrentSessions,
+                new ChangeSessionIdAuthenticationStrategy(),
+                new RegisterSessionAuthenticationStrategy(sessionRegistry),
+                csrfStrategy));
+    }
+
+    private static RequestMatcher path(HttpMethod method, String pattern) {
+        return method == null
+                ? PathPatternRequestMatcher.withDefaults().matcher(pattern)
+                : PathPatternRequestMatcher.withDefaults().matcher(method, pattern);
     }
 }

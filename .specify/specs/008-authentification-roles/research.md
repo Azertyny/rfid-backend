@@ -45,7 +45,7 @@ Versions constatées : Spring Boot 3.5.7 (`pom.xml`), Spring Security 6.5.6 (dé
 
 ## R7. Premier Administrateur
 
-- **Decision**: un `ApplicationRunner` lit `app.security.bootstrap-admin.username` / `.password` (variables `APP_BOOTSTRAP_ADMIN_USERNAME` / `APP_BOOTSTRAP_ADMIN_PASSWORD`, ajoutées à `deploy/.env.example`, `deploy/.env.local.example` et `deploy/docker-compose.yml`). S'il n'existe aucun Administrateur actif et que les deux valeurs sont définies, il crée le compte ; sinon il ne fait rien (avertissement journalisé s'il n'y a aucun Administrateur).
+- **Decision**: un `ApplicationRunner` lit `app.security.bootstrap-admin.username` / `.password` (variables `APP_BOOTSTRAP_ADMIN_USERNAME` / `APP_BOOTSTRAP_ADMIN_PASSWORD`, ajoutées à `deploy/.env.example`, `deploy/.env.local.example` et `deploy/docker-compose.yml`). S'il n'existe aucun Administrateur actif et que les deux valeurs sont définies, il crée le compte ; sinon il ne fait rien (avertissement journalisé s'il n'y a aucun Administrateur). Si l'identifiant configuré appartient déjà à un autre compte, il ne crée rien et journalise une erreur, pour ne pas faire échouer le démarrage sur la contrainte d'unicité.
 - **Rationale**: idempotent (redémarrages sans effet, scénario US3-2), aucun secret dans le code ni dans `front/`.
 
 ## R8. Masquer `apitoken` aux Opérateurs

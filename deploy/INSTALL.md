@@ -37,7 +37,13 @@ DB_URL=jdbc:postgresql://db:5432/rfidback
 DB_USERNAME=rfid_user
 DB_PASSWORD=change_me
 APP_CORS_ALLOWED_ORIGINS=http://localhost
+APP_BOOTSTRAP_ADMIN_USERNAME=admin
+APP_BOOTSTRAP_ADMIN_PASSWORD=change_me
 ```
+
+`APP_BOOTSTRAP_ADMIN_USERNAME` / `APP_BOOTSTRAP_ADMIN_PASSWORD` create the first Administrateur account. It is
+created only at a start where no enabled Administrateur exists; later restarts leave accounts untouched. Choose a
+real password here, not `change_me`.
 
 ## First Start
 
@@ -54,6 +60,19 @@ Check the services:
 docker compose --env-file .env ps
 docker compose --env-file .env logs -f app
 ```
+
+## First Login
+
+1. Open `http://<machine-or-hostname>/`: you are redirected to `login.html`.
+2. Log in with the bootstrap Administrateur account.
+3. Open **Utilisateurs** (`users.html`): create the Opérateur accounts, and reset the bootstrap account's password
+   to a new one (or create a personal Administrateur and disable the bootstrap one).
+
+Opérateurs land on `reader.html` (reads and compliance) and can open the dashboard; management pages are
+Administrateur-only. RFID reader devices are not affected: they keep sending their `x-api-token` as before.
+
+The application runs over plain HTTP on the line network: passwords and the session cookie travel unencrypted on
+that network. Put TLS in front of nginx if the network is not trusted.
 
 ## Update Procedure
 

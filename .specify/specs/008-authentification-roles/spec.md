@@ -82,6 +82,7 @@ Un Administrateur crée des comptes (identifiant, mot de passe initial, rôle), 
 ### Edge Cases
 
 - Démarrage sans variables d'environnement du premier Administrateur et sans Administrateur en base : l'application démarre mais journalise un avertissement clair (personne ne peut se connecter).
+- Démarrage sans Administrateur actif alors que l'identifiant du premier Administrateur est déjà pris par un autre compte (désactivé ou Opérateur) : aucun compte n'est créé ni modifié, l'application démarre et journalise une erreur, plutôt que d'échouer sur la contrainte d'unicité.
 - Session expirée pendant qu'une page est ouverte : l'appel suivant renvoie `401` et la page redirige vers la connexion.
 - Les écrans qui interrogent l'API en boucle (`reader.html` toutes les 500 ms, `index.html` toutes les 3 s) maintiennent la session active tant qu'ils sont ouverts.
 - Un compte n'est jamais supprimé, seulement désactivé : l'historique des modifications de conformité (spec `005`) référence son auteur.

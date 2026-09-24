@@ -39,3 +39,6 @@ build/
 
 ### Claude ###
 .claude/settings.local.json
+### Build outputs & logs ###
+*.class
+*.log
