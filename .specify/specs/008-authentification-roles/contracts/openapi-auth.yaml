@@ -1,0 +1,241 @@
+# Fragment to merge into src/main/resources/openapi/api.yaml (source of truth).
+# Adds tags Auth and User, and makes Reader.apitoken optional.
+# Generated delegates: AuthApiDelegate, UserApiDelegate (delegatePattern: true, useTags: true).
+
+paths:
+  /auth/login:
+    post:
+      summary: Log in and open a session
+      operationId: login
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Logged in; session cookie set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentUser"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /auth/logout:
+    post:
+      summary: Log out and invalidate the session
+      operationId: logout
+      tags: [Auth]
+      responses:
+        "204":
+          description: Logged out
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /auth/me:
+    get:
+      summary: Current logged-in user
+      operationId: getCurrentUser
+      tags: [Auth]
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentUser"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /users:
+    get:
+      summary: List users (Administrateur)
+      operationId: listUsers
+      tags: [User]
+      responses:
+        "200":
+          description: Users list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsersList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      summary: Create a user (Administrateur)
+      operationId: createUser
+      tags: [User]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUser"
+      responses:
+        "201":
+          description: Created user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/AlreadyExist" }
+
+  /users/{userId}:
+    parameters:
+      - in: path
+        name: userId
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      summary: Change role and/or enabled state (Administrateur)
+      operationId: updateUser
+      tags: [User]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUser"
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Would leave no enabled Administrateur
+
+  /users/{userId}/password:
+    parameters:
+      - in: path
+        name: userId
+        required: true
+        schema:
+          type: string
+          format: uuid
+    put:
+      summary: Reset a user's password (Administrateur)
+      operationId: resetUserPassword
+      tags: [User]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResetPassword"
+      responses:
+        "204":
+          description: Password reset; the user's sessions are closed
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+components:
+  responses:
+    Forbidden:
+      description: Rôle insuffisant
+
+  schemas:
+    Role:
+      type: string
+      enum: [ADMINISTRATEUR, OPERATEUR]
+
+    LoginRequest:
+      type: object
+      properties:
+        username: { type: string }
+        password: { type: string, format: password }
+      required: [username, password]
+
+    CurrentUser:
+      type: object
+      properties:
+        username: { type: string }
+        role: { $ref: "#/components/schemas/Role" }
+      required: [username, role]
+
+    CreateUser:
+      type: object
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 50
+          pattern: "^[A-Za-z0-9._-]+$"
+        password:
+          type: string
+          format: password
+          minLength: 8
+        role: { $ref: "#/components/schemas/Role" }
+      required: [username, password, role]
+
+    UpdateUser:
+      type: object
+      description: At least one field must be present.
+      properties:
+        role: { $ref: "#/components/schemas/Role" }
+        enabled: { type: boolean }
+
+    ResetPassword:
+      type: object
+      properties:
+        password:
+          type: string
+          format: password
+          minLength: 8
+      required: [password]
+
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        role: { $ref: "#/components/schemas/Role" }
+        enabled: { type: boolean }
+        creationDate: { type: string, format: date-time }
+      required: [id, username, role, enabled, creationDate]
+
+    UsersList:
+      type: object
+      properties:
+        users:
+          type: array
+          items: { $ref: "#/components/schemas/User" }
+      required: [users]
+
+    # Change to the existing schema: apitoken no longer required,
+    # only returned to Administrateurs (spec 002 / 007).
+    Reader:
+      allOf:
+        - $ref: "#/components/schemas/CreateReader"
+        - type: object
+          properties:
+            apitoken:
+              type: string
+              description: Only present for Administrateurs
+            creationDate: { type: string, format: date-time }
+            updateDate: { type: string, format: date-time }
+
+  securitySchemes:
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: JSESSIONID
+      description: Session opened by POST /auth/login. State-changing requests also need the X-XSRF-TOKEN header (value of the XSRF-TOKEN cookie).
+
+# Global default to add at the root of api.yaml:
+# security:
+#   - SessionCookie: []
+# /tags/scan keeps `security: [ReaderApiToken: []]`; /auth/login overrides with `security: []`.
