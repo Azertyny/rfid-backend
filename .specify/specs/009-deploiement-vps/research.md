@@ -163,7 +163,8 @@ GHCR (auto-deploy, contradicts the manual trigger); Watchtower (same).
 **Decision**:
 - `backup.sh`, run daily at 03:00 station time by a systemd timer (`vegelink-backup.timer`, `Persistent=true` so a
   missed run happens at next boot): `docker compose exec -T db pg_dump -Fc` → `vegelink-<UTC timestamp>-<version>.dump`
-  → uploaded with **rclone** to an S3-compatible bucket at a provider other than the VPS host. The local file is
+  → uploaded with **rclone** to `BACKUP_REMOTE` (`.env`, e.g. `backup:vegelink-backups`: an rclone S3 remote cannot
+  carry the bucket name), an S3-compatible bucket at a provider other than the VPS host. The local file is
   deleted after upload.
 - Retention: a **lifecycle rule on the bucket** expires objects after 30 days (≥ 14 required). The VPS key then only
   needs put + list + get, no delete (FR-017a): a compromised VPS cannot erase the history.

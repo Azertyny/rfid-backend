@@ -11,6 +11,7 @@ readonly ENV_FILE=$DIR/.env
 log() { echo "$(date -u +%H:%M:%SZ) $*"; }
 env_get() { sed -n "s/^$1=//p" "$ENV_FILE" | tail -n 1; }
 
+[ -f "$DIR/compose.yml" ] || { echo "nothing deployed yet: $DIR/compose.yml is missing" >&2; exit 1; }
 remote=$(env_get BACKUP_REMOTE)
 version=$(env_get APP_VERSION)
 [ -n "$remote" ] || { echo "BACKUP_REMOTE is not set in $ENV_FILE" >&2; exit 1; }

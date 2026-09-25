@@ -70,18 +70,29 @@ else
 fi
 
 log "starting $version (previous: $previous)"
-compose up -d --remove-orphans
-# Containers are replaced from here on: record it even if the health check fails, so previous stays the last good one.
+up_ok=true
+compose up -d --remove-orphans || up_ok=false
+# Containers are (at least partly) replaced from here on: record it even on failure, so previous stays the last good one.
 echo "$previous" > "$STATE/previous"
 echo "$version" > "$STATE/current"
+if [ "$up_ok" = false ]; then
+    compose logs --tail 50 web
+    compose logs --tail 50 app
+    fail 8 "containers could not start (port 80/443 already in use? see sudo ss -ltnp); redeploy $previous if needed"
+fi
 
 log "waiting for the application to be healthy (up to ${HEALTH_TIMEOUT}s)"
 site=$(env_get SITE_ADDRESS)
 deadline=$((SECONDS + HEALTH_TIMEOUT))
 until app_healthy && site_healthy "$site"; do
     if [ "$SECONDS" -ge "$deadline" ]; then
-        compose logs --tail 100 app
-        fail 6 "$version is not healthy after ${HEALTH_TIMEOUT}s; redeploy $previous if needed"
+        if ! app_healthy; then
+            compose logs --tail 100 app
+            fail 6 "application not healthy after ${HEALTH_TIMEOUT}s; redeploy $previous if needed"
+        fi
+        # The app answers inside the network: the public side (DNS, ports, certificate) is what fails.
+        compose logs --tail 100 web
+        fail 6 "public HTTPS check on https://$site failed: check that the DNS record points to this VPS and that ports 80/443 are open (certificate not obtained yet?); redeploy $previous if needed"
     fi
     sleep 3
 done
