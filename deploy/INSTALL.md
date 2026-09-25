@@ -44,6 +44,7 @@ On the VPS everything lives in `/opt/vegelink`:
      VPS shows (`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the VPS)
 3. **Packages**: after the first `ci` run on `dev` or `main`, set the packages `rfid-backend` and `rfid-web` to
    *Public* (profile → Packages → package settings). The VPS pulls them without credentials; they contain no secret.
+   To clean up a package, delete whole versions (a tag such as `main-3f2a9c1`) only, never an untagged entry.
 4. **Branch protection** on `dev` and `main`: require the status check `test` (from the `ci` workflow) before merging.
 5. **Backup check secrets** (repository secrets, see [Backups](#backups)): `BACKUP_S3_ENDPOINT`, `BACKUP_S3_BUCKET`,
    `BACKUP_S3_READ_KEY_ID`, `BACKUP_S3_READ_SECRET`.
@@ -62,6 +63,11 @@ On the VPS everything lives in `/opt/vegelink`:
    updates, creates the `deploy` user (it can only run `deploy.sh`), installs the scripts and the daily backup timer.
    It refuses to run until your admin account has an SSH key, so it cannot lock you out. Re-running it is safe.
    **Keep your current SSH session open** and check a new login works before closing it.
+
+   Caddy needs ports 80 and 443, and `bootstrap.sh` warns when something else holds them. Stop any previous
+   deployment first: containers of an older stack (`sudo docker ps`, then `sudo docker compose down` in its folder or
+   `sudo docker rm -f <name>`), or a web server installed on the host (`sudo systemctl disable --now nginx`, or
+   `apache2`). `sudo ss -ltnp '( sport = :80 or sport = :443 )'` must print nothing before the first deployment.
 
 2. **Backup storage** (needed before the second deployment: `deploy.sh` backs up before every switch and stops
    with exit 7 if it cannot):
@@ -103,8 +109,9 @@ If GitHub is unavailable, the same script can be run from the admin account: `su
 main-xxxxxxx`. It is the same procedure, not a different one.
 
 `deploy.sh` exit codes: 2 invalid version, 3 another deployment running, 4 image not found, 5 `.env` incomplete or
-bootstrap password still `change_me`, 6 not healthy after 120 s (the last 100 app log lines are printed), 7 pre-deploy
-backup failed (nothing changed).
+bootstrap password still `change_me`, 6 not healthy after 120 s (the app, or only the public HTTPS side: the matching
+logs are printed), 7 pre-deploy backup failed (nothing changed), 8 containers could not start (web and app logs are
+printed).
 
 ## Readers
 
@@ -129,6 +136,15 @@ the backup `deploy.sh` took just before that deployment: the newest `vegelink-*-
   deletes it after 30 days. The VPS key cannot delete, so a compromised VPS cannot erase the history.
 - The bucket and the VPS remote are set up in [First install](#first-install), step 2.
 
+**Temporary setup without external storage.** Until the bucket exists, backups can go to a folder on the VPS:
+set `BACKUP_REMOTE=/var/backups/vegelink` in `/opt/vegelink/.env` (rclone accepts a plain path, no remote to
+configure). The pre-deploy and daily backups keep running and `restore.sh` works with them. Limits: they are lost
+with the VPS, nothing deletes old dumps (check `du -sh /var/backups/vegelink` now and then), and the `backup-check`
+workflow must stay disabled (Actions tab) since there is no bucket to check. The requirement of a copy outside the
+VPS is met only once you switch: create the bucket and remote ([First install](#first-install), step 2), set
+`BACKUP_REMOTE=backup:<bucket>` again, optionally copy the existing dumps with
+`sudo rclone copy /var/backups/vegelink backup:<bucket>`, and re-enable `backup-check`.
+
 Commands on the VPS:
 
 ```zsh
@@ -137,6 +153,9 @@ systemctl list-timers vegelink-backup.timer          # next run
 journalctl -u vegelink-backup.service                # logs
 sudo rclone lsf backup:vegelink-backups              # list backups
 ```
+
+Until the first deployment there is nothing to back up: the daily timer fails ("nothing deployed yet") and so does
+`backup-check`, as expected; disable `backup-check` from the Actions tab until then.
 
 **Alerting**: the `backup-check` workflow runs every day at 06:00 UTC and fails if the newest backup is older than
 26 h. Create a **read-only** key for the bucket and set the repository secrets `BACKUP_S3_ENDPOINT` (e.g.
@@ -176,7 +195,12 @@ update `VPS_HOST` and `VPS_KNOWN_HOSTS` in the `vege_prod` environment.
 - **No certificate / HTTPS fails**: the DNS record does not point to the VPS yet, or ports 80/443 are blocked.
   `sudo docker compose -p vegelink -f /opt/vegelink/compose.yml --env-file /opt/vegelink/.env logs web`.
 - **Deploy fails with exit 5**: `.env` misses a variable or still has `APP_BOOTSTRAP_ADMIN_PASSWORD=change_me`.
-- **Deploy fails with exit 6**: read the app logs in the run summary; redeploy the previous version.
+- **Deploy fails with exit 6**: the run summary says which side failed. "application not healthy": read the app logs,
+  redeploy the previous version. "public HTTPS check failed": the app runs but the site is not reachable over HTTPS
+  (DNS record, ports 80/443, certificate): read the web logs printed below it.
+- **Deploy fails with exit 8, or "port 80/443 already in use"**: another process holds the ports, often an older
+  deployment's nginx container or a web server installed on the host. `sudo ss -ltnp '( sport = :80 or sport = :443 )'`
+  names it; stop it (see [First install](#first-install), step 1) and deploy again.
 - **Deploy fails with exit 7**: `sudo systemctl start vegelink-backup.service` then `journalctl -u vegelink-backup.service`
   (usually the `backup` remote or `BACKUP_REMOTE`).
 - **Services after a VPS reboot**: they restart on their own (`restart: unless-stopped`); check with

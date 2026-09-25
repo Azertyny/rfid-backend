@@ -54,6 +54,7 @@ The production VPS.
 | domain | `SITE_ADDRESS=vegelink.apolog.fr` in `/opt/vegelink/.env` |
 | current version | `APP_VERSION` in `/opt/vegelink/.env`, mirrored in `/opt/vegelink/state/current` |
 | configuration and secrets | `/opt/vegelink/.env` (see [contracts/configuration.md](contracts/configuration.md)) |
+| backup target | `BACKUP_REMOTE` in `.env`: rclone remote + bucket (e.g. `backup:vegelink-backups`), not a secret; a local path is accepted as a temporary setup |
 | persistent data | Docker volumes `db_data` (PostgreSQL), `caddy_data` (certificates), `caddy_config` |
 
 ## Sauvegarde (backup)

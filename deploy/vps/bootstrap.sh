@@ -7,6 +7,9 @@ set -euo pipefail
 readonly DIR=/opt/vegelink
 HERE=$(cd "$(dirname "$0")" && pwd)
 readonly HERE
+# Installed from the folder bootstrap.sh runs from: copy the whole deploy/vps/ folder, not bootstrap.sh alone.
+readonly SCRIPTS=(deploy.sh backup.sh restore.sh)
+readonly UNITS=(vegelink-backup.service vegelink-backup.timer)
 
 log() { echo "$(date -u +%H:%M:%SZ) $*"; }
 die() { echo "ERROR: $*" >&2; exit 2; }
@@ -30,6 +33,9 @@ admin_home=$(getent passwd "$admin_user" | cut -d: -f6) || die "user $admin_user
 [ -s "$admin_home/.ssh/authorized_keys" ] || die "$admin_home/.ssh/authorized_keys is empty: add your key first"
 [[ " $(id -nG "$admin_user") " == *" sudo "* ]] || die "$admin_user is not in group sudo"
 echo "$deploy_key" | ssh-keygen -l -f - >/dev/null 2>&1 || die "--deploy-key is not a valid SSH public key"
+for file in "${SCRIPTS[@]}" "${UNITS[@]}"; do
+    [ -f "$HERE/$file" ] || die "$HERE/$file is missing: copy the whole deploy/vps/ folder (scp -r deploy/vps …) and run bootstrap.sh from it"
+done
 
 # shellcheck source=/dev/null
 . /etc/os-release
@@ -57,6 +63,15 @@ ufw allow 22/tcp
 ufw allow 80/tcp
 ufw allow 443/tcp
 ufw --force enable
+
+# Caddy needs ports 80 and 443: an old stack or a web server installed on the host would make the deployment fail.
+busy=$(ss -ltnpH '( sport = :80 or sport = :443 )' | grep -v docker-proxy || true)
+if [ -n "$busy" ]; then
+    log "WARNING: ports 80/443 are already used by:"
+    echo "$busy"
+    log "stop them before deploying: 'sudo docker compose down' in an old stack's folder," \
+        "or 'sudo systemctl disable --now nginx' (or apache2)"
+fi
 
 log "SSH: keys only, no root login (FR-010b)"
 # 10- sorts before the 50-cloud-init.conf of cloud images: sshd keeps the first value it reads.
@@ -93,17 +108,16 @@ mv /etc/sudoers.d/vegelink-deploy.tmp /etc/sudoers.d/vegelink-deploy
 
 log "installing scripts into $DIR/bin"
 install -d -o root -g root -m 0755 "$DIR" "$DIR/bin" "$DIR/state"
-for script in "$HERE"/*.sh; do
-    [ "$(basename "$script")" = bootstrap.sh ] && continue
-    install -o root -g root -m 0755 "$script" "$DIR/bin/"
+for script in "${SCRIPTS[@]}"; do
+    install -o root -g root -m 0755 "$HERE/$script" "$DIR/bin/$script"
 done
 
-if [ -f "$HERE/vegelink-backup.service" ] && [ -f "$HERE/vegelink-backup.timer" ]; then
-    log "daily backup timer"
-    install -o root -g root -m 0644 "$HERE/vegelink-backup.service" "$HERE/vegelink-backup.timer" /etc/systemd/system/
-    systemctl daemon-reload
-    systemctl enable --now vegelink-backup.timer
-fi
+log "daily backup timer"
+for unit in "${UNITS[@]}"; do
+    install -o root -g root -m 0644 "$HERE/$unit" "/etc/systemd/system/$unit"
+done
+systemctl daemon-reload
+systemctl enable --now vegelink-backup.timer
 
 [ -f "$DIR/.env" ] || log "next: create $DIR/.env from .env.example (chmod 600), then run the deploy workflow"
-log "bootstrap done"
+log "bootstrap done: $(cd "$DIR/bin" && echo *) installed in $DIR/bin"

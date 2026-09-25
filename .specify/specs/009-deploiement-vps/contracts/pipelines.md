@@ -7,9 +7,10 @@ The interface the operator (and GitHub) sees. Implementation lives in `.github/w
 | | |
 |---|---|
 | Triggers | `pull_request` → `dev`, `main`; `push` → `dev`, `main` |
-| Job `test` (always) | `mvn -B verify` on JDK 21 (Temurin); `gitleaks` over full history; JUnit report annotated on the run and the PR |
+| Job `test` (always) | `mvn -B verify` on JDK 21 (Temurin); shellcheck from the pinned image `koalaman/shellcheck:v0.11.0` on `deploy/vps/*.sh`; `docker compose config` on `deploy/compose.yml`; `gitleaks` over full history; JUnit report annotated on the run and the PR |
 | Job `publish` (push only, `needs: test`) | builds and pushes `ghcr.io/azertyny/rfid-backend:<tag>` and `ghcr.io/azertyny/rfid-web:<tag>` + moving tag `<branch>` |
 | Tag | `<branch>-<7-char sha>` (e.g. `main-3f2a9c1`) |
+| Manifests | one per image (`provenance: false`): no untagged attestation versions in the packages |
 | Required check | `ci / test` is required by branch protection on `dev` and `main` (FR-004) |
 | Permissions | `contents: read`, `packages: write` (publish job only), `checks: write` (report) |
 | Outputs on failure | run conclusion `failure`; failing test names in the job summary and as annotations; nothing published |

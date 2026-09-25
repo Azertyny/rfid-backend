@@ -47,7 +47,7 @@ jobs:
           echo "$VPS_SSH_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           # The deploy user's forced command runs deploy.sh with this version as its only argument.
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "deploy@$VPS_HOST" "$VERSION" | tee deploy.log
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "deploy@$VPS_HOST" "$VERSION" 2>&1 | tee deploy.log
 
       - name: Summary
         if: always()
