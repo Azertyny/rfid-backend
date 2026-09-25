@@ -37,7 +37,7 @@ On the VPS everything lives in `/opt/vegelink`:
 
 1. **Deploy key**: on your machine, `ssh-keygen -t ed25519 -N "" -C github-actions-deploy -f vegelink-deploy`.
    The public key (`vegelink-deploy.pub`) goes to `bootstrap.sh` below; the private key goes to GitHub.
-2. **Environment** *Settings → Environments → New environment* `production`, with secrets:
+2. **Environment** *Settings → Environments → New environment* `vege_prod`, with secrets:
    - `VPS_HOST`: `vegelink.apolog.fr` (or the VPS IP)
    - `VPS_SSH_KEY`: content of `vegelink-deploy` (private key), then delete the local copy
    - `VPS_KNOWN_HOSTS`: output of `ssh-keyscan -t ed25519 vegelink.apolog.fr`, checked against the fingerprint the
@@ -159,7 +159,7 @@ until it is healthy.
 
 On a new VPS (the old one is lost): [First install](#first-install) steps 1–3 with the same `.env` values, deploy
 the version named in the backup file, then run `restore.sh` as above. Point the DNS record to the new VPS first, and
-update `VPS_HOST` and `VPS_KNOWN_HOSTS` in the `production` environment.
+update `VPS_HOST` and `VPS_KNOWN_HOSTS` in the `vege_prod` environment.
 
 ## Rotate a secret
 
