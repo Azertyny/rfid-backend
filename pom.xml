@@ -187,6 +187,7 @@
               <version>3.5.4</version>
               <configuration>
                   <argLine>-Djdk.attach.allowAttachSelf=true</argLine>
+                  <runOrder>alphabetical</runOrder>
               </configuration>
           </plugin>
 

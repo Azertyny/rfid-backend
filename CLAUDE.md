@@ -31,8 +31,8 @@ If tests fail with `NoClassDefFoundError` on a class name without its package (e
 Tests run on the `test` profile (`src/test/resources/application-test.yml`, in-memory H2), never on `dev`, whose
 H2 database is a file in the repo.
 
-Frontend (`/front`) is plain static HTML/JS with no build step — served via `deploy/front` (nginx config)
-or opened directly; talks to the backend through `front/config.js`.
+Frontend (`/front`) is plain static HTML/JS with no build step — served in production by Caddy in the `rfid-web` image
+(`deploy/web/`), same origin as the API, or opened directly; talks to the backend through `front/config.js`.
 
 ## Architecture
 
@@ -75,12 +75,20 @@ a user, changing their role or resetting their password expires their open sessi
 
 ### Persistence
 
-H2 by default (dev), file-based at `./data/rfidbackdb.mv.db`; PostgreSQL driver is also on the classpath for other
-profiles. `spring.jpa.hibernate.ddl-auto: update` — there is no migration tool (Flyway/Liquibase) yet, so schema
+H2 by default (dev), file-based at `./data/rfidbackdb.mv.db`; production (`prod` profile) uses PostgreSQL, dumped daily
+and before every deployment to external storage (`deploy/vps/backup.sh`). `spring.jpa.hibernate.ddl-auto: update` — there is no migration tool (Flyway/Liquibase) yet, so schema
 changes happen by editing entities and letting Hibernate update the schema at boot.
 `APP_STATION_TIME_ZONE` (default `Europe/Paris`) is the zone of the dashboard's days and hours (`GET /api/records/stats`,
 spec 007); startup fails for a zone whose offset is not a whole number of hours. Config is split across
 `application.yml` (activates the `dev` profile) plus `application-dev.yml` / `application-prod.yml`.
+
+### Deployment
+
+`.github/workflows/ci.yml` tests every PR and push to `dev`/`main` (test classes run in alphabetical order, as on CI),
+then publishes the images `ghcr.io/azertyny/rfid-backend` and `rfid-web` tagged `<branch>-<7-char sha>`. Production is
+`https://vegelink.apolog.fr` on one VPS, changed only by the manual `deploy.yml` workflow (a `main-*` tag). Runbook:
+`deploy/INSTALL.md`; design: `.specify/specs/009-deploiement-vps/`. Tests must not rely on the `XSRF-TOKEN` cookie after
+another class used `spring-security-test`'s `csrf()`: it swaps the shared CSRF repository (see `AuthFlowSecurityTest`).
 
 ### Docs
 

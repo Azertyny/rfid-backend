@@ -1,7 +1,6 @@
 package com.rfidback.security;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -15,6 +14,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -29,6 +29,9 @@ import jakarta.servlet.http.Cookie;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
+// spring-security-test's csrf() swaps the CSRF repository of the shared filter for the rest of the context, which
+// stops the XSRF-TOKEN cookie these tests check: start from a fresh context and never use csrf() here.
+@DirtiesContext(classMode = DirtiesContext.ClassMode.BEFORE_CLASS)
 class AuthFlowSecurityTest {
 
     private static final String ADMIN_PASSWORD = "admin-password";
@@ -104,9 +107,13 @@ class AuthFlowSecurityTest {
 
     @Test
     void logout_invalidatesSession() throws Exception {
-        MockHttpSession session = loginAndGetSession("admin", ADMIN_PASSWORD);
+        MvcResult result = mockMvc.perform(login("admin", ADMIN_PASSWORD)).andExpect(status().isOk()).andReturn();
+        MockHttpSession session = (MockHttpSession) result.getRequest().getSession(false);
+        Cookie csrfCookie = lastCookie(result, "XSRF-TOKEN");
 
-        mockMvc.perform(post("/api/auth/logout").session(session).with(csrf()))
+        mockMvc.perform(post("/api/auth/logout").session(session)
+                .cookie(csrfCookie)
+                .header("X-XSRF-TOKEN", csrfCookie.getValue()))
                 .andExpect(status().isNoContent());
 
         mockMvc.perform(get("/api/auth/me").session(session)).andExpect(status().isUnauthorized());

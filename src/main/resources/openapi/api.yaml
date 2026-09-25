@@ -7,7 +7,7 @@ info:
 servers:
   - url: http://localhost:8080/api
     description: Serveur local de développement
-  - url: https://api.apolog.fr/api
+  - url: https://vegelink.apolog.fr/api
     description: Serveur de production
 
 # Default: a logged-in user session. /tags/scan uses the reader token, /auth/login is public.
