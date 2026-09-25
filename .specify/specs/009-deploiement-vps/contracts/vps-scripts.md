@@ -24,8 +24,9 @@ version sent by the workflow becomes `$1`), or directly by an admin: `sudo /opt/
 | 3 | another deploy holds the lock (should not happen behind `deploy.yml` concurrency) |
 | 4 | pull failed (version missing, registry unreachable); running version untouched |
 | 5 | `/opt/vegelink/.env` missing or lacks a required variable |
-| 6 | containers started but health not OK within 120 s; last 100 lines of `app` logs printed |
+| 6 | containers started but health not OK within 120 s: "application not healthy" (last 100 `app` log lines) or "public HTTPS check … failed" when only the public side fails (last 100 `web` log lines, DNS/ports/certificate hint) |
 | 7 | pre-deploy backup failed (run only when `db` is running); nothing changed |
+| 8 | `docker compose up` failed (e.g. port 80/443 already in use); last 50 `web` and `app` log lines printed |
 
 Output: one line per step, prefixed with a UTC time; final line `DEPLOYED <version> (previous: <version>)` or
 `FAILED <exit code>: <reason>`. State files: `/opt/vegelink/state/current`, `/opt/vegelink/state/previous`, written
