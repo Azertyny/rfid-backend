@@ -77,7 +77,9 @@ a user, changing their role or resetting their password expires their open sessi
 
 H2 by default (dev), file-based at `./data/rfidbackdb.mv.db`; PostgreSQL driver is also on the classpath for other
 profiles. `spring.jpa.hibernate.ddl-auto: update` — there is no migration tool (Flyway/Liquibase) yet, so schema
-changes happen by editing entities and letting Hibernate update the schema at boot. Config is split across
+changes happen by editing entities and letting Hibernate update the schema at boot.
+`APP_STATION_TIME_ZONE` (default `Europe/Paris`) is the zone of the dashboard's days and hours (`GET /api/records/stats`,
+spec 007); startup fails for a zone whose offset is not a whole number of hours. Config is split across
 `application.yml` (activates the `dev` profile) plus `application-dev.yml` / `application-prod.yml`.
 
 ### Docs

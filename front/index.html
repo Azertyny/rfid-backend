@@ -3,34 +3,23 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Suivi Lavage - Production</title>
-    
+    <title>Tableau de bord - Production</title>
+
     <!-- Bootstrap 5 & FontAwesome -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 
     <style>
         body { background-color: #f9fafb; font-family: 'Segoe UI', system-ui, sans-serif; color: #1f2937; }
-        .card { border: none; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); transition: all 0.2s; background: white; }
-        .card:hover { box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
-        
-        .btn-line { height: 70px; display: flex; flex-direction: column; justify-content: center; align-items: center; border-radius: 12px; border: 2px solid #e5e7eb; background: white; color: #4b5563; transition: all 0.2s; }
-        .btn-line:hover { background: #f3f4f6; border-color: #d1d5db; }
-        .btn-line.active { background: #16a34a; border-color: #16a34a; color: white; }
-        .btn-line .vegetable { font-size: 0.85em; opacity: 0.9; font-weight: normal; }
-        .btn-line .name { font-weight: 700; font-size: 1.1em; }
-
+        .card { border: none; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); background: white; }
         .icon-box { width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; }
         .bg-green-soft { background-color: #dcfce7; color: #16a34a; }
         .bg-blue-soft { background-color: #dbeafe; color: #2563eb; }
+        .bg-red-soft { background-color: #fee2e2; color: #dc2626; }
         .bg-purple-soft { background-color: #f3e8ff; color: #9333ea; }
-
-        .rank-1 { background: linear-gradient(to right, #fffbeb, #ffffff); border: 1px solid #fcd34d; }
-        .rank-2 { background: linear-gradient(to right, #f9fafb, #ffffff); border: 1px solid #e5e7eb; }
-        .rank-3 { background: linear-gradient(to right, #fff7ed, #ffffff); border: 1px solid #fdba74; }
-        
-        .status-badge { position: fixed; top: 70px; right: 20px; z-index: 1000; font-size: 0.8rem; padding: 5px 10px; border-radius: 20px;}
+        .stat-value { font-variant-numeric: tabular-nums; }
+        #pickersTable td.num, #pickersTable th.num { text-align: right; font-variant-numeric: tabular-nums; }
     </style>
 </head>
 <body class="d-flex flex-column h-100">
@@ -67,94 +56,148 @@
         </div>
     </nav>
 
-    <span id="apiStatus" class="badge bg-secondary status-badge"><i class="fas fa-circle-notch fa-spin me-1"></i> Connexion...</span>
-
     <div class="container-fluid max-w-7xl mx-auto py-4">
-        
-        <!-- Sous-Titre et Date -->
-        <div class="d-flex align-items-center justify-content-between mb-4">
-            <div class="d-flex align-items-center gap-3">
-                <div class="icon-box bg-primary text-white rounded-3">
-                    <i class="fas fa-tint"></i>
-                </div>
-                <div>
-                    <h4 class="mb-0 fw-bold text-dark">Suivi Lavage - Production</h4>
-                    <small class="text-muted" id="currentDate">Chargement...</small>
-                </div>
+
+        <!-- Titre -->
+        <div class="d-flex align-items-center gap-3 mb-4">
+            <div class="icon-box bg-primary text-white rounded-3">
+                <i class="fas fa-chart-column"></i>
+            </div>
+            <div>
+                <h4 class="mb-0 fw-bold text-dark">Tableau de bord - Production</h4>
+                <small class="text-muted" id="periodLabel">Chargement...</small>
             </div>
         </div>
 
-        <!-- SELECTEUR DE LIGNE -->
-        <div class="row g-3 mb-4" id="lineSelector">
-            <div class="col-12 text-center text-muted">Chargement des lignes...</div>
+        <!-- FILTRES -->
+        <div class="card p-3 mb-4">
+            <div class="row g-2 align-items-end">
+                <div class="col-md-3">
+                    <label for="periodSelect" class="form-label small fw-semibold mb-1">Période</label>
+                    <select id="periodSelect" class="form-select form-select-sm">
+                        <option value="TODAY" selected>Aujourd'hui</option>
+                        <option value="YESTERDAY">Hier</option>
+                        <option value="LAST_7_DAYS">7 derniers jours</option>
+                        <option value="CUSTOM">Personnalisée</option>
+                    </select>
+                </div>
+                <div class="col-md-2 d-none" data-custom-period>
+                    <label for="fromDate" class="form-label small fw-semibold mb-1">Du</label>
+                    <input type="date" id="fromDate" class="form-control form-control-sm">
+                </div>
+                <div class="col-md-2 d-none" data-custom-period>
+                    <label for="toDate" class="form-label small fw-semibold mb-1">Au</label>
+                    <input type="date" id="toDate" class="form-control form-control-sm">
+                </div>
+                <div class="col-md-3">
+                    <label for="readerSelect" class="form-label small fw-semibold mb-1">Lecteur</label>
+                    <select id="readerSelect" class="form-select form-select-sm">
+                        <option value="">Tous les lecteurs</option>
+                    </select>
+                </div>
+                <div class="col-md-auto ms-auto d-flex gap-2">
+                    <button id="refreshBtn" class="btn btn-sm btn-outline-secondary">
+                        <i class="fas fa-rotate me-1"></i>Actualiser
+                    </button>
+                    <button id="exportBtn" class="btn btn-sm btn-success" disabled>
+                        <i class="fas fa-file-csv me-1"></i>Exporter CSV
+                    </button>
+                </div>
+            </div>
+            <div id="periodError" class="invalid-feedback d-block"></div>
         </div>
 
-        <!-- STATS COMPACTES -->
-        <div class="row g-3 mb-4">
-            <div class="col-md-4">
-                <div class="card p-3 h-100">
-                    <div class="d-flex align-items-center gap-3">
-                        <div class="icon-box bg-green-soft"><i class="fas fa-box"></i></div>
-                        <div>
-                            <p class="text-muted small mb-0 fw-semibold">Total Caisses (Conformes)</p>
-                            <h2 class="mb-0 fw-bold text-success" id="statTotalCrates">0</h2>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="card p-3 h-100">
-                    <div class="d-flex align-items-center gap-3">
-                        <div class="icon-box bg-blue-soft"><i class="fas fa-users"></i></div>
-                        <div>
-                            <p class="text-muted small mb-0 fw-semibold">Opérateurs Actifs</p>
-                            <h2 class="mb-0 fw-bold text-primary" id="statTotalPickers">0</h2>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-4">
-                <div class="card p-3 h-100">
-                    <div class="d-flex align-items-center gap-3">
-                        <div class="icon-box bg-purple-soft"><i class="fas fa-chart-line"></i></div>
-                        <div>
-                            <p class="text-muted small mb-0 fw-semibold">Moyenne / Opérateur</p>
-                            <h2 class="mb-0 fw-bold" style="color: #9333ea" id="statAvg">0</h2>
-                        </div>
-                    </div>
-                </div>
-            </div>
+        <!-- ÉTATS -->
+        <div id="loadingState" class="text-center text-muted py-5">
+            <i class="fas fa-circle-notch fa-spin me-2"></i>Chargement...
+        </div>
+        <div id="errorState" class="alert alert-danger d-none d-flex justify-content-between align-items-center">
+            <span id="errorMessage">Impossible de charger les statistiques.</span>
+            <button id="retryBtn" class="btn btn-sm btn-outline-danger">Réessayer</button>
+        </div>
+        <div id="emptyState" class="card p-5 text-center text-muted d-none">
+            <i class="fas fa-inbox fa-2x mb-2"></i>
+            <div>Aucune lecture sur la période</div>
         </div>
 
-        <!-- CONTENU PRINCIPAL -->
-        <div class="row g-3 h-100">
-            <!-- GRAPHIQUE CADENCE -->
-            <div class="col-lg-7">
-                <div class="card h-100 p-3">
-                    <div class="d-flex justify-content-between align-items-center mb-3">
-                        <h5 class="fw-bold mb-0">Cadence (Caisses/h)</h5>
-                        <div class="d-flex gap-3 text-end">
+        <div id="results" class="d-none">
+            <!-- SYNTHÈSE -->
+            <div class="row g-3 mb-4">
+                <div class="col-md-3 col-6">
+                    <div class="card p-3 h-100">
+                        <div class="d-flex align-items-center gap-3">
+                            <div class="icon-box bg-blue-soft"><i class="fas fa-barcode"></i></div>
                             <div>
-                                <small class="text-muted d-block">Actuel</small>
-                                <span class="fw-bold text-primary fs-5" id="currentRate">0</span>
+                                <p class="text-muted small mb-0 fw-semibold">Lectures</p>
+                                <h2 class="mb-0 fw-bold stat-value" id="statTotal">0</h2>
                             </div>
                         </div>
                     </div>
-                    <div style="position: relative; height: 300px; width: 100%;">
-                        <canvas id="speedChart"></canvas>
+                </div>
+                <div class="col-md-3 col-6">
+                    <div class="card p-3 h-100">
+                        <div class="d-flex align-items-center gap-3">
+                            <div class="icon-box bg-green-soft"><i class="fas fa-check"></i></div>
+                            <div>
+                                <p class="text-muted small mb-0 fw-semibold">Conformes</p>
+                                <h2 class="mb-0 fw-bold text-success stat-value" id="statCompliant">0</h2>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3 col-6">
+                    <div class="card p-3 h-100">
+                        <div class="d-flex align-items-center gap-3">
+                            <div class="icon-box bg-red-soft"><i class="fas fa-xmark"></i></div>
+                            <div>
+                                <p class="text-muted small mb-0 fw-semibold">Non conformes</p>
+                                <h2 class="mb-0 fw-bold text-danger stat-value" id="statNonCompliant">0</h2>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3 col-6">
+                    <div class="card p-3 h-100">
+                        <div class="d-flex align-items-center gap-3">
+                            <div class="icon-box bg-purple-soft"><i class="fas fa-percent"></i></div>
+                            <div>
+                                <p class="text-muted small mb-0 fw-semibold">Taux de conformité</p>
+                                <h2 class="mb-0 fw-bold stat-value" style="color: #9333ea" id="statRate">—</h2>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <!-- CLASSEMENT -->
-            <div class="col-lg-5">
-                <div class="card h-100 p-3">
-                    <div class="d-flex justify-content-between align-items-center mb-3">
-                        <h5 class="fw-bold mb-0">Classement Opérateurs</h5>
-                        <span class="badge bg-light text-dark border">Top Productivité</span>
+            <div class="row g-3">
+                <!-- PAR CUEILLEUR -->
+                <div class="col-lg-6">
+                    <div class="card h-100 p-3">
+                        <h5 class="fw-bold mb-3">Par cueilleur</h5>
+                        <div class="table-responsive" style="max-height: 420px;">
+                            <table id="pickersTable" class="table table-sm table-hover align-middle mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Cueilleur</th>
+                                        <th class="num">Lectures</th>
+                                        <th class="num">Non conformes</th>
+                                        <th class="num">Taux de conformité</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="pickersBody"></tbody>
+                                <tfoot id="pickersFoot" class="fw-bold table-light"></tfoot>
+                            </table>
+                        </div>
                     </div>
-                    <div class="d-flex flex-column gap-2 overflow-auto" style="max-height: 300px;" id="pickersList">
-                        <div class="text-center text-muted py-5">En attente de données...</div>
+                </div>
+
+                <!-- PAR HEURE -->
+                <div class="col-lg-6">
+                    <div class="card h-100 p-3">
+                        <h5 class="fw-bold mb-3">Lectures par heure</h5>
+                        <div style="position: relative; height: 380px; width: 100%;">
+                            <canvas id="hoursChart"></canvas>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -165,183 +208,294 @@
     <script src="config.js"></script>
     <script src="auth.js"></script>
     <script>
+        // Tableau de bord (spec 007): every figure comes from GET /api/records/stats, computed by the server in the
+        // station time zone. Nothing is aggregated here and nothing is ever invented when there is no data.
+        const MAX_DAYS = 31;
+        const REFRESH_MS = 60000;
+        const NON_ATTRIBUE = 'Non attribué';
 
-        let LINES = [{ id: "all", name: "Global", vegetable: "Toutes les lignes" }];
-        let currentLine = "all";
-        let chartInstance = null;
-        let pickersMap = {};
+        let lastStats = null;
+        // Only the latest request may render: an older answer arriving late must not replace newer figures.
+        let statsRequestSeq = 0;
+        let readersById = {};
+        let hoursChart = null;
 
         document.addEventListener('DOMContentLoaded', async () => {
             await requireRole('ADMINISTRATEUR', 'OPERATEUR');
-            updateDate();
             initChart();
-            // The dashboard data source (GET /api/tags) does not exist yet (spec 007): no polling until it does.
-            Promise.all([fetchReaders(), fetchPickersInfo()]).then(() => updateStatus(false));
-            setInterval(updateDate, 60000);
+            document.getElementById('periodSelect').addEventListener('change', onPeriodChange);
+            ['fromDate', 'toDate', 'readerSelect'].forEach(id =>
+                document.getElementById(id).addEventListener('change', loadStats));
+            document.getElementById('refreshBtn').addEventListener('click', loadStats);
+            document.getElementById('retryBtn').addEventListener('click', loadStats);
+            document.getElementById('exportBtn').addEventListener('click', exportCsv);
+            document.addEventListener('visibilitychange', () => { if (shouldAutoRefresh()) loadStats(); });
+            setInterval(() => { if (shouldAutoRefresh()) loadStats(); }, REFRESH_MS);
+            await loadReaders();
+            await loadStats();
         });
 
-        function updateDate() {
-            const now = new Date();
-            document.getElementById('currentDate').innerText = now.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute:'2-digit' });
+        // All readers, including disabled ones and those now in registration mode: they keep their past production
+        // records (research R6).
+        async function loadReaders() {
+            try {
+                const response = await apiFetch('/readers');
+                if (!response.ok) return;
+                const readers = (await response.json()).readers || [];
+                readers.sort((a, b) => a.uid.localeCompare(b.uid, 'fr'));
+                const select = document.getElementById('readerSelect');
+                readersById = {};
+                readers.forEach(reader => {
+                    readersById[reader.id] = reader;
+                    let label = reader.uid;
+                    if (reader.active === false) label += ' (désactivé)';
+                    if (reader.mode === 'ENREGISTREMENT') label += ' (enregistrement)';
+                    select.appendChild(new Option(label, reader.id));
+                });
+            } catch (e) { console.error('Err Readers', e); }
         }
 
-        async function fetchReaders() {
-            try {
-                const response = await apiFetch(`/readers`);
-                if (response.ok) {
-                    const data = await response.json();
-                    const readers = data.readers || [];
-                    LINES = [{ id: "all", name: "Global", vegetable: "Toutes les lignes" }];
-                    // Un lecteur désactivé ne peut plus scanner : sa ligne resterait vide.
-                    // Un lecteur en mode enregistrement alimente la page Tags, pas une ligne de production (spec 003).
-                    readers.filter(r => r.active !== false && r.mode !== 'ENREGISTREMENT').forEach(r => { LINES.push({ id: r.uid, name: r.uid, vegetable: "Ligne de lavage" }); });
-                    renderLineSelector();
+        function onPeriodChange() {
+            const custom = document.getElementById('periodSelect').value === 'CUSTOM';
+            document.querySelectorAll('[data-custom-period]').forEach(el => el.classList.toggle('d-none', !custom));
+            loadStats();
+        }
+
+        // Returns the query string, or null after showing why the custom dates are not valid.
+        function buildStatsQuery() {
+            const params = new URLSearchParams();
+            const period = document.getElementById('periodSelect').value;
+            params.set('period', period);
+            if (period === 'CUSTOM') {
+                const from = document.getElementById('fromDate').value;
+                const to = document.getElementById('toDate').value;
+                if (!from || !to) return showPeriodError('Choisissez une date de début et une date de fin.');
+                if (from > to) return showPeriodError('La date de début doit précéder la date de fin.');
+                if (daysBetween(from, to) + 1 > MAX_DAYS) {
+                    return showPeriodError(`La période ne peut pas dépasser ${MAX_DAYS} jours.`);
                 }
-            } catch (e) { console.error("Err Readers", e); }
+                params.set('from', from);
+                params.set('to', to);
+            }
+            const readerId = document.getElementById('readerSelect').value;
+            if (readerId) params.set('readerId', readerId);
+            return params.toString();
         }
 
-        function renderLineSelector() {
-            const container = document.getElementById('lineSelector');
-            container.innerHTML = LINES.map(line => `
-                <div class="col-md-${LINES.length > 4 ? '2' : Math.max(3, 12/LINES.length)} col-6">
-                    <button class="btn btn-line w-100 ${currentLine === line.id ? 'active' : ''}" onclick="changeLine('${line.id}')">
-                        <span class="name text-truncate w-100">${line.name}</span>
-                        <span class="vegetable text-truncate w-100">${line.vegetable}</span>
-                    </button>
-                </div>`).join('');
+        function daysBetween(from, to) {
+            // Both dates at UTC midnight: no daylight-saving hour can shift the difference.
+            return Math.round((Date.parse(to + 'T00:00:00Z') - Date.parse(from + 'T00:00:00Z')) / 86400000);
         }
 
-        function changeLine(lineId) {
-            currentLine = lineId;
-            renderLineSelector();
-            fetchData();
+        // An invalid period shows no figures at all, never the previous period's ones.
+        function showPeriodError(message) {
+            document.getElementById('periodError').textContent = message;
+            lastStats = null;
+            showState('none');
+            return null;
         }
 
-        async function fetchPickersInfo() {
+        async function loadStats() {
+            document.getElementById('periodError').textContent = '';
+            const requestId = ++statsRequestSeq;
+            const query = buildStatsQuery();
+            if (query === null) return;
+            if (!lastStats) showState('loading');
             try {
-                // The API serves at most 100 pickers per page: walk the pages until there is no next one.
-                for (let page = 0; ; page++) {
-                    const response = await apiFetch(`/pickers?size=100&page=${page}`);
-                    if (!response.ok) break;
-                    const data = await response.json();
-                    (data.content || []).forEach(p => { pickersMap[p.id] = `${p.firstname} ${p.lastname}`; });
-                    if (!data.metadata || !data.metadata.hasNext) break;
+                const response = await apiFetch('/records/stats?' + query, { silent: true });
+                if (requestId !== statsRequestSeq) return;
+                if (response.status === 400) {
+                    const problem = await response.json().catch(() => ({}));
+                    showPeriodError(problem.detail || 'Période invalide.');
+                    return;
                 }
-            } catch (e) { console.error("Err Pickers", e); }
+                if (!response.ok) {
+                    showError(response.status === 403 ? 'Accès refusé.' : 'Impossible de charger les statistiques.');
+                    return;
+                }
+                const stats = await response.json();
+                if (requestId !== statsRequestSeq) return;
+                lastStats = stats;
+                render(lastStats);
+            } catch (e) {
+                if (requestId !== statsRequestSeq) return;
+                console.error('Err Stats', e);
+                showError('Impossible de joindre le serveur.');
+            }
         }
 
-        async function fetchData() {
-            try {
-                const response = await apiFetch(`/tags?size=3000&_t=${Date.now()}`, { silent: true });
-                if (response.ok) {
-                    const data = await response.json();
-                    updateStatus(true);
-                    processBusinessLogic(data.content || data || []);
-                } else { updateStatus(false); }
-            } catch (e) { updateStatus(false); }
+        function showError(message) {
+            lastStats = null;
+            document.getElementById('errorMessage').textContent = message;
+            showState('error');
         }
 
-        function processBusinessLogic(allTags) {
-            const todayStr = new Date().toDateString();
-            const validTags = allTags.filter(t => {
-                const timeField = t.processedAt || t.processed_at || t.timestamp || t.scanDate;
-                const isToday = new Date(timeField).toDateString() === todayStr;
-                const complianceField = t.isCompliant !== undefined ? t.isCompliant : t.conforme;
-                const isCompliant = (complianceField === true || complianceField === undefined);
-                const tagReaderId = t.readerId || t.reader_id;
-                const isLineMatch = currentLine === 'all' || tagReaderId == currentLine;
-                return isToday && isCompliant && isLineMatch;
+        // state: loading | error | empty | results | none
+        function showState(state) {
+            document.getElementById('loadingState').classList.toggle('d-none', state !== 'loading');
+            document.getElementById('errorState').classList.toggle('d-none', state !== 'error');
+            document.getElementById('emptyState').classList.toggle('d-none', state !== 'empty');
+            document.getElementById('results').classList.toggle('d-none', state !== 'results');
+            document.getElementById('exportBtn').disabled = state !== 'results';
+            if (state !== 'results' && state !== 'empty') {
+                document.getElementById('periodLabel').textContent = '';
+            }
+        }
+
+        function render(stats) {
+            document.getElementById('periodLabel').textContent = periodLabel(stats);
+            if (stats.summary.total === 0) {
+                showState('empty');
+                return;
+            }
+            const summary = stats.summary;
+            document.getElementById('statTotal').textContent = formatInt(summary.total);
+            document.getElementById('statCompliant').textContent = formatInt(summary.total - summary.nonCompliant);
+            document.getElementById('statNonCompliant').textContent = formatInt(summary.nonCompliant);
+            document.getElementById('statRate').textContent = formatRate(summary);
+            renderPickers(stats);
+            renderHours(stats.hours);
+            showState('results');
+        }
+
+        function periodLabel(stats) {
+            const zone = ` (heure de ${stats.timeZone})`;
+            return stats.from === stats.to
+                ? `Le ${formatDay(stats.from)}${zone}`
+                : `Du ${formatDay(stats.from)} au ${formatDay(stats.to)}${zone}`;
+        }
+
+        // "2026-09-25" → "25/09/2026", from the string itself: parsing it as a Date could shift the day.
+        function formatDay(isoDay) {
+            const [year, month, day] = isoDay.split('-');
+            return `${day}/${month}/${year}`;
+        }
+
+        function formatInt(value) {
+            return value.toLocaleString('fr-FR');
+        }
+
+        function complianceRate(counts) {
+            return counts.total === 0 ? null : (counts.total - counts.nonCompliant) * 100 / counts.total;
+        }
+
+        function formatRate(counts) {
+            const rate = complianceRate(counts);
+            return rate === null ? '—'
+                : rate.toLocaleString('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + ' %';
+        }
+
+        function pickerName(picker) {
+            return picker.pickerId === null || picker.pickerId === undefined
+                ? NON_ATTRIBUE
+                : `${picker.firstname || ''} ${picker.lastname || ''}`.trim();
+        }
+
+        function renderPickers(stats) {
+            const body = document.getElementById('pickersBody');
+            body.replaceChildren();
+            stats.pickers.forEach(picker => {
+                const row = pickerRow(pickerName(picker), picker);
+                if (picker.pickerId === null || picker.pickerId === undefined) {
+                    row.cells[0].classList.add('fst-italic', 'text-muted');
+                }
+                body.appendChild(row);
             });
-
-            const totalCrates = validTags.length;
-            const uniqueBadges = new Set(validTags.map(t => t.uid || t.tagId));
-            const totalPickersCount = uniqueBadges.size;
-            const avg = totalPickersCount > 0 ? Math.round(totalCrates / totalPickersCount) : 0;
-
-            animateValue("statTotalCrates", parseInt(document.getElementById("statTotalCrates").innerText), totalCrates, 500);
-            document.getElementById("statTotalPickers").innerText = totalPickersCount;
-            document.getElementById("statAvg").innerText = avg;
-
-            updatePickersGrid(validTags);
-            updateChart(validTags);
+            document.getElementById('pickersFoot').replaceChildren(pickerRow('Total', stats.summary));
         }
 
-        function updatePickersGrid(tags) {
-            const counts = {};
-            tags.forEach(t => { const uid = t.uid || t.tagId; counts[uid] = (counts[uid] || 0) + 1; });
-            const sorted = Object.entries(counts).sort(([,a], [,b]) => b - a).slice(0, 10);
-            const list = document.getElementById('pickersList');
-
-            if (sorted.length === 0) { list.innerHTML = '<div class="text-center text-muted py-4">Aucune production</div>'; return; }
-
-            list.innerHTML = sorted.map(([uid, count], index) => {
-                const name = pickersMap[uid] || `Badge ${uid.substring(0, 6)}...`;
-                let rankClass = "bg-white border";
-                let icon = `<span class="badge bg-light text-dark border">#${index+1}</span>`;
-                if (index === 0) { rankClass = "rank-1"; icon = '<i class="fas fa-trophy text-warning"></i>'; }
-                if (index === 1) { rankClass = "rank-2"; icon = '<i class="fas fa-medal text-secondary"></i>'; }
-                if (index === 2) { rankClass = "rank-3"; icon = '<i class="fas fa-award" style="color: #cd7f32"></i>'; }
-
-                return `
-                <div class="d-flex justify-content-between align-items-center p-2 rounded ${rankClass}">
-                    <div class="d-flex align-items-center gap-3 overflow-hidden">
-                        <div style="width: 24px; text-align: center;">${icon}</div>
-                        <div class="text-truncate">
-                            <div class="fw-bold text-dark">${name}</div>
-                            <div class="text-muted small" style="font-size: 0.75em">${uid}</div>
-                        </div>
-                    </div>
-                    <span class="badge bg-primary rounded-pill fs-6">${count}</span>
-                </div>`;
-            }).join('');
+        function pickerRow(name, counts) {
+            const row = document.createElement('tr');
+            [name, formatInt(counts.total), formatInt(counts.nonCompliant), formatRate(counts)].forEach((text, i) => {
+                const cell = document.createElement('td');
+                cell.textContent = text;
+                if (i > 0) cell.classList.add('num');
+                row.appendChild(cell);
+            });
+            return row;
         }
 
         function initChart() {
-            const ctx = document.getElementById('speedChart').getContext('2d');
-            chartInstance = new Chart(ctx, {
-                type: 'line',
-                data: { labels: [], datasets: [{ label: 'Vitesse (Caisses/h)', data: [], borderColor: '#2563eb', backgroundColor: 'rgba(37, 99, 235, 0.1)', borderWidth: 2, tension: 0.3, fill: true, pointRadius: 4 }] },
-                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, grid: { borderDash: [5, 5] } }, x: { grid: { display: false } } } }
-            });
-        }
-
-        function updateChart(tags) {
-            const buckets = {};
-            const labels = [];
-            const startH = 6; const endH = 20;
-            for(let h=startH; h<=endH; h++) { [`${h.toString().padStart(2,'0')}:00`, `${h.toString().padStart(2,'0')}:30`].forEach(slot => { buckets[slot] = 0; labels.push(slot); }); }
-
-            tags.forEach(t => {
-                const timeField = t.processedAt || t.processed_at || t.timestamp || t.scanDate;
-                const d = new Date(timeField);
-                const h = d.getHours();
-                const m = d.getMinutes();
-                if (h >= startH && h <= endH) {
-                    const slot = m < 30 ? `${h.toString().padStart(2,'0')}:00` : `${h.toString().padStart(2,'0')}:30`;
-                    if (buckets[slot] !== undefined) buckets[slot]++;
+            const ctx = document.getElementById('hoursChart').getContext('2d');
+            hoursChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: [],
+                    datasets: [
+                        { label: 'Conformes', data: [], backgroundColor: '#16a34a', borderRadius: 3 },
+                        { label: 'Non conformes', data: [], backgroundColor: '#dc2626', borderRadius: 3 }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { position: 'top' }, tooltip: { mode: 'index', intersect: false } },
+                    scales: {
+                        x: { stacked: true, grid: { display: false } },
+                        y: { stacked: true, beginAtZero: true, ticks: { precision: 0 } }
+                    }
                 }
             });
-
-            const data = labels.map(l => buckets[l] * 2);
-            chartInstance.data.labels = labels;
-            chartInstance.data.datasets[0].data = data;
-            chartInstance.update();
-
-            const now = new Date();
-            const curSlot = now.getMinutes() < 30 ? `${now.getHours().toString().padStart(2,'0')}:00` : `${now.getHours().toString().padStart(2,'0')}:30`;
-            document.getElementById('currentRate').innerText = (buckets[curSlot] || 0) * 2;
         }
 
-        function updateStatus(isOnline) {
-            const el = document.getElementById('apiStatus');
-            if (isOnline) { el.className = 'badge bg-success status-badge'; el.innerHTML = '<i class="fas fa-check"></i> En ligne'; }
-            else { el.className = 'badge bg-danger status-badge'; el.innerHTML = '<i class="fas fa-wifi"></i> Erreur API'; }
+        // Only the hours from the first to the last one with reads, so a working day is not squeezed into 24 bars.
+        function renderHours(hours) {
+            const withReads = hours.filter(h => h.total > 0).map(h => h.hour);
+            const first = withReads.length ? Math.min(...withReads) : 0;
+            const last = withReads.length ? Math.max(...withReads) : 23;
+            const shown = hours.filter(h => h.hour >= first && h.hour <= last);
+            hoursChart.data.labels = shown.map(h => String(h.hour).padStart(2, '0') + 'h');
+            hoursChart.data.datasets[0].data = shown.map(h => h.total - h.nonCompliant);
+            hoursChart.data.datasets[1].data = shown.map(h => h.nonCompliant);
+            hoursChart.update();
         }
 
-        function animateValue(id, start, end, duration) {
-            if (start === end) return;
-            const obj = document.getElementById(id);
-            obj.innerHTML = end; 
+        // Only a period that includes today can change: a closed period is refreshed by hand.
+        function shouldAutoRefresh() {
+            if (!lastStats || document.visibilityState !== 'visible') return false;
+            const todayInZone = new Intl.DateTimeFormat('en-CA', { timeZone: lastStats.timeZone }).format(new Date());
+            return lastStats.to >= todayInZone;
+        }
+
+        // CSV for Excel (French settings): UTF-8 with BOM, ";" separator, decimal comma (research R10).
+        function exportCsv() {
+            if (!lastStats) return;
+            const lines = [['Cueilleur', 'Lectures', 'Conformes', 'Non conformes', 'Taux de conformité (%)']];
+            lastStats.pickers.forEach(picker => lines.push(csvCounts(pickerName(picker), picker)));
+            lines.push(csvCounts('Total', lastStats.summary));
+            const csv = lines.map(line => line.map(csvField).join(';')).join('\r\n') + '\r\n';
+
+            const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = csvFileName(lastStats);
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            URL.revokeObjectURL(url);
+        }
+
+        function csvCounts(name, counts) {
+            const rate = complianceRate(counts);
+            return [name, String(counts.total), String(counts.total - counts.nonCompliant),
+                String(counts.nonCompliant),
+                rate === null ? '' : rate.toLocaleString('fr-FR',
+                    { minimumFractionDigits: 1, maximumFractionDigits: 1, useGrouping: false })];
+        }
+
+        // Quoted, and a leading ' on text Excel would run as a formula (picker names are free text).
+        function csvField(value) {
+            let text = String(value);
+            if (/^[=+\-@\t\r]/.test(text)) text = "'" + text;
+            return '"' + text.replace(/"/g, '""') + '"';
+        }
+
+        function csvFileName(stats) {
+            let name = `tableau-de-bord_${stats.from}_${stats.to}`;
+            const reader = stats.readerId ? readersById[stats.readerId] : null;
+            if (reader) name += '_' + reader.uid.replace(/[^A-Za-z0-9]+/g, '-');
+            return name + '.csv';
         }
     </script>
 </body>
