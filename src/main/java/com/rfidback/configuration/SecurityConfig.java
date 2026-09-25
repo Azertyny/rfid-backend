@@ -123,6 +123,8 @@ public class SecurityConfig {
                             .requestMatchers(path(null, "/api/readers/**")).hasRole(ADMINISTRATEUR)
                             .requestMatchers(path(null, "/api/tags/**")).hasRole(ADMINISTRATEUR)
                             .requestMatchers(path(null, "/api/buckets/**")).hasRole(ADMINISTRATEUR)
+                            .requestMatchers(path(HttpMethod.GET, "/api/records/*/conformity-history"))
+                            .hasRole(ADMINISTRATEUR) // spec 005, FR-007
                             .requestMatchers(path(null, "/api/records/**")).hasAnyRole(ADMINISTRATEUR, OPERATEUR)
                             .requestMatchers(path(null, "/api/auth/**")).authenticated()
                             .anyRequest().denyAll();

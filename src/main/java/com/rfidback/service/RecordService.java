@@ -2,19 +2,28 @@ package com.rfidback.service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.rfidback.entity.PickerEntity;
+import com.rfidback.entity.RecordConformityChangeEntity;
 import com.rfidback.entity.RecordEntity;
 import com.rfidback.entity.TagEntity;
+import com.rfidback.entity.UserEntity;
 import com.rfidback.exception.ReaderNotFoundException;
 import com.rfidback.exception.RecordNotFoundException;
+import com.rfidback.generated.model.ConformityChange;
+import com.rfidback.generated.model.ConformityChangesList;
 import com.rfidback.generated.model.RecordSummary;
 import com.rfidback.generated.model.RecordsList;
 import com.rfidback.repository.ReaderRepository;
+import com.rfidback.repository.RecordConformityChangeRepository;
 import com.rfidback.repository.RecordRepository;
+import com.rfidback.repository.UserRepository;
 
 import lombok.RequiredArgsConstructor;
 
@@ -24,6 +33,8 @@ public class RecordService {
 
     private final RecordRepository recordRepository;
     private final ReaderRepository readerRepository;
+    private final RecordConformityChangeRepository recordConformityChangeRepository;
+    private final UserRepository userRepository;
 
     @Transactional(readOnly = true)
     public RecordsList listLatestRecordsForReader(String readerUid) {
@@ -57,11 +68,54 @@ public class RecordService {
         return model;
     }
 
+    // Locks the record so two Opérateurs clicking together give one change, not two (spec 005, research R3).
     @Transactional
-    public void updateRecordConformity(java.util.UUID recordId, boolean isCompliant) {
+    public void updateRecordConformity(UUID recordId, boolean isCompliant) {
+        RecordEntity record = recordRepository.findWithLockById(recordId)
+                .orElseThrow(() -> new RecordNotFoundException("Record %s not found".formatted(recordId)));
+        if (record.isCompliant() == isCompliant) {
+            return;
+        }
+        String username = currentUsername();
+        UserEntity author = userRepository.findByUsername(username)
+                .orElseThrow(() -> new IllegalStateException("Logged-in user %s not found".formatted(username)));
+        recordConformityChangeRepository.save(RecordConformityChangeEntity.builder()
+                .record(record)
+                .previousCompliant(record.isCompliant())
+                .newCompliant(isCompliant)
+                .author(author)
+                .build());
+        record.setCompliant(isCompliant);
+    }
+
+    @Transactional(readOnly = true)
+    public ConformityChangesList listConformityChanges(UUID recordId) {
         RecordEntity record = recordRepository.findById(recordId)
                 .orElseThrow(() -> new RecordNotFoundException("Record %s not found".formatted(recordId)));
-        record.setCompliant(isCompliant);
-        recordRepository.save(record);
+
+        List<RecordConformityChangeEntity> changes =
+                recordConformityChangeRepository.findAllByRecordOrderByChangedAtAsc(record);
+        List<ConformityChange> changeModels = new ArrayList<>(changes.size());
+        for (RecordConformityChangeEntity change : changes) {
+            changeModels.add(toConformityChange(change));
+        }
+
+        ConformityChangesList response = new ConformityChangesList();
+        response.setChanges(changeModels);
+        return response;
+    }
+
+    private ConformityChange toConformityChange(RecordConformityChangeEntity change) {
+        ConformityChange model = new ConformityChange();
+        model.setPreviousIsCompliant(change.isPreviousCompliant());
+        model.setNewIsCompliant(change.isNewCompliant());
+        model.setAuthorUsername(change.getAuthor().getUsername());
+        model.setChangedAt(change.getChangedAt());
+        return model;
+    }
+
+    private static String currentUsername() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        return authentication == null ? null : authentication.getName();
     }
 }

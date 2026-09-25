@@ -423,13 +423,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RecordsList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/InternalError" }
 
   /records/{recordId}/conformity:
     patch:
       summary: Update record conformity
-      description: Update compliance state for a record.
+      description: >
+        Sets the record's compliance to the given value. If the value differs from the current one, the change is
+        recorded in the record's compliance history with the logged-in user as author, and duplicate scans no longer
+        change the record. If it is the current value, nothing is written (idempotent).
       operationId: updateRecordConformity
       tags: [Record]
       parameters:
@@ -449,6 +454,37 @@ paths:
       responses:
         "204":
           description: Record conformity updated
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /records/{recordId}/conformity-history:
+    get:
+      summary: List compliance changes of a record
+      description: >
+        Every manual compliance change of the record, oldest first. The first change's previousIsCompliant is the
+        reader's original verdict. Empty list if the record was never changed. Administrateur only.
+      operationId: listRecordConformityChanges
+      tags: [Record]
+      parameters:
+        - in: path
+          name: recordId
+          required: true
+          description: Record identifier
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Compliance changes of the record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConformityChangesList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/InternalError" }
 
@@ -1143,6 +1179,42 @@ components:
           example: true
       required:
         - isCompliant
+
+    ConformityChange:
+      type: object
+      properties:
+        previousIsCompliant:
+          type: boolean
+          description: Compliance before the change
+          example: true
+        newIsCompliant:
+          type: boolean
+          description: Compliance after the change
+          example: false
+        authorUsername:
+          type: string
+          description: Username of the user who made the change
+          example: operateur1
+        changedAt:
+          type: string
+          format: date-time
+          description: Date of the change
+          example: "2024-01-15T09:31:12Z"
+      required:
+        - previousIsCompliant
+        - newIsCompliant
+        - authorUsername
+        - changedAt
+
+    ConformityChangesList:
+      type: object
+      properties:
+        changes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConformityChange"
+      required:
+        - changes
 
     AssignBucketToPickerRequest:
       type: object

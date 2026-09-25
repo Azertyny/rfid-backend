@@ -22,9 +22,11 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 @Entity
-// Serves the duplicate-read lookup of a scan (spec 004, FR-008).
-@Table(name = "record", indexes = @Index(name = "idx_record_reader_tag_date",
-        columnList = "reader_id, tag_id, creation_date"))
+// The first index serves the duplicate-read lookup of a scan (spec 004, FR-008);
+// the second serves the last 10 records of a reader (spec 005, SC-003).
+@Table(name = "record", indexes = {
+        @Index(name = "idx_record_reader_tag_date", columnList = "reader_id, tag_id, creation_date"),
+        @Index(name = "idx_record_reader_date", columnList = "reader_id, creation_date") })
 @Getter
 @Setter
 @NoArgsConstructor

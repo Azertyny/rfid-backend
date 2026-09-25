@@ -79,6 +79,7 @@ class AccessMatrixSecurityTest {
                 new Route(HttpMethod.GET, "/api/records/readers/unknown-reader", null, LOGGED_IN),
                 new Route(HttpMethod.PATCH, "/api/records/" + ID + "/conformity", "{\"isCompliant\":true}",
                         LOGGED_IN),
+                new Route(HttpMethod.GET, "/api/records/" + ID + "/conformity-history", null, ADMIN_ONLY),
                 new Route(HttpMethod.GET, "/api/users", null, ADMIN_ONLY),
                 new Route(HttpMethod.POST, "/api/users",
                         "{\"username\":\"matrix-user\",\"password\":\"matrix-password\",\"role\":\"OPERATEUR\"}",
