@@ -21,7 +21,7 @@ The interface the operator (and GitHub) sees. Implementation lives in `.github/w
 |---|---|
 | Trigger | `workflow_dispatch` only (never on push, FR-011a) |
 | Input | `version` (string, required): a published `main-<7-char sha>` tag |
-| Environment | `production` (holds `VPS_HOST`, `VPS_SSH_KEY`, `VPS_KNOWN_HOSTS`) |
+| Environment | `vege_prod` (holds `VPS_HOST`, `VPS_SSH_KEY`, `VPS_KNOWN_HOSTS`) |
 | Concurrency | group `production-deploy`, `cancel-in-progress: false`: a second run waits (FR-016) |
 | Step 1: check | refuse unless input matches `^main-[0-9a-f]{7}$` and both images exist in GHCR |
 | Step 2: deploy | `ssh deploy@$VPS_HOST <version>`: runs the VPS deploy script ([vps-scripts.md](vps-scripts.md)) |

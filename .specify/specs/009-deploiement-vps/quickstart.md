@@ -10,7 +10,7 @@ Each scenario names the spec items it proves. Contracts: [pipelines](contracts/p
 - An S3-compatible bucket at a provider other than the VPS host, lifecycle rule "expire after 30 days", one write key
   without delete (VPS) and one read-only key (GitHub); root's `backup` rclone remote configured on the VPS (see
   `deploy/INSTALL.md`, First install).
-- GitHub: environment `production` with `VPS_HOST`, `VPS_SSH_KEY`, `VPS_KNOWN_HOSTS`; repository secrets
+- GitHub: environment `vege_prod` with `VPS_HOST`, `VPS_SSH_KEY`, `VPS_KNOWN_HOSTS`; repository secrets
   `BACKUP_S3_*`; packages `rfid-backend` and `rfid-web` public; branch protection requiring `ci / test`.
 
 ## 1. CI is reliable (US1, FR-001–FR-004, SC-001, SC-002)

@@ -51,7 +51,7 @@ test isolation bug, not a production bug: the real app never runs the test post-
 - Test report: `mikepenz/action-junit-report` reads `target/surefire-reports/*.xml` and puts failing test names in
   the run summary and as PR check annotations (FR-003, US1 scenario 3).
 - Maven dependencies cached with `actions/setup-java` `cache: maven` (SC-002).
-- `deploy.yml` uses a GitHub **environment** `production` (holds the VPS secrets) and
+- `deploy.yml` uses a GitHub **environment** `vege_prod` (holds the VPS secrets) and
   `concurrency: { group: production-deploy, cancel-in-progress: false }` (FR-016). The run itself is the deployment
   record (FR-011b): actor, date, input version, and health-check result in the job summary.
 - Branch protection on `dev` and `main` requiring the `ci / test` check makes FR-004 enforceable; it is a repository
@@ -192,7 +192,7 @@ ping (one more external service and secret); retention by script (needs delete r
   `server.servlet.session.cookie.secure: true`. The CSRF cookie is already `Secure` on HTTPS requests
   (`CookieCsrfTokenRepository` uses `request.isSecure()`, true behind Caddy thanks to forwarded headers); the
   quickstart checks both cookies.
-- GitHub secrets live in the `production` environment: `VPS_HOST`, `VPS_SSH_KEY`, `VPS_KNOWN_HOSTS`; and repository
+- GitHub secrets live in the `vege_prod` environment: `VPS_HOST`, `VPS_SSH_KEY`, `VPS_KNOWN_HOSTS`; and repository
   secrets for `backup-check.yml`: `BACKUP_S3_ENDPOINT`, `BACKUP_S3_BUCKET`, `BACKUP_S3_READ_KEY_ID`,
   `BACKUP_S3_READ_SECRET`.
 - Secret scan: `gitleaks` step in `ci.yml` over the full history (SC-009). A scan on 2026-09-25 found only `change_me`
