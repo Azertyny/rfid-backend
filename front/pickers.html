@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Opérateurs - Admin</title>
+    <title>Cueilleurs - Admin</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>body { background-color: #f8f9fa; font-family: 'Segoe UI', sans-serif; }</style>
@@ -21,7 +21,7 @@
                     <i class="fas fa-chart-line me-1"></i>Dashboard
                 </a>
                 <a href="pickers.html" data-admin-only class="btn btn-sm btn-primary">
-                    <i class="fas fa-users me-1"></i>Opérateurs
+                    <i class="fas fa-users me-1"></i>Cueilleurs
                 </a>
                 <a href="readers.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
                     <i class="fas fa-satellite-dish me-1"></i>Lecteurs
@@ -44,9 +44,9 @@
 
     <div class="container-fluid max-w-7xl mx-auto py-4">
         <div class="d-flex justify-content-between align-items-center mb-4">
-            <h3 class="fw-bold text-primary">Liste des Opérateurs</h3>
+            <h3 class="fw-bold text-primary">Liste des cueilleurs</h3>
             <button class="btn btn-success shadow-sm" onclick="openModal()">
-                <i class="fas fa-plus me-1"></i> Nouveau Picker
+                <i class="fas fa-plus me-1"></i> Nouveau cueilleur
             </button>
         </div>
 
@@ -81,7 +81,7 @@
         <div class="modal-dialog">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h5 class="modal-title" id="modalTitle">Ajouter un Picker</h5>
+                    <h5 class="modal-title" id="modalTitle">Ajouter un cueilleur</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
@@ -120,7 +120,7 @@
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
-                    <p>Êtes-vous sûr de vouloir supprimer cet opérateur ?</p>
+                    <p>Êtes-vous sûr de vouloir supprimer ce cueilleur ?</p>
                     <p class="text-danger small mb-0">Cette action est irréversible et supprimera l'historique associé.</p>
                 </div>
                 <div class="modal-footer">
@@ -161,7 +161,7 @@
         function renderTable(pickers) {
             const tbody = document.getElementById('pickersTable');
             tbody.innerHTML = '';
-            if(!pickers.length) { tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">Aucun opérateur</td></tr>'; return; }
+            if(!pickers.length) { tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">Aucun cueilleur</td></tr>'; return; }
             pickers.forEach(p => {
                 const jsonP = JSON.stringify(p).replace(/'/g, "&#39;").replace(/"/g, "&quot;");
                 tbody.innerHTML += `
@@ -237,7 +237,7 @@
         function openModal() {
             document.getElementById('pickerForm').reset();
             document.getElementById('pickerId').value = '';
-            document.getElementById('modalTitle').innerText = "Ajouter un Picker";
+            document.getElementById('modalTitle').innerText = "Ajouter un cueilleur";
             pickerModal.show();
             setTimeout(() => document.getElementById('pickerFirstName').focus(), 500);
         }
@@ -246,7 +246,7 @@
             document.getElementById('pickerFirstName').value = p.firstname;
             document.getElementById('pickerLastName').value = p.lastname;
             document.getElementById('pickerComment').value = p.comment;
-            document.getElementById('modalTitle').innerText = "Modifier le Picker";
+            document.getElementById('modalTitle').innerText = "Modifier le cueilleur";
             pickerModal.show();
         }
     </script>

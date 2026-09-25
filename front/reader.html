@@ -242,7 +242,7 @@
                 const timeStr = new Date(record.creationDate).toLocaleTimeString('fr-FR');
                 const title = record.tagUid || "TAG ???";
                 // Affichage propre du pickerId s'il existe
-                const subtitle = record.pickerId ? `Picker: ...${record.pickerId.slice(-4)}` : "Non assigné";
+                const subtitle = record.pickerId ? `Cueilleur : ...${record.pickerId.slice(-4)}` : "Non assigné";
 
                 el.innerHTML = `
                     <div class="box-card">
