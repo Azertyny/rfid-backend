@@ -3,3 +3,26 @@ spring:
     name: rfid-back
   profiles:
     active: dev
+
+server:
+  servlet:
+    session:
+      timeout: 30m
+      cookie:
+        http-only: true
+        same-site: lax
+
+app:
+  registration:
+    # A tag-registration session without reads or page activity for this long is closed (spec 003).
+    session-timeout: 5m
+  scan:
+    # A scan of the same tag by the same reader within this time after its latest record creates no new record (spec 004, FR-008). 0s disables it.
+    duplicate-window: 10s
+  station:
+    # Days and hours of the dashboard statistics are computed in this zone (spec 007, FR-007).
+    time-zone: ${APP_STATION_TIME_ZONE:Europe/Paris}
+  security:
+    bootstrap-admin:
+      username: ${APP_BOOTSTRAP_ADMIN_USERNAME:}
+      password: ${APP_BOOTSTRAP_ADMIN_PASSWORD:}

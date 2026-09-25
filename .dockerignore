@@ -5,3 +5,9 @@ target
 .vscode
 data
 doc
+.env
+*.log
+.specify
+.claude
+deploy/.env
+deploy/vps

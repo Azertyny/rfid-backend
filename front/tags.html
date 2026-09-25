@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enregistrement des tags - Admin</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        body { background-color: #f0f2f5; font-family: 'Segoe UI', sans-serif; }
+        .tag-uid { font-family: monospace; }
+        .live-dot { width: 10px; height: 10px; border-radius: 50%; background: #16a34a; display: inline-block;
+                    animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+    </style>
+</head>
+<body class="d-flex flex-column h-100">
+
+    <!-- MENU DE NAVIGATION HARMONISÉ -->
+    <nav class="navbar navbar-expand navbar-dark bg-dark shadow-sm">
+        <div class="container-fluid max-w-7xl mx-auto px-4">
+            <a class="navbar-brand fw-bold" href="index.html">
+                <i class="fas fa-wifi me-2"></i>RFID Admin
+            </a>
+            <div class="navbar-nav ms-auto gap-2">
+                <a href="index.html" class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-chart-line me-1"></i>Dashboard
+                </a>
+                <a href="pickers.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-users me-1"></i>Opérateurs
+                </a>
+                <a href="readers.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-satellite-dish me-1"></i>Lecteurs
+                </a>
+                <a href="tags.html" data-admin-only class="btn btn-sm btn-primary">
+                    <i class="fas fa-tags me-1"></i>Tags
+                </a>
+                <a href="buckets.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-fill me-1"></i>Seaux
+                </a>
+                <a href="users.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-user-shield me-1"></i>Utilisateurs
+                </a>
+                <button class="btn btn-sm btn-outline-light border-0" onclick="logout()">
+                    <i class="fas fa-sign-out-alt me-1"></i>Déconnexion
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid max-w-7xl mx-auto py-4">
+
+        <div class="mb-4">
+            <h3 class="fw-bold text-primary mb-0">Enregistrement des tags sur un seau</h3>
+            <small class="text-muted">Lisez les tags avec le lecteur du poste, puis associez-les à un numéro de seau</small>
+        </div>
+
+        <div id="messages"></div>
+
+        <!-- ÉTAT 1 : CHOIX DU LECTEUR -->
+        <div id="idlePanel" class="card shadow-sm border-0">
+            <div class="card-body">
+                <div id="noReader" class="alert alert-warning d-none mb-3">
+                    <i class="fas fa-exclamation-triangle me-1"></i>
+                    Aucun lecteur actif n'est en mode enregistrement.
+                    Passez le lecteur du poste en mode enregistrement depuis la page <a href="readers.html">Lecteurs</a>.
+                </div>
+                <div class="row g-3 align-items-end">
+                    <div class="col-md-6">
+                        <label for="readerSelect" class="form-label fw-bold">Lecteur du poste</label>
+                        <select id="readerSelect" class="form-select"></select>
+                    </div>
+                    <div class="col-md-6">
+                        <button id="startButton" class="btn btn-success" onclick="startSession()" disabled>
+                            <i class="fas fa-play me-1"></i>Démarrer
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ÉTAT 2 : SESSION EN COURS -->
+        <div id="runningPanel" class="card shadow-sm border-0 d-none">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                <div>
+                    <span class="live-dot me-2"></span>
+                    Lecture en cours sur <span id="runningReader" class="fw-bold"></span>
+                    <small class="text-muted ms-2">démarrée à <span id="runningSince"></span></small>
+                </div>
+                <div>
+                    <span id="tooManyTags" class="text-danger small fw-bold me-2 d-none">
+                        <i class="fas fa-exclamation-circle me-1"></i>100 tags au maximum par enregistrement
+                    </span>
+                    <span class="badge bg-primary fs-6"><span id="readCount">0</span> tag(s)</span>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="row g-3 align-items-end mb-3">
+                    <div class="col-md-4">
+                        <label for="bucketNumber" class="form-label fw-bold">Numéro de seau</label>
+                        <input type="number" min="1" step="1" id="bucketNumber" class="form-control" placeholder="Ex : 12"
+                               oninput="renderReads()">
+                    </div>
+                    <div class="col-md-8 text-md-end">
+                        <button class="btn btn-outline-secondary me-2" onclick="cancelSession()">
+                            <i class="fas fa-times me-1"></i>Annuler
+                        </button>
+                        <button class="btn btn-primary" onclick="saveSession(false)">
+                            <i class="fas fa-save me-1"></i>Enregistrer
+                        </button>
+                    </div>
+                </div>
+                <table class="table table-sm table-striped align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>UID du tag</th>
+                            <th style="width: 20%">Lu à</th>
+                            <th style="width: 30%">Seau actuel</th>
+                        </tr>
+                    </thead>
+                    <tbody id="readsTable"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL : CONFIRMATION DU DÉPLACEMENT -->
+    <div class="modal fade" id="moveModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-warning">
+                    <h5 class="modal-title"><i class="fas fa-exchange-alt me-2"></i>Tags déjà associés à un autre seau</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p>Ces tags seront retirés de leur seau actuel et associés au seau <strong id="moveTarget"></strong> :</p>
+                    <ul id="moveList" class="mb-0"></ul>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn btn-warning" onclick="confirmMove()">Déplacer et enregistrer</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="config.js"></script>
+    <script src="auth.js"></script>
+    <script>
+        const SESSIONS = '/tags/registration-sessions';
+        // FR-011 : le serveur refuse aussi (400) un enregistrement de plus de 100 tags.
+        const MAX_TAGS = 100;
+        let moveModal;
+        let sessionId = null;
+        let lastReads = [];
+        let pollTimer = null;
+        let pollInFlight = false;
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            moveModal = new bootstrap.Modal(document.getElementById('moveModal'));
+            await requireRole('ADMINISTRATEUR');
+            loadReaders();
+        });
+
+        // Si la page est fermée sans Annuler, on libère le lecteur ; sinon la session expire d'elle-même.
+        window.addEventListener('pagehide', () => {
+            if (!sessionId) return;
+            fetch(`${CONFIG.API_URL}${SESSIONS}/${sessionId}`, {
+                method: 'DELETE',
+                keepalive: true,
+                credentials: 'same-origin',
+                headers: { 'X-XSRF-TOKEN': getCookie('XSRF-TOKEN') || '' }
+            });
+        });
+
+        // 1. LECTEURS DISPONIBLES : actifs et en mode enregistrement
+        async function loadReaders() {
+            const select = document.getElementById('readerSelect');
+            const response = await apiFetch('/readers');
+            if (!response.ok) {
+                showMessage('danger', 'Impossible de charger les lecteurs.');
+                return;
+            }
+            const readers = ((await response.json()).readers || [])
+                .filter(r => r.active !== false && r.mode === 'ENREGISTREMENT');
+
+            select.innerHTML = readers.length === 1 ? '' : '<option value="">— Choisir un lecteur —</option>';
+            readers.forEach(r => {
+                select.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(r.id)}">${escapeHtml(r.uid)}</option>`);
+            });
+            document.getElementById('noReader').classList.toggle('d-none', readers.length > 0);
+            select.disabled = readers.length === 0;
+            select.onchange = () => updateStartButton();
+            updateStartButton();
+        }
+
+        function updateStartButton() {
+            document.getElementById('startButton').disabled = !document.getElementById('readerSelect').value;
+        }
+
+        // 2. DÉMARRER (POST /tags/registration-sessions)
+        async function startSession() {
+            clearMessages();
+            const readerId = document.getElementById('readerSelect').value;
+            if (!readerId) return;
+
+            const response = await apiFetch(SESSIONS, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ readerId })
+            });
+            if (response.status === 201) {
+                showRunning(await response.json());
+            } else if (response.status === 409) {
+                const busy = await response.json();
+                if (busy.startedBy) {
+                    showMessage('warning', `Lecteur utilisé par <strong>${escapeHtml(busy.startedBy)}</strong> depuis ${formatTime(busy.startedAt)}. `
+                        + 'Il sera libéré quand cette personne aura terminé, ou après quelques minutes d\'inactivité.');
+                } else {
+                    showMessage('warning', 'Lecteur occupé, réessayez dans un instant.');
+                }
+            } else if (response.status === 400 || response.status === 404) {
+                showMessage('warning', 'Ce lecteur n\'est plus disponible (désactivé ou repassé en production).');
+                loadReaders();
+            } else if (response.status !== 401 && response.status !== 403) {
+                showMessage('danger', `Erreur au démarrage (code ${response.status}).`);
+            }
+        }
+
+        function showRunning(session) {
+            sessionId = session.id;
+            lastReads = session.reads || [];
+            document.getElementById('runningReader').textContent = session.readerUid;
+            document.getElementById('runningSince').textContent = formatTime(session.startedAt);
+            document.getElementById('bucketNumber').value = '';
+            document.getElementById('idlePanel').classList.add('d-none');
+            document.getElementById('runningPanel').classList.remove('d-none');
+            renderReads();
+            schedulePoll();
+            document.getElementById('bucketNumber').focus();
+        }
+
+        function showIdle() {
+            sessionId = null;
+            lastReads = [];
+            clearTimeout(pollTimer);
+            document.getElementById('runningPanel').classList.add('d-none');
+            document.getElementById('idlePanel').classList.remove('d-none');
+            loadReaders();
+        }
+
+        // 3. LECTURES EN DIRECT (GET /tags/registration-sessions/{id})
+        function schedulePoll() {
+            clearTimeout(pollTimer);
+            pollTimer = setTimeout(poll, CONFIG.POLLING_INTERVAL);
+        }
+
+        async function poll() {
+            if (!sessionId || pollInFlight) return;
+            pollInFlight = true;
+            const polledSession = sessionId;
+            try {
+                const response = await apiFetch(`${SESSIONS}/${polledSession}`, { silent: true });
+                if (polledSession !== sessionId) return;
+                if (response.ok) {
+                    lastReads = (await response.json()).reads || [];
+                    renderReads();
+                } else if (response.status === 404) {
+                    showIdle();
+                    showMessage('warning', 'Session expirée : aucune activité depuis plusieurs minutes. Cliquez sur Démarrer pour recommencer.');
+                    return;
+                }
+            } catch (e) {
+                // Coupure réseau passagère : on réessaie au prochain tour.
+            } finally {
+                pollInFlight = false;
+            }
+            if (sessionId) schedulePoll();
+        }
+
+        function renderReads() {
+            const target = parseInt(document.getElementById('bucketNumber').value, 10);
+            const tbody = document.getElementById('readsTable');
+            document.getElementById('readCount').textContent = lastReads.length;
+            document.getElementById('tooManyTags').classList.toggle('d-none', lastReads.length <= MAX_TAGS);
+            if (lastReads.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted py-4">Présentez les tags devant le lecteur…</td></tr>';
+                return;
+            }
+            tbody.innerHTML = lastReads.map(read => {
+                let status;
+                if (read.bucketNumber == null) {
+                    status = '<span class="badge bg-success">Nouveau</span>';
+                } else if (read.bucketNumber === target) {
+                    status = '<span class="badge bg-secondary">Déjà sur ce seau</span>';
+                } else {
+                    status = `<span class="badge bg-warning text-dark"><i class="fas fa-exclamation-triangle me-1"></i>Seau ${read.bucketNumber}</span>`;
+                }
+                return `<tr>
+                    <td class="tag-uid">${escapeHtml(read.uid)}</td>
+                    <td class="text-muted small">${formatTime(read.firstReadAt)}</td>
+                    <td>${status}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        // 4. ENREGISTRER (POST /tags/registration-sessions/{id}/save)
+        async function saveSession(moveConfirmed) {
+            clearMessages();
+            const bucketNumber = parseInt(document.getElementById('bucketNumber').value, 10);
+            if (!Number.isInteger(bucketNumber) || bucketNumber < 1) {
+                showMessage('warning', 'Saisissez un numéro de seau (entier à partir de 1).');
+                return;
+            }
+            if (lastReads.length === 0) {
+                showMessage('warning', 'Aucun tag lu pour l\'instant.');
+                return;
+            }
+            if (lastReads.length > MAX_TAGS) {
+                showMessage('warning', `100 tags au maximum par enregistrement : ${lastReads.length} tags sont lus. `
+                    + 'Annulez et recommencez en plusieurs enregistrements.');
+                return;
+            }
+
+            const response = await apiFetch(`${SESSIONS}/${sessionId}/save`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ bucketNumber, moveConfirmed })
+            });
+            if (response.ok) {
+                const result = await response.json();
+                moveModal.hide();
+                showIdle();
+                showMessage('success', `${result.registeredCount} tag(s) enregistré(s) — le seau ${result.bucketNumber} contient maintenant ${result.totalCount} tag(s).`);
+            } else if (response.status === 409) {
+                const conflict = await response.json();
+                document.getElementById('moveTarget').textContent = bucketNumber;
+                document.getElementById('moveList').innerHTML = conflict.tags
+                    .map(tag => `<li><span class="tag-uid">${escapeHtml(tag.uid)}</span> → actuellement seau ${tag.bucketNumber}</li>`)
+                    .join('');
+                moveModal.show();
+            } else if (response.status === 404) {
+                showIdle();
+                showMessage('warning', 'Session expirée : les lectures ont été perdues. Cliquez sur Démarrer pour recommencer.');
+            } else if (response.status === 400) {
+                showMessage('warning', 'Enregistrement refusé : vérifiez le numéro de seau et qu\'au moins un tag a été lu.');
+            } else if (response.status !== 401 && response.status !== 403) {
+                showMessage('danger', `Erreur à l'enregistrement (code ${response.status}).`);
+            }
+        }
+
+        function confirmMove() {
+            saveSession(true);
+        }
+
+        // 5. ANNULER (DELETE /tags/registration-sessions/{id})
+        async function cancelSession() {
+            if (lastReads.length > 0 && !confirm('Les tags lus seront oubliés. Annuler la session ?')) return;
+            const cancelled = sessionId;
+            showIdle();
+            const response = await apiFetch(`${SESSIONS}/${cancelled}`, { method: 'DELETE' });
+            if (!response.ok && response.status !== 404) {
+                showMessage('danger', `Erreur à l'annulation (code ${response.status}).`);
+            }
+        }
+
+        // --- UTILITAIRES ---
+        function showMessage(level, html) {
+            document.getElementById('messages').innerHTML =
+                `<div class="alert alert-${level} alert-dismissible fade show">${html}` +
+                '<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>';
+        }
+
+        function clearMessages() {
+            document.getElementById('messages').innerHTML = '';
+        }
+
+        function formatTime(iso) {
+            return iso ? new Date(iso).toLocaleTimeString('fr-FR') : '-';
+        }
+
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, c => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            })[c]);
+        }
+    </script>
+</body>
+</html>

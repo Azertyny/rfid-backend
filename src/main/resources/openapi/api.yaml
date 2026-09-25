@@ -7,8 +7,12 @@ info:
 servers:
   - url: http://localhost:8080/api
     description: Serveur local de développement
-  - url: https://api.apolog.fr/api
+  - url: https://vegelink.apolog.fr/api
     description: Serveur de production
+
+# Default: a logged-in user session. /tags/scan uses the reader token, /auth/login is public.
+security:
+  - SessionCookie: []
 
 # -----------------------------------------------------------------------------------------------
 # Endpoints section
@@ -29,6 +33,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ReadersList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "500": { $ref: "#/components/responses/InternalError" }
     post:
       summary: Create a new reader
@@ -48,7 +54,64 @@ paths:
               schema:
                 $ref: "#/components/schemas/Reader"
         "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/AlreadyExist" }
         "500": { $ref: "#/components/responses/InternalError" }
+
+  /readers/{readerId}:
+    parameters:
+      - in: path
+        name: readerId
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      summary: Enable or disable a reader, or change its mode
+      operationId: updateReader
+      tags: [Reader]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateReader"
+      responses:
+        "200":
+          description: Updated reader
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Reader"
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /readers/{readerId}/token:
+    parameters:
+      - in: path
+        name: readerId
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      summary: Generate a new API token for a reader
+      description: The previous token is refused on /tags/scan from the next request on.
+      operationId: rotateReaderToken
+      tags: [Reader]
+      responses:
+        "200":
+          description: Reader with its new apitoken
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Reader"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   # -----------------------------------------------------------------------------------------------
   # Picker section
@@ -147,7 +210,7 @@ paths:
         "204":
           description: Cueilleur supprimé
         "404": { $ref: "#/components/responses/NotFound" }
-        "409": { $ref: "#/components/responses/AlreadyExist" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "500": { $ref: "#/components/responses/InternalError" }
 
   # -----------------------------------------------------------------------------------------------
@@ -157,8 +220,9 @@ paths:
     post:
       summary: Register tags for a bucket
       description: >
-        Register a list of tags for a specific bucket number. Existing associations
-        with this bucket are cleared before registering the provided tags.
+        Add the provided tags to the bucket (created if unknown). Tags already linked to this
+        bucket stay linked. Tags linked to another bucket are moved only when moveConfirmed is true;
+        otherwise the request is refused with 409 and nothing is saved.
       operationId: registerTagsForBucket
       tags: [Tag]
       parameters:
@@ -183,6 +247,14 @@ paths:
               schema:
                 $ref: "#/components/schemas/RegisterTagsResponse"
         "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Some tags belong to another bucket and the move was not confirmed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TagsInOtherBuckets"
         "500": { $ref: "#/components/responses/InternalError" }
 
   /tags/scan:
@@ -191,6 +263,13 @@ paths:
       description: >
         Endpoint called by an RFID reader to report whether a scanned tag is compliant.
         Accessible only with the API token generated during reader registration.
+        401 is also returned when the reader is disabled.
+        For a reader in ENREGISTREMENT mode, the read is kept for tag registration (or ignored when
+        no registration session is open), no record is created, and isCompliant is always true.
+        A blank uid is rejected with 400. For a reader in PRODUCTION mode, a scan of the same tag by the same
+        reader within app.scan.duplicate-window (10 s by default) of that tag's latest record creates no new
+        record: the response carries the existing record and the message "Duplicate read ignored". If that
+        repeat reports isCompliant false and the record is compliant, the record becomes non-compliant.
       operationId: scanTag
       tags: [Tag]
       security:
@@ -214,8 +293,167 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
 
   # -----------------------------------------------------------------------------------------------
+  # Registration section (tag registration sessions, spec 003)
+  # -----------------------------------------------------------------------------------------------
+  /tags/registration-sessions:
+    post:
+      summary: Start a tag registration session on a reader
+      description: >
+        The reader must be active and in ENREGISTREMENT mode. From now on, its scans are kept as
+        temporary reads of this session. One session per reader; it expires after a period
+        without activity.
+      operationId: startRegistrationSession
+      tags: [Registration]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StartRegistrationSession"
+      responses:
+        "201":
+          description: Session started, with no read yet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegistrationSession"
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The reader already has an open session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReaderBusy"
+
+  /tags/registration-sessions/{sessionId}:
+    parameters:
+      - in: path
+        name: sessionId
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: Get a registration session and the tags read since Start
+      description: Only the Administrateur who started the session can read it.
+      operationId: getRegistrationSession
+      tags: [Registration]
+      responses:
+        "200":
+          description: Session with its reads
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegistrationSession"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      summary: Cancel a registration session and discard its reads
+      operationId: cancelRegistrationSession
+      tags: [Registration]
+      responses:
+        "204": { $ref: "#/components/responses/Deleted" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /tags/registration-sessions/{sessionId}/save:
+    parameters:
+      - in: path
+        name: sessionId
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      summary: Register the session's tags on a bucket and close the session
+      description: >
+        Same rules as POST /tags/buckets/{bucketNumber}. On 409 nothing is saved and the session
+        stays open.
+      operationId: saveRegistrationSession
+      tags: [Registration]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveRegistrationSession"
+      responses:
+        "200":
+          description: Tags registered; the session is closed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegisterTagsResponse"
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Some tags belong to another bucket and the move was not confirmed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TagsInOtherBuckets"
+
+  # -----------------------------------------------------------------------------------------------
   # Record section
   # -----------------------------------------------------------------------------------------------
+  /records/stats:
+    get:
+      summary: Scan statistics for the dashboard
+      description: >
+        Totals of the records created in a period, computed by the server: summary, one row per picker (records
+        without a picker form one row with a null pickerId, last) and one entry per hour of day. Days and hours
+        are in the station time zone (app.station.time-zone). Conformity is the current value of each record,
+        after manual corrections. The picker rows, and the hour entries, each add up to the summary.
+        Administrateur and Opérateur.
+      operationId: getRecordStats
+      tags: [Record]
+      parameters:
+        - in: query
+          name: period
+          required: false
+          schema:
+            $ref: "#/components/schemas/StatsPeriod"
+        - in: query
+          name: from
+          required: false
+          description: First day, inclusive. Required with CUSTOM, refused otherwise.
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: to
+          required: false
+          description: Last day, inclusive. Required with CUSTOM, refused otherwise. At most 31 days from `from`.
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: readerId
+          required: false
+          description: Only the records of this reader.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Statistics of the period
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordStats"
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
   /records/readers/{readerId}:
     get:
       summary: List latest records for a reader
@@ -236,13 +474,18 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RecordsList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/InternalError" }
 
   /records/{recordId}/conformity:
     patch:
       summary: Update record conformity
-      description: Update compliance state for a record.
+      description: >
+        Sets the record's compliance to the given value. If the value differs from the current one, the change is
+        recorded in the record's compliance history with the logged-in user as author, and duplicate scans no longer
+        change the record. If it is the current value, nothing is written (idempotent).
       operationId: updateRecordConformity
       tags: [Record]
       parameters:
@@ -262,6 +505,37 @@ paths:
       responses:
         "204":
           description: Record conformity updated
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /records/{recordId}/conformity-history:
+    get:
+      summary: List compliance changes of a record
+      description: >
+        Every manual compliance change of the record, oldest first. The first change's previousIsCompliant is the
+        reader's original verdict. Empty list if the record was never changed. Administrateur only.
+      operationId: listRecordConformityChanges
+      tags: [Record]
+      parameters:
+        - in: path
+          name: recordId
+          required: true
+          description: Record identifier
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Compliance changes of the record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConformityChangesList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/InternalError" }
 
@@ -318,7 +592,7 @@ paths:
           format: uuid
     put:
       summary: Assign a bucket to a picker
-      description: Assign an existing bucket to an existing picker.
+      description: Assign an existing bucket to an existing picker. If the bucket already has a picker, it is replaced (a picker may have several buckets).
       operationId: assignBucketToPicker
       tags: [Bucket]
       requestBody:
@@ -333,6 +607,160 @@ paths:
         "400": { $ref: "#/components/responses/InvalidRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/InternalError" }
+    delete:
+      summary: Unassign the picker from a bucket
+      operationId: unassignBucketFromPicker
+      tags: [Bucket]
+      responses:
+        "204":
+          description: Seau désaffecté (aussi quand il n'avait pas de cueilleur)
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  # -----------------------------------------------------------------------------------------------
+  # Auth section
+  # -----------------------------------------------------------------------------------------------
+  /auth/login:
+    post:
+      summary: Log in and open a session
+      operationId: login
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Logged in; session cookie set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentUser"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /auth/logout:
+    post:
+      summary: Log out and invalidate the session
+      operationId: logout
+      tags: [Auth]
+      responses:
+        "204":
+          description: Logged out
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /auth/me:
+    get:
+      summary: Current logged-in user
+      operationId: getCurrentUser
+      tags: [Auth]
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentUser"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  # -----------------------------------------------------------------------------------------------
+  # User section (Administrateur only)
+  # -----------------------------------------------------------------------------------------------
+  /users:
+    get:
+      summary: List users
+      operationId: listUsers
+      tags: [User]
+      responses:
+        "200":
+          description: Users list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsersList"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      summary: Create a user
+      operationId: createUser
+      tags: [User]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUser"
+      responses:
+        "201":
+          description: Created user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/AlreadyExist" }
+
+  /users/{userId}:
+    parameters:
+      - in: path
+        name: userId
+        required: true
+        schema:
+          type: string
+          format: uuid
+    patch:
+      summary: Change role and/or enabled state
+      operationId: updateUser
+      tags: [User]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUser"
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Would leave no enabled Administrateur
+
+  /users/{userId}/password:
+    parameters:
+      - in: path
+        name: userId
+        required: true
+        schema:
+          type: string
+          format: uuid
+    put:
+      summary: Reset a user's password
+      operationId: resetUserPassword
+      tags: [User]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResetPassword"
+      responses:
+        "204":
+          description: Password reset; the user's sessions are closed
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
 # ---------------------------------------------------------------------------
 # COMMON DEFINITONS
@@ -350,6 +778,8 @@ components:
       description: Retourné lorsqu'une ressource a été supprimée
     AlreadyExist:
       description: Retourné lorsqu'une ressource existe déjà
+    Conflict:
+      description: Retourné lorsque l'action est impossible car la ressource est encore utilisée
     NotFound:
       description: Retourné lorsqu'une ressource est introuvable
     InvalidRequest:
@@ -359,7 +789,9 @@ components:
     UnexpectedError:
       description: Retourné lorsqu'une nouvelle ressource a été créée
     Unauthorized:
-      description: Jeton API manquant ou invalide
+      description: Jeton API manquant ou invalide, ou utilisateur non connecté
+    Forbidden:
+      description: Rôle insuffisant
 
   # ---------------------------------------------------------------------------
   parameters:
@@ -384,8 +816,11 @@ components:
       name: sort
       in: query
       description: |
-        Filtering and sorting criteria. Format: `field1,asc|desc`.
-        example: : `lastname,asc`.
+        Sort order, format `field,direction`.
+        Allowed fields: `lastname`, `firstname`, `creationDate`.
+        Allowed directions: `asc`, `desc` (case-insensitive).
+        Default when missing: `lastname,asc` then `firstname,asc`.
+        Any other value returns 400.
       schema:
         type: string
       example: lastname,asc
@@ -397,19 +832,48 @@ components:
       properties:
         uid:
           type: string
-          description: Reader uid
+          description: Reader uid. Trimmed; must not be blank; unique ignoring case.
           example: Reader 1
+          maxLength: 50
       required:
         - uid
+
+    ReaderMode:
+      type: string
+      enum: [PRODUCTION, ENREGISTREMENT]
+      description: >
+        PRODUCTION: scans create compliance records. ENREGISTREMENT: scans become temporary
+        registration reads for the tag-registration page, and no record is created.
+
+    UpdateReader:
+      type: object
+      description: At least one field must be present.
+      properties:
+        active:
+          type: boolean
+        mode:
+          $ref: "#/components/schemas/ReaderMode"
 
     Reader:
       allOf:
         - $ref: "#/components/schemas/CreateReader"
         - type: object
+          required:
+            - id
+            - active
+            - mode
           properties:
+            id:
+              type: string
+              format: uuid
+            active:
+              type: boolean
+              description: False when the reader is disabled; its token is then refused on /tags/scan.
+            mode:
+              $ref: "#/components/schemas/ReaderMode"
             apitoken:
               type: string
-              description: API token used by the reader to authenticate requests
+              description: API token used by the reader to authenticate requests. Only returned to Administrateurs.
               example: abcd1234efgh5678ijkl9012mnop3456
             creationDate:
               type: string
@@ -421,8 +885,6 @@ components:
               format: date-time
               description: Last update date of the reader
               example: "2024-01-02T12:00:00Z"
-          required:
-            - apitoken
 
     ReadersList:
       type: object
@@ -473,13 +935,16 @@ components:
               type: string
               format: date-time
               description: Picker creation date
-            bucketNumber:
-              type: integer
-              description: Bucket number currently assigned to the picker
-              example: 12
+            bucketNumbers:
+              type: array
+              description: Numbers of the buckets currently assigned to the picker, ascending; empty when none
+              items:
+                type: integer
+              example: [12, 47]
           required:
             - id
             - creationDate
+            - bucketNumbers
 
     PageMetadata:
       type: object
@@ -528,7 +993,8 @@ components:
       properties:
         uid:
           type: string
-          description: Unique identifier of the scanned tag
+          pattern: '.*\S.*'
+          description: Unique identifier of the scanned tag. Must contain at least one non-blank character; surrounding spaces are removed.
           example: E2000017221101891400A23G
         isCompliant:
           type: boolean
@@ -556,8 +1022,10 @@ components:
           example: "2024-01-15T09:30:00Z"
         message:
           type: string
-          description: Compliance processing message
-          example: Tag marked as non-compliant due to missing validation
+          description: >
+            Processing message. "Duplicate read ignored" when the scan repeated a recent one (no new record);
+            registration messages for readers in ENREGISTREMENT mode; absent otherwise.
+          example: Duplicate read ignored
       required:
         - uid
         - isCompliant
@@ -568,12 +1036,19 @@ components:
       properties:
         uids:
           type: array
-          description: Unique IDs of scanned tags
+          description: Unique IDs of scanned tags. At most 100 per registration; more is refused with 400.
           minItems: 1
+          maxItems: 100
           items:
             type: string
             minLength: 1
             example: E2000017221101891400A23G
+        moveConfirmed:
+          type: boolean
+          default: false
+          description: >
+            Must be true to move tags that currently belong to another bucket.
+            Otherwise the request is refused with 409 and nothing is saved.
       required:
         - uids
 
@@ -586,11 +1061,127 @@ components:
           example: 12
         registeredCount:
           type: integer
-          description: Number of tags now associated with the bucket
-          example: 42
+          description: Number of unique, non-blank tag uids in this request
+          example: 4
+        totalCount:
+          type: integer
+          description: Number of tags linked to the bucket after this registration
+          example: 6
       required:
         - bucketNumber
         - registeredCount
+        - totalCount
+
+    TagInOtherBucket:
+      type: object
+      properties:
+        uid:
+          type: string
+          example: E2000017221101891400A23G
+        bucketNumber:
+          type: integer
+          example: 7
+      required:
+        - uid
+        - bucketNumber
+
+    TagsInOtherBuckets:
+      type: object
+      description: 409 body when tags would be moved from another bucket without confirmation
+      properties:
+        message:
+          type: string
+        tags:
+          type: array
+          items:
+            $ref: "#/components/schemas/TagInOtherBucket"
+      required:
+        - message
+        - tags
+
+    StartRegistrationSession:
+      type: object
+      properties:
+        readerId:
+          type: string
+          format: uuid
+      required:
+        - readerId
+
+    RegistrationRead:
+      type: object
+      properties:
+        uid:
+          type: string
+          example: E2000017221101891400A23G
+        firstReadAt:
+          type: string
+          format: date-time
+        bucketNumber:
+          type: integer
+          nullable: true
+          description: Bucket the tag currently belongs to, or null if none
+      required:
+        - uid
+        - firstReadAt
+
+    RegistrationSession:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        readerId:
+          type: string
+          format: uuid
+        readerUid:
+          type: string
+        startedBy:
+          type: string
+          description: Username of the Administrateur who started the session
+        startedAt:
+          type: string
+          format: date-time
+        reads:
+          type: array
+          description: Tags read since Start, one entry per tag, oldest first
+          items:
+            $ref: "#/components/schemas/RegistrationRead"
+      required:
+        - id
+        - readerId
+        - readerUid
+        - startedBy
+        - startedAt
+        - reads
+
+    ReaderBusy:
+      type: object
+      description: >
+        409 body when the reader already has an open registration session. startedBy and startedAt are
+        absent in the rare case where the reader stayed contended but its session could not be read back.
+      properties:
+        message:
+          type: string
+        startedBy:
+          type: string
+        startedAt:
+          type: string
+          format: date-time
+      required:
+        - message
+
+    SaveRegistrationSession:
+      type: object
+      properties:
+        bucketNumber:
+          type: integer
+          minimum: 1
+        moveConfirmed:
+          type: boolean
+          default: false
+      required:
+        - bucketNumber
 
     RecordSummary:
       type: object
@@ -633,6 +1224,95 @@ components:
       required:
         - records
 
+    StatsPeriod:
+      type: string
+      enum: [TODAY, YESTERDAY, LAST_7_DAYS, CUSTOM]
+      default: TODAY
+      description: LAST_7_DAYS is today and the 6 days before, in the station time zone.
+
+    RecordCounts:
+      type: object
+      required:
+        - total
+        - nonCompliant
+      properties:
+        total:
+          type: integer
+          format: int64
+          minimum: 0
+        nonCompliant:
+          type: integer
+          format: int64
+          minimum: 0
+
+    PickerStats:
+      allOf:
+        - $ref: "#/components/schemas/RecordCounts"
+        - type: object
+          properties:
+            pickerId:
+              type: string
+              format: uuid
+              nullable: true
+              description: Null for records without a picker
+            firstname:
+              type: string
+              nullable: true
+            lastname:
+              type: string
+              nullable: true
+
+    HourStats:
+      allOf:
+        - $ref: "#/components/schemas/RecordCounts"
+        - type: object
+          required:
+            - hour
+          properties:
+            hour:
+              type: integer
+              minimum: 0
+              maximum: 23
+              description: Hour of day in the station time zone
+
+    RecordStats:
+      type: object
+      required:
+        - from
+        - to
+        - timeZone
+        - summary
+        - pickers
+        - hours
+      properties:
+        from:
+          type: string
+          format: date
+          description: Resolved first day, inclusive
+        to:
+          type: string
+          format: date
+          description: Resolved last day, inclusive
+        timeZone:
+          type: string
+          example: Europe/Paris
+        readerId:
+          type: string
+          format: uuid
+          nullable: true
+        summary:
+          $ref: "#/components/schemas/RecordCounts"
+        pickers:
+          type: array
+          description: Pickers with at least one record, by lastname then firstname; the null-picker row last.
+          items:
+            $ref: "#/components/schemas/PickerStats"
+        hours:
+          type: array
+          description: Always 24 entries, hour 0 to 23, summed over the days of the period.
+          items:
+            $ref: "#/components/schemas/HourStats"
+
     UpdateRecordConformityRequest:
       type: object
       properties:
@@ -642,6 +1322,42 @@ components:
           example: true
       required:
         - isCompliant
+
+    ConformityChange:
+      type: object
+      properties:
+        previousIsCompliant:
+          type: boolean
+          description: Compliance before the change
+          example: true
+        newIsCompliant:
+          type: boolean
+          description: Compliance after the change
+          example: false
+        authorUsername:
+          type: string
+          description: Username of the user who made the change
+          example: operateur1
+        changedAt:
+          type: string
+          format: date-time
+          description: Date of the change
+          example: "2024-01-15T09:31:12Z"
+      required:
+        - previousIsCompliant
+        - newIsCompliant
+        - authorUsername
+        - changedAt
+
+    ConformityChangesList:
+      type: object
+      properties:
+        changes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConformityChange"
+      required:
+        - changes
 
     AssignBucketToPickerRequest:
       type: object
@@ -701,8 +1417,110 @@ components:
       required:
         - buckets
 
+    Role:
+      type: string
+      enum: [ADMINISTRATEUR, OPERATEUR]
+
+    LoginRequest:
+      type: object
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+      required:
+        - username
+        - password
+
+    CurrentUser:
+      type: object
+      properties:
+        username:
+          type: string
+        role:
+          $ref: "#/components/schemas/Role"
+      required:
+        - username
+        - role
+
+    CreateUser:
+      type: object
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 50
+          pattern: "^[A-Za-z0-9._-]+$"
+        password:
+          type: string
+          format: password
+          minLength: 8
+        role:
+          $ref: "#/components/schemas/Role"
+      required:
+        - username
+        - password
+        - role
+
+    UpdateUser:
+      type: object
+      description: At least one field must be present.
+      properties:
+        role:
+          $ref: "#/components/schemas/Role"
+        enabled:
+          type: boolean
+
+    ResetPassword:
+      type: object
+      properties:
+        password:
+          type: string
+          format: password
+          minLength: 8
+      required:
+        - password
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        role:
+          $ref: "#/components/schemas/Role"
+        enabled:
+          type: boolean
+        creationDate:
+          type: string
+          format: date-time
+      required:
+        - id
+        - username
+        - role
+        - enabled
+        - creationDate
+
+    UsersList:
+      type: object
+      properties:
+        users:
+          type: array
+          items:
+            $ref: "#/components/schemas/User"
+      required:
+        - users
+
   # ---------------------------------------------------------------------------
   securitySchemes:
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: JSESSIONID
+      description: Session opened by POST /auth/login. State-changing requests also need the X-XSRF-TOKEN header (value of the XSRF-TOKEN cookie).
     ReaderApiToken:
       type: apiKey
       in: header

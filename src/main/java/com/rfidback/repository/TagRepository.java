@@ -1,5 +1,6 @@
 package com.rfidback.repository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -16,4 +17,8 @@ public interface TagRepository extends JpaRepository<TagEntity, UUID> {
     List<TagEntity> findAllByBucket(BucketEntity bucket);
 
     List<TagEntity> findAllByBucketIn(List<BucketEntity> buckets);
+
+    List<TagEntity> findAllByUidIn(Collection<String> uids);
+
+    long countByBucket(BucketEntity bucket);
 }

@@ -9,12 +9,17 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.data.domain.Sort.Direction;
+import org.springframework.data.domain.Sort.Order;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import org.springframework.web.server.ResponseStatusException;
 
 import com.rfidback.entity.BucketEntity;
 import com.rfidback.entity.PickerEntity;
 import com.rfidback.exception.PickerAlreadyExistsException;
+import com.rfidback.exception.PickerHasBucketsException;
 import com.rfidback.exception.PickerNotFoundException;
 import com.rfidback.generated.model.CreatePicker;
 import com.rfidback.generated.model.PageMetadata;
@@ -30,27 +35,36 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class PickerService {
 
-    private static final Sort DEFAULT_SORT = Sort.by(Sort.Order.asc("lastname"), Sort.Order.asc("firstname"));
+    private static final Sort DEFAULT_SORT = Sort.by(Order.asc("lastname"), Order.asc("firstname"), Order.asc("id"));
+
+    /** Sortable fields (the only names that reach the query) and the tie-breakers that keep pages stable. */
+    private static final Map<String, List<String>> SORT_TIE_BREAKERS = Map.of(
+            "lastname", List.of("firstname", "id"),
+            "firstname", List.of("lastname", "id"),
+            "creationDate", List.of("lastname", "firstname", "id"));
 
     private final PickerRepository pickerRepository;
     private final BucketRepository bucketRepository;
 
-    public PickersPage listPickers(int page, int size) {
-        Pageable pageable = PageRequest.of(page, size, DEFAULT_SORT);
+    public PickersPage listPickers(int page, int size, String sort) {
+        Pageable pageable = PageRequest.of(page, size, toSort(sort));
         Page<PickerEntity> pickerPage = pickerRepository.findAll(pageable);
 
         List<PickerEntity> pickerEntities = pickerPage.getContent();
-        Map<UUID, Integer> bucketNumberByPickerId = pickerEntities.isEmpty()
+        // A picker may hold several buckets (spec 006), so group the numbers instead of mapping one per picker.
+        Map<UUID, List<Integer>> bucketNumbersByPickerId = pickerEntities.isEmpty()
                 ? Map.of()
                 : bucketRepository.findAllByPickerIn(pickerEntities).stream()
                         .filter(bucket -> bucket.getPicker() != null)
-                        .collect(Collectors.toMap(bucket -> bucket.getPicker().getId(), BucketEntity::getNumber));
+                        .collect(Collectors.groupingBy(bucket -> bucket.getPicker().getId(),
+                                Collectors.mapping(BucketEntity::getNumber, Collectors.toList())));
 
         List<Picker> content = pickerEntities.stream()
                 .map(entity -> {
                     Picker picker = toPickerModel(entity);
-                    Integer bucketNumber = bucketNumberByPickerId.get(entity.getId());
-                    picker.setBucketNumber(bucketNumber);
+                    picker.setBucketNumbers(bucketNumbersByPickerId.getOrDefault(entity.getId(), List.of()).stream()
+                            .sorted()
+                            .toList());
                     return picker;
                 })
                 .toList();
@@ -69,8 +83,8 @@ public class PickerService {
     }
 
     public Picker createPicker(CreatePicker createPicker) {
-        String lastname = sanitize(createPicker.getLastname());
-        String firstname = sanitize(createPicker.getFirstname());
+        String lastname = requiredName(createPicker.getLastname(), "lastname");
+        String firstname = requiredName(createPicker.getFirstname(), "firstname");
         ensureUniqueName(lastname, firstname, null);
 
         PickerEntity entity = PickerEntity.builder()
@@ -79,34 +93,75 @@ public class PickerService {
                 .comment(extractComment(createPicker.getComment()))
                 .build();
 
-        return toPickerModel(pickerRepository.save(entity));
+        Picker picker = toPickerModel(pickerRepository.save(entity));
+        picker.setBucketNumbers(List.of());
+        return picker;
     }
 
     public Picker getPicker(UUID pickerId) {
         PickerEntity entity = loadPicker(pickerId);
         Picker picker = toPickerModel(entity);
-        bucketRepository.findByPicker(entity)
-                .ifPresent(bucket -> picker.setBucketNumber(bucket.getNumber()));
+        picker.setBucketNumbers(bucketNumbersOf(entity));
         return picker;
     }
 
     public Picker updatePicker(UUID pickerId, UpdatePicker updatePicker) {
         PickerEntity entity = loadPicker(pickerId);
 
-        String lastname = sanitize(updatePicker.getLastname());
-        String firstname = sanitize(updatePicker.getFirstname());
+        String lastname = requiredName(updatePicker.getLastname(), "lastname");
+        String firstname = requiredName(updatePicker.getFirstname(), "firstname");
         ensureUniqueName(lastname, firstname, pickerId);
 
         entity.setLastname(lastname);
         entity.setFirstname(firstname);
         entity.setComment(extractComment(updatePicker.getComment()));
 
-        return toPickerModel(pickerRepository.save(entity));
+        PickerEntity saved = pickerRepository.save(entity);
+        Picker picker = toPickerModel(saved);
+        picker.setBucketNumbers(bucketNumbersOf(saved));
+        return picker;
     }
 
     public void deletePicker(UUID pickerId) {
         PickerEntity entity = loadPicker(pickerId);
+        if (bucketRepository.existsByPicker(entity)) {
+            throw new PickerHasBucketsException(
+                    "Picker %s still has at least one bucket assigned; unassign it first".formatted(pickerId));
+        }
         pickerRepository.delete(entity);
+    }
+
+    private Sort toSort(String sort) {
+        if (!StringUtils.hasText(sort)) {
+            return DEFAULT_SORT;
+        }
+        String[] parts = sort.split(",", -1);
+        if (parts.length != 2) {
+            throw invalidSort(sort);
+        }
+        String field = parts[0].trim();
+        if (!SORT_TIE_BREAKERS.containsKey(field)) {
+            throw invalidSort(sort);
+        }
+        Direction direction = Direction.fromOptionalString(parts[1].trim()).orElseThrow(() -> invalidSort(sort));
+
+        Sort result = Sort.by(new Order(direction, field));
+        for (String tieBreaker : SORT_TIE_BREAKERS.get(field)) {
+            result = result.and(Sort.by(Order.asc(tieBreaker)));
+        }
+        return result;
+    }
+
+    private ResponseStatusException invalidSort(String sort) {
+        return new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                "Invalid sort '%s': expected field,asc|desc with field in lastname, firstname, creationDate"
+                        .formatted(sort));
+    }
+
+    private List<Integer> bucketNumbersOf(PickerEntity entity) {
+        return bucketRepository.findAllByPickerOrderByNumberAsc(entity).stream()
+                .map(BucketEntity::getNumber)
+                .toList();
     }
 
     private PickerEntity loadPicker(UUID pickerId) {
@@ -142,7 +197,10 @@ public class PickerService {
         return StringUtils.hasText(trimmed) ? trimmed : null;
     }
 
-    private String sanitize(String value) {
-        return value == null ? null : value.trim();
+    private String requiredName(String value, String field) {
+        if (!StringUtils.hasText(value)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "%s must not be blank".formatted(field));
+        }
+        return value.trim();
     }
 }

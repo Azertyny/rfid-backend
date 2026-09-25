@@ -1,0 +1,81 @@
+name: deploy
+
+# Manual deployment (or rollback) of a published main-* version to the production VPS (spec 009, FR-011a).
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to deploy: a published main-<7-char sha> tag (see the ci run summary)"
+        required: true
+        type: string
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      packages: read
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Check the version
+        run: |
+          echo "STARTED=$(date -u +'%Y-%m-%d %H:%M:%SZ')" >> "$GITHUB_ENV"
+          if [[ ! $VERSION =~ ^main-[0-9a-f]{7}$ ]]; then
+            echo "::error::'$VERSION' is not a main-<7-char sha> tag"; exit 1
+          fi
+          owner=${GITHUB_REPOSITORY_OWNER,,}
+          for image in rfid-backend rfid-web; do
+            docker manifest inspect "ghcr.io/$owner/$image:$VERSION" > /dev/null \
+              || { echo "::error::ghcr.io/$owner/$image:$VERSION is not published"; exit 1; }
+          done
+
+      - name: Deploy on the VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          set -o pipefail
+          install -d -m 700 ~/.ssh
+          echo "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          echo "$VPS_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # The deploy user's forced command runs deploy.sh with this version as its only argument.
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "deploy@$VPS_HOST" "$VERSION" | tee deploy.log
+
+      - name: Summary
+        if: always()
+        run: |
+          last=$(tail -n 1 deploy.log 2>/dev/null || echo "no output: the deployment did not reach the VPS")
+          previous=$(sed -n 's/.*(previous: \(.*\))$/\1/p' deploy.log 2>/dev/null | tail -n 1)
+          [ -n "$previous" ] || previous=$(sed -n 's/.*redeploy \(main-[0-9a-f]*\) if needed$/\1/p' deploy.log 2>/dev/null | tail -n 1)
+          {
+            echo "### Deployment of \`$VERSION\`"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Triggered by | @$GITHUB_ACTOR |"
+            echo "| Started | $STARTED |"
+            echo "| Ended | $(date -u +'%Y-%m-%d %H:%M:%SZ') |"
+            echo "| Previous version | ${previous:-unknown} |"
+            echo "| Result | $last |"
+            if [ "${{ job.status }}" != success ]; then
+              echo ""
+              [ -z "$previous" ] || [ "$previous" = none ] || echo "**Rollback:** redeploy \`$previous\` with this workflow."
+              if [ -s deploy.log ]; then
+                echo ""
+                echo "<details><summary>deploy.sh output</summary>"
+                echo ""
+                echo '```'
+                cat deploy.log
+                echo '```'
+                echo "</details>"
+              fi
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

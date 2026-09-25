@@ -11,6 +11,7 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
@@ -21,7 +22,13 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 @Entity
-@Table(name = "record")
+// The first index serves the duplicate-read lookup of a scan (spec 004, FR-008);
+// the second serves the last 10 records of a reader (spec 005, SC-003) and the dashboard queries of one reader;
+// the third serves the dashboard period queries without a reader (spec 007, research R8).
+@Table(name = "record", indexes = {
+        @Index(name = "idx_record_reader_tag_date", columnList = "reader_id, tag_id, creation_date"),
+        @Index(name = "idx_record_reader_date", columnList = "reader_id, creation_date"),
+        @Index(name = "idx_record_creation_date", columnList = "creation_date") })
 @Getter
 @Setter
 @NoArgsConstructor

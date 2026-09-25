@@ -1,0 +1,32 @@
+{
+	email {$ACME_EMAIL}
+}
+
+# Plain HTTP: never forward an API call. Caddy's redirect is a 308, which keeps the method and body, so a reader
+# following it would replay an HTTP scan over HTTPS (spec 009, FR-009a). The ACME challenge is answered before this.
+http://{$SITE_ADDRESS} {
+	handle /api/* {
+		respond "HTTPS required" 403
+	}
+	handle {
+		redir https://{host}{uri} 308
+	}
+}
+
+{$SITE_ADDRESS} {
+	encode gzip
+
+	handle /api/* {
+		reverse_proxy app:8080
+	}
+	handle /actuator/health {
+		reverse_proxy app:8080
+	}
+	handle /actuator/* {
+		respond 404
+	}
+	handle {
+		root * /srv/front
+		file_server
+	}
+}

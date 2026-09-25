@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tableau de bord - Production</title>
+
+    <!-- Bootstrap 5 & FontAwesome -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+
+    <style>
+        body { background-color: #f9fafb; font-family: 'Segoe UI', system-ui, sans-serif; color: #1f2937; }
+        .card { border: none; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); background: white; }
+        .icon-box { width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; }
+        .bg-green-soft { background-color: #dcfce7; color: #16a34a; }
+        .bg-blue-soft { background-color: #dbeafe; color: #2563eb; }
+        .bg-red-soft { background-color: #fee2e2; color: #dc2626; }
+        .bg-purple-soft { background-color: #f3e8ff; color: #9333ea; }
+        .stat-value { font-variant-numeric: tabular-nums; }
+        #pickersTable td.num, #pickersTable th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    </style>
+</head>
+<body class="d-flex flex-column h-100">
+
+    <!-- MENU DE NAVIGATION HARMONISÉ -->
+    <nav class="navbar navbar-expand navbar-dark bg-dark shadow-sm">
+        <div class="container-fluid max-w-7xl mx-auto px-4">
+            <a class="navbar-brand fw-bold" href="index.html">
+                <i class="fas fa-wifi me-2"></i>RFID Admin
+            </a>
+            <div class="navbar-nav ms-auto gap-2">
+                <a href="index.html" class="btn btn-sm btn-primary">
+                    <i class="fas fa-chart-line me-1"></i>Dashboard
+                </a>
+                <a href="pickers.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-users me-1"></i>Opérateurs
+                </a>
+                <a href="readers.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-satellite-dish me-1"></i>Lecteurs
+                </a>
+                <a href="tags.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-tags me-1"></i>Tags
+                </a>
+                <a href="buckets.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-fill me-1"></i>Seaux
+                </a>
+                <a href="users.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-user-shield me-1"></i>Utilisateurs
+                </a>
+                <button class="btn btn-sm btn-outline-light border-0" onclick="logout()">
+                    <i class="fas fa-sign-out-alt me-1"></i>Déconnexion
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid max-w-7xl mx-auto py-4">
+
+        <!-- Titre -->
+        <div class="d-flex align-items-center gap-3 mb-4">
+            <div class="icon-box bg-primary text-white rounded-3">
+                <i class="fas fa-chart-column"></i>
+            </div>
+            <div>
+                <h4 class="mb-0 fw-bold text-dark">Tableau de bord - Production</h4>
+                <small class="text-muted" id="periodLabel">Chargement...</small>
+            </div>
+        </div>
+
+        <!-- FILTRES -->
+        <div class="card p-3 mb-4">
+            <div class="row g-2 align-items-end">
+                <div class="col-md-3">
+                    <label for="periodSelect" class="form-label small fw-semibold mb-1">Période</label>
+                    <select id="periodSelect" class="form-select form-select-sm">
+                        <option value="TODAY" selected>Aujourd'hui</option>
+                        <option value="YESTERDAY">Hier</option>
+                        <option value="LAST_7_DAYS">7 derniers jours</option>
+                        <option value="CUSTOM">Personnalisée</option>
+                    </select>
+                </div>
+                <div class="col-md-2 d-none" data-custom-period>
+                    <label for="fromDate" class="form-label small fw-semibold mb-1">Du</label>
+                    <input type="date" id="fromDate" class="form-control form-control-sm">
+                </div>
+                <div class="col-md-2 d-none" data-custom-period>
+                    <label for="toDate" class="form-label small fw-semibold mb-1">Au</label>
+                    <input type="date" id="toDate" class="form-control form-control-sm">
+                </div>
+                <div class="col-md-3">
+                    <label for="readerSelect" class="form-label small fw-semibold mb-1">Lecteur</label>
+                    <select id="readerSelect" class="form-select form-select-sm">
+                        <option value="">Tous les lecteurs</option>
+                    </select>
+                </div>
+                <div class="col-md-auto ms-auto d-flex gap-2">
+                    <button id="refreshBtn" class="btn btn-sm btn-outline-secondary">
+                        <i class="fas fa-rotate me-1"></i>Actualiser
+                    </button>
+                    <button id="exportBtn" class="btn btn-sm btn-success" disabled>
+                        <i class="fas fa-file-csv me-1"></i>Exporter CSV
+                    </button>
+                </div>
+            </div>
+            <div id="periodError" class="invalid-feedback d-block"></div>
+        </div>
+
+        <!-- ÉTATS -->
+        <div id="loadingState" class="text-center text-muted py-5">
+            <i class="fas fa-circle-notch fa-spin me-2"></i>Chargement...
+        </div>
+        <div id="errorState" class="alert alert-danger d-none d-flex justify-content-between align-items-center">
+            <span id="errorMessage">Impossible de charger les statistiques.</span>
+            <button id="retryBtn" class="btn btn-sm btn-outline-danger">Réessayer</button>
+        </div>
+        <div id="emptyState" class="card p-5 text-center text-muted d-none">
+            <i class="fas fa-inbox fa-2x mb-2"></i>
+            <div>Aucune lecture sur la période</div>
+        </div>
+
+        <div id="results" class="d-none">
+            <!-- SYNTHÈSE -->
+            <div class="row g-3 mb-4">
+                <div class="col-md-3 col-6">
+                    <div class="card p-3 h-100">
+                        <div class="d-flex align-items-center gap-3">
+                            <div class="icon-box bg-blue-soft"><i class="fas fa-barcode"></i></div>
+                            <div>
+                                <p class="text-muted small mb-0 fw-semibold">Lectures</p>
+                                <h2 class="mb-0 fw-bold stat-value" id="statTotal">0</h2>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3 col-6">
+                    <div class="card p-3 h-100">
+                        <div class="d-flex align-items-center gap-3">
+                            <div class="icon-box bg-green-soft"><i class="fas fa-check"></i></div>
+                            <div>
+                                <p class="text-muted small mb-0 fw-semibold">Conformes</p>
+                                <h2 class="mb-0 fw-bold text-success stat-value" id="statCompliant">0</h2>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3 col-6">
+                    <div class="card p-3 h-100">
+                        <div class="d-flex align-items-center gap-3">
+                            <div class="icon-box bg-red-soft"><i class="fas fa-xmark"></i></div>
+                            <div>
+                                <p class="text-muted small mb-0 fw-semibold">Non conformes</p>
+                                <h2 class="mb-0 fw-bold text-danger stat-value" id="statNonCompliant">0</h2>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3 col-6">
+                    <div class="card p-3 h-100">
+                        <div class="d-flex align-items-center gap-3">
+                            <div class="icon-box bg-purple-soft"><i class="fas fa-percent"></i></div>
+                            <div>
+                                <p class="text-muted small mb-0 fw-semibold">Taux de conformité</p>
+                                <h2 class="mb-0 fw-bold stat-value" style="color: #9333ea" id="statRate">—</h2>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-3">
+                <!-- PAR CUEILLEUR -->
+                <div class="col-lg-6">
+                    <div class="card h-100 p-3">
+                        <h5 class="fw-bold mb-3">Par cueilleur</h5>
+                        <div class="table-responsive" style="max-height: 420px;">
+                            <table id="pickersTable" class="table table-sm table-hover align-middle mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Cueilleur</th>
+                                        <th class="num">Lectures</th>
+                                        <th class="num">Non conformes</th>
+                                        <th class="num">Taux de conformité</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="pickersBody"></tbody>
+                                <tfoot id="pickersFoot" class="fw-bold table-light"></tfoot>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- PAR HEURE -->
+                <div class="col-lg-6">
+                    <div class="card h-100 p-3">
+                        <h5 class="fw-bold mb-3">Lectures par heure</h5>
+                        <div style="position: relative; height: 380px; width: 100%;">
+                            <canvas id="hoursChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- LOGIQUE JS -->
+    <script src="config.js"></script>
+    <script src="auth.js"></script>
+    <script>
+        // Tableau de bord (spec 007): every figure comes from GET /api/records/stats, computed by the server in the
+        // station time zone. Nothing is aggregated here and nothing is ever invented when there is no data.
+        const MAX_DAYS = 31;
+        const REFRESH_MS = 60000;
+        const NON_ATTRIBUE = 'Non attribué';
+
+        let lastStats = null;
+        // Only the latest request may render: an older answer arriving late must not replace newer figures.
+        let statsRequestSeq = 0;
+        let readersById = {};
+        let hoursChart = null;
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            await requireRole('ADMINISTRATEUR', 'OPERATEUR');
+            initChart();
+            document.getElementById('periodSelect').addEventListener('change', onPeriodChange);
+            ['fromDate', 'toDate', 'readerSelect'].forEach(id =>
+                document.getElementById(id).addEventListener('change', loadStats));
+            document.getElementById('refreshBtn').addEventListener('click', loadStats);
+            document.getElementById('retryBtn').addEventListener('click', loadStats);
+            document.getElementById('exportBtn').addEventListener('click', exportCsv);
+            document.addEventListener('visibilitychange', () => { if (shouldAutoRefresh()) loadStats(); });
+            setInterval(() => { if (shouldAutoRefresh()) loadStats(); }, REFRESH_MS);
+            await loadReaders();
+            await loadStats();
+        });
+
+        // All readers, including disabled ones and those now in registration mode: they keep their past production
+        // records (research R6).
+        async function loadReaders() {
+            try {
+                const response = await apiFetch('/readers');
+                if (!response.ok) return;
+                const readers = (await response.json()).readers || [];
+                readers.sort((a, b) => a.uid.localeCompare(b.uid, 'fr'));
+                const select = document.getElementById('readerSelect');
+                readersById = {};
+                readers.forEach(reader => {
+                    readersById[reader.id] = reader;
+                    let label = reader.uid;
+                    if (reader.active === false) label += ' (désactivé)';
+                    if (reader.mode === 'ENREGISTREMENT') label += ' (enregistrement)';
+                    select.appendChild(new Option(label, reader.id));
+                });
+            } catch (e) { console.error('Err Readers', e); }
+        }
+
+        function onPeriodChange() {
+            const custom = document.getElementById('periodSelect').value === 'CUSTOM';
+            document.querySelectorAll('[data-custom-period]').forEach(el => el.classList.toggle('d-none', !custom));
+            loadStats();
+        }
+
+        // Returns the query string, or null after showing why the custom dates are not valid.
+        function buildStatsQuery() {
+            const params = new URLSearchParams();
+            const period = document.getElementById('periodSelect').value;
+            params.set('period', period);
+            if (period === 'CUSTOM') {
+                const from = document.getElementById('fromDate').value;
+                const to = document.getElementById('toDate').value;
+                if (!from || !to) return showPeriodError('Choisissez une date de début et une date de fin.');
+                if (from > to) return showPeriodError('La date de début doit précéder la date de fin.');
+                if (daysBetween(from, to) + 1 > MAX_DAYS) {
+                    return showPeriodError(`La période ne peut pas dépasser ${MAX_DAYS} jours.`);
+                }
+                params.set('from', from);
+                params.set('to', to);
+            }
+            const readerId = document.getElementById('readerSelect').value;
+            if (readerId) params.set('readerId', readerId);
+            return params.toString();
+        }
+
+        function daysBetween(from, to) {
+            // Both dates at UTC midnight: no daylight-saving hour can shift the difference.
+            return Math.round((Date.parse(to + 'T00:00:00Z') - Date.parse(from + 'T00:00:00Z')) / 86400000);
+        }
+
+        // An invalid period shows no figures at all, never the previous period's ones.
+        function showPeriodError(message) {
+            document.getElementById('periodError').textContent = message;
+            lastStats = null;
+            showState('none');
+            return null;
+        }
+
+        async function loadStats() {
+            document.getElementById('periodError').textContent = '';
+            const requestId = ++statsRequestSeq;
+            const query = buildStatsQuery();
+            if (query === null) return;
+            if (!lastStats) showState('loading');
+            try {
+                const response = await apiFetch('/records/stats?' + query, { silent: true });
+                if (requestId !== statsRequestSeq) return;
+                if (response.status === 400) {
+                    const problem = await response.json().catch(() => ({}));
+                    showPeriodError(problem.detail || 'Période invalide.');
+                    return;
+                }
+                if (!response.ok) {
+                    showError(response.status === 403 ? 'Accès refusé.' : 'Impossible de charger les statistiques.');
+                    return;
+                }
+                const stats = await response.json();
+                if (requestId !== statsRequestSeq) return;
+                lastStats = stats;
+                render(lastStats);
+            } catch (e) {
+                if (requestId !== statsRequestSeq) return;
+                console.error('Err Stats', e);
+                showError('Impossible de joindre le serveur.');
+            }
+        }
+
+        function showError(message) {
+            lastStats = null;
+            document.getElementById('errorMessage').textContent = message;
+            showState('error');
+        }
+
+        // state: loading | error | empty | results | none
+        function showState(state) {
+            document.getElementById('loadingState').classList.toggle('d-none', state !== 'loading');
+            document.getElementById('errorState').classList.toggle('d-none', state !== 'error');
+            document.getElementById('emptyState').classList.toggle('d-none', state !== 'empty');
+            document.getElementById('results').classList.toggle('d-none', state !== 'results');
+            document.getElementById('exportBtn').disabled = state !== 'results';
+            if (state !== 'results' && state !== 'empty') {
+                document.getElementById('periodLabel').textContent = '';
+            }
+        }
+
+        function render(stats) {
+            document.getElementById('periodLabel').textContent = periodLabel(stats);
+            if (stats.summary.total === 0) {
+                showState('empty');
+                return;
+            }
+            const summary = stats.summary;
+            document.getElementById('statTotal').textContent = formatInt(summary.total);
+            document.getElementById('statCompliant').textContent = formatInt(summary.total - summary.nonCompliant);
+            document.getElementById('statNonCompliant').textContent = formatInt(summary.nonCompliant);
+            document.getElementById('statRate').textContent = formatRate(summary);
+            renderPickers(stats);
+            renderHours(stats.hours);
+            showState('results');
+        }
+
+        function periodLabel(stats) {
+            const zone = ` (heure de ${stats.timeZone})`;
+            return stats.from === stats.to
+                ? `Le ${formatDay(stats.from)}${zone}`
+                : `Du ${formatDay(stats.from)} au ${formatDay(stats.to)}${zone}`;
+        }
+
+        // "2026-09-25" → "25/09/2026", from the string itself: parsing it as a Date could shift the day.
+        function formatDay(isoDay) {
+            const [year, month, day] = isoDay.split('-');
+            return `${day}/${month}/${year}`;
+        }
+
+        function formatInt(value) {
+            return value.toLocaleString('fr-FR');
+        }
+
+        function complianceRate(counts) {
+            return counts.total === 0 ? null : (counts.total - counts.nonCompliant) * 100 / counts.total;
+        }
+
+        function formatRate(counts) {
+            const rate = complianceRate(counts);
+            return rate === null ? '—'
+                : rate.toLocaleString('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + ' %';
+        }
+
+        function pickerName(picker) {
+            return picker.pickerId === null || picker.pickerId === undefined
+                ? NON_ATTRIBUE
+                : `${picker.firstname || ''} ${picker.lastname || ''}`.trim();
+        }
+
+        function renderPickers(stats) {
+            const body = document.getElementById('pickersBody');
+            body.replaceChildren();
+            stats.pickers.forEach(picker => {
+                const row = pickerRow(pickerName(picker), picker);
+                if (picker.pickerId === null || picker.pickerId === undefined) {
+                    row.cells[0].classList.add('fst-italic', 'text-muted');
+                }
+                body.appendChild(row);
+            });
+            document.getElementById('pickersFoot').replaceChildren(pickerRow('Total', stats.summary));
+        }
+
+        function pickerRow(name, counts) {
+            const row = document.createElement('tr');
+            [name, formatInt(counts.total), formatInt(counts.nonCompliant), formatRate(counts)].forEach((text, i) => {
+                const cell = document.createElement('td');
+                cell.textContent = text;
+                if (i > 0) cell.classList.add('num');
+                row.appendChild(cell);
+            });
+            return row;
+        }
+
+        function initChart() {
+            const ctx = document.getElementById('hoursChart').getContext('2d');
+            hoursChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: [],
+                    datasets: [
+                        { label: 'Conformes', data: [], backgroundColor: '#16a34a', borderRadius: 3 },
+                        { label: 'Non conformes', data: [], backgroundColor: '#dc2626', borderRadius: 3 }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { position: 'top' }, tooltip: { mode: 'index', intersect: false } },
+                    scales: {
+                        x: { stacked: true, grid: { display: false } },
+                        y: { stacked: true, beginAtZero: true, ticks: { precision: 0 } }
+                    }
+                }
+            });
+        }
+
+        // Only the hours from the first to the last one with reads, so a working day is not squeezed into 24 bars.
+        function renderHours(hours) {
+            const withReads = hours.filter(h => h.total > 0).map(h => h.hour);
+            const first = withReads.length ? Math.min(...withReads) : 0;
+            const last = withReads.length ? Math.max(...withReads) : 23;
+            const shown = hours.filter(h => h.hour >= first && h.hour <= last);
+            hoursChart.data.labels = shown.map(h => String(h.hour).padStart(2, '0') + 'h');
+            hoursChart.data.datasets[0].data = shown.map(h => h.total - h.nonCompliant);
+            hoursChart.data.datasets[1].data = shown.map(h => h.nonCompliant);
+            hoursChart.update();
+        }
+
+        // Only a period that includes today can change: a closed period is refreshed by hand.
+        function shouldAutoRefresh() {
+            if (!lastStats || document.visibilityState !== 'visible') return false;
+            const todayInZone = new Intl.DateTimeFormat('en-CA', { timeZone: lastStats.timeZone }).format(new Date());
+            return lastStats.to >= todayInZone;
+        }
+
+        // CSV for Excel (French settings): UTF-8 with BOM, ";" separator, decimal comma (research R10).
+        function exportCsv() {
+            if (!lastStats) return;
+            const lines = [['Cueilleur', 'Lectures', 'Conformes', 'Non conformes', 'Taux de conformité (%)']];
+            lastStats.pickers.forEach(picker => lines.push(csvCounts(pickerName(picker), picker)));
+            lines.push(csvCounts('Total', lastStats.summary));
+            const csv = lines.map(line => line.map(csvField).join(';')).join('\r\n') + '\r\n';
+
+            const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = csvFileName(lastStats);
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            URL.revokeObjectURL(url);
+        }
+
+        function csvCounts(name, counts) {
+            const rate = complianceRate(counts);
+            return [name, String(counts.total), String(counts.total - counts.nonCompliant),
+                String(counts.nonCompliant),
+                rate === null ? '' : rate.toLocaleString('fr-FR',
+                    { minimumFractionDigits: 1, maximumFractionDigits: 1, useGrouping: false })];
+        }
+
+        // Quoted, and a leading ' on text Excel would run as a formula (picker names are free text).
+        function csvField(value) {
+            let text = String(value);
+            if (/^[=+\-@\t\r]/.test(text)) text = "'" + text;
+            return '"' + text.replace(/"/g, '""') + '"';
+        }
+
+        function csvFileName(stats) {
+            let name = `tableau-de-bord_${stats.from}_${stats.to}`;
+            const reader = stats.readerId ? readersById[stats.readerId] : null;
+            if (reader) name += '_' + reader.uid.replace(/[^A-Za-z0-9]+/g, '-');
+            return name + '.csv';
+        }
+    </script>
+</body>
+</html>
