@@ -57,7 +57,8 @@ No violations, so Complexity Tracking stays empty. Recommendation: ratify a cons
 ├── quickstart.md        # Phase 1: end-to-end validation
 ├── contracts/
 │   ├── openapi-auth.yaml   # Fragment to merge into api.yaml
-│   └── front-auth.md       # Front behaviour contract
+│   ├── openapi-kiosk.yaml  # Amendment 2026-09-25: kiosk changes to merge into api.yaml
+│   └── front-auth.md       # Front behaviour contract (+ kiosk mode)
 └── tasks.md             # Phase 2 (/speckit-tasks, not created here)
 ```
 
@@ -137,3 +138,92 @@ deploy/
 > **Fill ONLY if Constitution Check has violations that must be justified**
 
 No violations.
+
+---
+
+## Amendment 2026-09-25: line kiosk with the reader token
+
+**Spec**: Clarifications 2026-09-25, FR-005a, FR-005b, US2 scenarios 6-7, SC-006; spec `005` FR-004 and US2 scenario 7.
+**Research**: R11-R16. **Design**: [data-model.md](data-model.md#amendment-2026-09-25-kiosk-with-the-reader-token),
+[contracts/openapi-kiosk.yaml](contracts/openapi-kiosk.yaml), [contracts/front-auth.md](contracts/front-auth.md),
+[quickstart.md](quickstart.md#8-line-kiosk-with-the-reader-token-amendment-2026-09-25). The rest of this plan is delivered.
+
+### Summary
+
+The touch screen of a line (`reader.html` on the kiosk computer) works without a user login: it sends its line reader's
+`x-api-token`. A third, stateless security chain takes every `/api/**` request carrying that header, allows only the
+two record routes of `reader.html`, and `RecordService` limits them to the token's own reader. Conformity changes made
+this way are credited to the reader, so the conformity history's author becomes "user or reader". The kiosk gets the
+token from its launcher through the URL fragment; `front/` still holds no secret.
+
+### Technical Context (changes only)
+
+- **Target Platform** (supersedes the original section above): HTTPS behind Caddy (`deploy/web/Caddyfile`, spec `009`),
+  no longer plain HTTP behind `nginx`. `/api/*` over plain HTTP is refused, so the kiosk token, sent on every call,
+  never travels in clear. Caddy has no access log today; if one is enabled, `x-api-token` must be excluded (SC-006).
+- **Storage**: `record_conformity_change` gets `author_reader_id` (added by Hibernate) and `author_id` becomes nullable
+  through an idempotent startup statement, because `ddl-auto: update` never alters an existing column (research R14).
+- **Performance**: one indexed lookup by `apitoken` per kiosk call, 2 per second per kiosk (research R16). No new target.
+- **Constraints**: reader devices unchanged (SC-004); user chain and its matrix unchanged; token never in `front/` files
+  or server logs (SC-003, SC-006).
+- **Scale/Scope**: 2 routes opened to reader tokens, 1 schema changed (`ConformityChange`), 1 column added and 1 relaxed,
+  1 new chain, 1 runner, 2 front files, 1 deploy doc section; ~5 test classes new or extended.
+
+### Constitution Check (amendment)
+
+Constitution still the unfilled template; gates from `CLAUDE.md` as above.
+
+| Gate | Pre-design | Post-design |
+|---|---|---|
+| Layering | Pass | Pass: ownership rule in `RecordService`, chain in `SecurityConfig`, runner in `configuration` |
+| API-first | Pass | Pass: `security` on the two operations and the `ConformityChange` change go into `api.yaml` first ([openapi-kiosk.yaml](contracts/openapi-kiosk.yaml)) |
+| `mvn clean install` passes | Pass | Pass (planned): kiosk cases added to the access matrix, schema runner tested on H2 |
+
+One deliberate exception to "no migration tool": the startup runner of R14, justified below.
+
+### Source changes
+
+```text
+src/main/resources/openapi/api.yaml                  # merge openapi-kiosk.yaml (2 operations' security, ConformityChange)
+src/main/java/com/rfidback/
+├── configuration/
+│   ├── SecurityConfig.java                          # + kioskSecurityFilterChain @Order(2); user chain → @Order(3)
+│   └── ConformityAuthorSchemaUpgrade.java           # new: ApplicationRunner, DROP NOT NULL on author_id (R14)
+├── security/ReaderApiTokenAuthenticationFilter.java # drop its own /api/tags/scan path check (R11)
+├── entity/RecordConformityChangeEntity.java         # author optional, + authorReader, @PrePersist invariant
+└── service/RecordService.java                       # own-reader checks (R12); author = user or reader; history mapping
+src/test/java/com/rfidback/
+├── security/AccessMatrixSecurityTest.java           # + profile READER_TOKEN (own reader / other reader)
+├── security/KioskReaderTokenSecurityTest.java       # new: 200/204/401/403, no Set-Cookie, no CSRF needed, author READER
+├── security/ReaderScanSecurityTest.java             # still green (scan unchanged)
+├── service/RecordServiceTest.java                   # + own-reader and author cases
+└── configuration/ConformityAuthorSchemaUpgradeTest.java # new: NOT NULL column becomes nullable, rerun is harmless
+front/
+├── auth.js                                          # kiosk mode (fragment → sessionStorage, x-api-token, 401 screen)
+└── reader.html                                      # kiosk mode: skip selection and requireRole
+deploy/INSTALL.md                                    # kiosk section (launcher example, rotation), rollback caveat (R14)
+CLAUDE.md                                            # Security: the reader token also serves the line kiosk
+```
+
+### Implementation order
+
+1. **Contract**: merge [openapi-kiosk.yaml](contracts/openapi-kiosk.yaml); `mvn generate-sources`; map `authorType` in
+   `RecordService.toConformityChange` (all existing rows are `USER`).
+2. **Schema**: entity change + `ConformityAuthorSchemaUpgrade` and its test.
+3. **Security**: kiosk chain, filter path check removed; extend `AccessMatrixSecurityTest` first and see it fail.
+4. **Service**: own-reader checks and reader author in `RecordService` (tests first).
+5. **Front**: `auth.js` kiosk mode, `reader.html`.
+6. **Docs**: `deploy/INSTALL.md` kiosk section and rollback caveat, `CLAUDE.md`; walk through quickstart step 8.
+
+### Dependencies on other specs
+
+- Spec `005`: FR-004 and the history's author (already aligned in its spec, marked "à livrer").
+- Spec `002`: rotating a reader's token also cuts off its kiosk until its config file is updated (spec 008 edge case).
+- Spec `003`: a reader in registration mode can still serve a kiosk; its record list is simply empty. No special case.
+
+### Complexity Tracking (amendment)
+
+| Violation | Why needed | Simpler alternative rejected because |
+|---|---|---|
+| Startup SQL runner despite "schema changes through entities only" (`CLAUDE.md`) | `ddl-auto: update` cannot relax `author_id`'s `NOT NULL`; without it the first kiosk change fails with `500` in production | Manual SQL step: easy to forget on deploy. Flyway: needs a baseline of the existing production schema, out of scope |
+

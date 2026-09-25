@@ -14,6 +14,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Stream;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -26,6 +27,9 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+
+import com.rfidback.entity.ReaderEntity;
+import com.rfidback.repository.ReaderRepository;
 
 /** Checks every existing route of the access matrix in spec 008 for each profile (SC-001). */
 @SpringBootTest
@@ -52,8 +56,19 @@ class AccessMatrixSecurityTest {
     @Autowired
     private MockMvc mockMvc;
 
-    static Stream<Arguments> matrix() {
-        List<Route> routes = List.of(
+    @Autowired
+    private ReaderRepository readerRepository;
+
+    private String readerToken;
+
+    @BeforeEach
+    void saveReader() {
+        readerToken = readerRepository.save(ReaderEntity.builder().name("Matrix kiosk " + UUID.randomUUID()).build())
+                .getApitoken();
+    }
+
+    static List<Route> routes() {
+        return List.of(
                 new Route(HttpMethod.GET, "/api/pickers", null, LOGGED_IN),
                 new Route(HttpMethod.GET, "/api/pickers/" + ID, null, LOGGED_IN),
                 new Route(HttpMethod.POST, "/api/pickers", PICKER_BODY, ADMIN_ONLY),
@@ -91,7 +106,10 @@ class AccessMatrixSecurityTest {
                 new Route(HttpMethod.GET, "/api/auth/me", null, LOGGED_IN),
                 new Route(HttpMethod.POST, "/api/auth/logout", null, LOGGED_IN),
                 new Route(HttpMethod.GET, "/actuator/health", null, EVERYONE));
-        return routes.stream()
+    }
+
+    static Stream<Arguments> matrix() {
+        return routes().stream()
                 .flatMap(route -> Stream.of(Profile.values()).map(profile -> Arguments.of(route, profile)));
     }
 
@@ -116,6 +134,31 @@ class AccessMatrixSecurityTest {
         } else {
             assertThat(status).isEqualTo(403);
         }
+    }
+
+    // The two kiosk routes are checked with real records in KioskReaderTokenSecurityTest; health is outside /api/**.
+    static Stream<Route> routesClosedToReaderTokens() {
+        return routes().stream().filter(route -> !route.path().startsWith("/api/records/readers/")
+                && !route.path().endsWith("/conformity")
+                && !route.path().equals("/actuator/health"));
+    }
+
+    // A request carrying x-api-token is a reader request (spec 008, FR-005a): no session, no CSRF, 403 elsewhere.
+    @ParameterizedTest(name = "reader token → {0}")
+    @MethodSource("routesClosedToReaderTokens")
+    void readerToken_onOtherRoutes_returns403(Route route) throws Exception {
+        MockHttpServletRequestBuilder builder = request(route.method(), route.path()).header("x-api-token", readerToken);
+        if (route.body() != null) {
+            builder.contentType(MediaType.APPLICATION_JSON).content(route.body());
+        }
+
+        mockMvc.perform(builder).andExpect(status().isForbidden());
+    }
+
+    @Test
+    void readerToken_unknown_returns401() throws Exception {
+        mockMvc.perform(request(HttpMethod.GET, "/api/pickers").header("x-api-token", "unknown-token"))
+                .andExpect(status().isUnauthorized());
     }
 
     @Test

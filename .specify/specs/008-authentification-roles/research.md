@@ -68,3 +68,98 @@ Versions constatées : Spring Boot 3.5.7 (`pom.xml`), Spring Security 6.5.6 (dé
 
 - HTTP en clair sur le réseau local (`deploy/INSTALL.md`) : mot de passe et cookie lisibles par qui écoute ce réseau. À traiter côté déploiement (TLS sur `nginx`).
 - Sessions en mémoire : un redémarrage de l'application déconnecte tout le monde.
+
+---
+
+# Amendement 2026-09-25 : kiosque tactile avec le jeton du lecteur
+
+Décision de la spec (Clarifications 2026-09-25, FR-005a, FR-005b ; spec `005` FR-004) : le `reader.html` du kiosque d'une
+ligne s'authentifie avec le jeton de son lecteur, reçu par le fragment d'URL. Choix techniques ci-dessous.
+
+## R11. Troisième chaîne de filtres : « toute requête portant `x-api-token` est une requête de lecteur »
+
+- **Decision**: une nouvelle `SecurityFilterChain` `@Order(2)` (la chaîne utilisateur passe en `@Order(3)`), sans état, CSRF
+  désactivé, `ReaderApiTokenAuthenticationFilter`. Son `securityMatcher` : chemin `/api/**` **et** en-tête `x-api-token`
+  présent (`RequestHeaderRequestMatcher`). Règles : `GET /api/records/readers/*` et `PATCH /api/records/*/conformity` →
+  `authenticated()` ; `OPTIONS` → `permitAll()` ; tout le reste → `denyAll()`. Jeton absent de la base ou lecteur
+  désactivé → `401` (le filtre, comme aujourd'hui) ; jeton valide sur une autre route → `403` (spec, US2 scénario 7).
+  `POST /api/tags/scan` reste servie par la chaîne `@Order(1)`, inchangée.
+- **Rationale**: la chaîne utilisateur et sa matrice ne changent pas ; une requête sans l'en-tête suit exactement le
+  même chemin qu'avant (Opérateur ou Administrateur connecté). Une requête avec l'en-tête ne touche jamais aux
+  sessions ni au CSRF, ce qui est sûr : une page tierce ne peut pas faire envoyer un en-tête personnalisé par le
+  navigateur sans CORS, contrairement à un cookie.
+- **Point constaté**: `ReaderApiTokenAuthenticationFilter` teste lui-même le chemin (`protectedEndpoint`, `/api/tags/scan`
+  seulement) et laisse passer toute autre requête sans l'authentifier. Ce test doit disparaître : ce sont désormais les
+  `securityMatcher` des deux chaînes qui décident où le filtre s'applique.
+- **Alternatives considered**: ajouter le filtre à la chaîne utilisateur et un rôle `LECTEUR` dans la matrice — mélange
+  sessions et jeton, et le CSRF s'appliquerait au `PATCH` du kiosque ; limiter le `securityMatcher` aux deux routes —
+  un jeton valide sur une autre route tomberait dans la chaîne utilisateur et recevrait `401` au lieu de `403`.
+
+## R12. « Uniquement son propre lecteur » : contrôle dans `RecordService`
+
+- **Decision**: `RecordService` lit l'authentification courante. Si c'est un `ReaderAuthentication` :
+  `listLatestRecordsForReader(readerUid)` exige `readerUid` égal au `name` du lecteur authentifié ;
+  `updateRecordConformity` exige `record.reader.id` égal à son `id`. Sinon `ResponseStatusException(FORBIDDEN)`, comme
+  `RegistrationService` (spec `003`). Le contrôle du `PATCH` se fait après le chargement verrouillé du `Record` et avant
+  toute écriture. Ordre des réponses : `Record` inexistant → `404`, `Record` d'un autre lecteur → `403`.
+- **Rationale**: l'URL du `PATCH` ne dit pas à quel lecteur appartient le `Record` ; seule la couche service le sait.
+  Le `404` avant `403` révèle seulement qu'un identifiant UUID existe, sans intérêt pour un attaquant.
+- **Alternatives considered**: `@PreAuthorize` avec une expression — il faudrait charger le `Record` deux fois ;
+  contrôle dans le contrôleur — la règle métier resterait hors de la couche testée par `RecordServiceTest`.
+
+## R13. Auteur d'une modification : Utilisateur ou Lecteur
+
+- **Decision**: `record_conformity_change.author_id` devient facultatif et une colonne `author_reader_id` (FK vers
+  `reader`, facultative) est ajoutée. Invariant : exactement l'une des deux est renseignée, vérifié par l'entité
+  (`@PrePersist`). Dans l'API, `ConformityChange` gagne `authorType` (`USER` | `READER`, obligatoire) et
+  `authorReaderUid` ; `authorUsername` n'est plus obligatoire (renseigné seulement pour `USER`).
+- **Rationale**: garde une seule table, donc l'historique trié (FR-007 de `005`) et le verrou « un `Record` modifié ne
+  change plus sur relecture » (FR-006 de `005`, `TagService`) restent une seule requête d'existence, sans changement.
+- **Alternatives considered**: un compte technique `app_user` par lecteur — la spec crédite le lecteur, pas un
+  utilisateur, et il faudrait synchroniser deux entités ; une table séparée pour les modifications faites au kiosque —
+  deux sources pour l'historique et pour le verrou de FR-006.
+
+## R14. `ddl-auto: update` ne retire pas un `NOT NULL`
+
+- **Decision**: Hibernate ajoute la colonne `author_reader_id` et sa clé étrangère, mais ne modifie jamais une colonne
+  existante : `author_id` resterait `NOT NULL` en production (PostgreSQL) et dans la base H2 fichier de `dev`. Un
+  `ApplicationRunner` dédié (`configuration/ConformityAuthorSchemaUpgrade`) exécute au démarrage
+  `ALTER TABLE record_conformity_change ALTER COLUMN author_id DROP NOT NULL`, idempotent et accepté tel quel par
+  PostgreSQL et H2 2.x. Il s'exécute après la mise à jour du schéma par Hibernate (création de l'`EntityManagerFactory`),
+  journalise ce qu'il fait, et porte un commentaire : à supprimer quand un outil de migration sera introduit. Le test de
+  bout en bout (profil `test`, H2 en mémoire, table créée par Hibernate déjà sans `NOT NULL`) vérifie seulement qu'il
+  ne casse pas le démarrage ; un test dédié crée la colonne `NOT NULL` puis vérifie que le runner la rend facultative.
+- **Rationale**: sans cela, le premier `PATCH` d'un kiosque échouerait en production (`500`, violation de contrainte).
+  Une étape SQL manuelle dans `deploy/INSTALL.md` risque d'être oubliée ; `deploy.sh` sauvegarde déjà la base avant
+  chaque déploiement.
+- **Retour arrière**: une version antérieure fonctionne sur le schéma modifié (elle renseigne toujours `author_id`),
+  mais sa lecture de l'historique échoue sur une ligne créée par un kiosque (`author_id` vide). Documenté dans la section
+  Rollback de `deploy/INSTALL.md`.
+- **Alternatives considered**: introduire Flyway maintenant — hors périmètre, demanderait une base de référence pour une
+  base de production existante ; étape SQL manuelle — voir ci-dessus.
+
+## R15. Remise du jeton au navigateur du kiosque
+
+- **Decision**: le lanceur du kiosque ouvre `https://<hôte>/reader.html#reader=<nom du lecteur>&token=<jeton>`, en lisant le
+  jeton dans le fichier de configuration du lecteur. `front/auth.js` lit le fragment au chargement, garde `reader` et
+  `token` dans `sessionStorage`, puis efface le fragment (`history.replaceState`). En mode kiosque, `apiFetch` envoie
+  `x-api-token`, n'envoie pas de cookie (`credentials: 'omit'`), ni d'en-tête CSRF ; sur `401` il affiche « Kiosque
+  désactivé, contactez un administrateur » au lieu de rediriger vers `login.html`.
+- **Rationale**: le fragment n'est jamais envoyé au serveur, donc jamais dans les journaux de Caddy ou du backend
+  (SC-006). `sessionStorage` plutôt que la mémoire seule : un rechargement de l'onglet (plantage, rechargement
+  automatique) ne perd pas le jeton alors que le fragment a été effacé ; il disparaît à la fermeture du navigateur, et
+  le lanceur le redonne au démarrage suivant. Le nom du lecteur est passé aussi, parce que la route
+  `GET /api/records/readers/{readerId}` l'attend et que le kiosque ne peut pas appeler `GET /api/readers` (R11).
+- **Changement de spec**: FR-005b disait « en mémoire uniquement » ; précisé en « pour la durée de l'onglet
+  (`sessionStorage`) ».
+- **Alternatives considered**: `localStorage` — copie durable du jeton, à resynchroniser après une rotation ; paramètre
+  de requête `?token=` — écrit dans les journaux d'accès ; route « quel lecteur suis-je ? » — une route de plus pour une
+  information que le lanceur connaît.
+
+## R16. Coût du contrôle du jeton à chaque appel
+
+- **Decision**: rien à ajouter. Le filtre fait une recherche par `apitoken` (colonne `unique`, donc indexée) à chaque
+  requête ; un kiosque interroge toutes les 500 ms, soit 2 recherches par seconde et par kiosque, à côté de la requête
+  des 10 dernières lectures qu'il déclenche de toute façon.
+- **Rationale**: R6 évitait la base à chaque appel pour les sessions utilisateur ; ici la recherche par clé unique est
+  négligeable face à l'objectif de 200 ms de la spec `005`.

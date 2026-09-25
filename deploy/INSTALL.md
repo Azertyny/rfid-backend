@@ -118,6 +118,29 @@ printed).
 Set each reader's target to `https://vegelink.apolog.fr/api/tags/scan`; its `x-api-token` does not change. A reader
 configured with `http://` gets `403 HTTPS required` and its scans are not recorded.
 
+## Line kiosk
+
+The touch screen of a line runs `reader.html` with that line's reader token: operators check boxes and change their
+conformity without logging in (spec 008, FR-005a/FR-005b). The token only opens that reader's last records and the
+conformity of its own records; changes made there are credited to the reader in the conformity history.
+
+Start the kiosk browser from a script that reads the token from the reader's config file, for example:
+
+```bash
+#!/bin/bash
+# Adapt the path and the key to the reader's real config file. URL-encode the reader name (space → %20).
+TOKEN=$(grep '^api_token=' /etc/rfid-reader/reader.conf | cut -d= -f2)
+exec chromium --kiosk --noerrdialogs \
+  "https://vegelink.apolog.fr/reader.html#reader=Ligne%201&token=${TOKEN}"
+```
+
+- Always `#`, never `?`: the part after `#` is never sent to the server, so the token stays out of every log. The page
+  keeps it for the tab's lifetime and removes it from the address bar.
+- Disabling the reader or rotating its token (`readers.html`) stops the kiosk: it shows "Kiosque désactivé". After a
+  rotation, update the reader's config file and restart the kiosk.
+- Caddy access logs are off (no `log` directive in `deploy/web/Caddyfile`). Reader devices and kiosks send their token in
+  the `x-api-token` request header: whoever enables access logs must drop that header from them (spec SC-006).
+
 ## Rollback
 
 1. Find the version to go back to: the *Previous version* line in the last deploy run's summary (a failed run also
@@ -128,6 +151,9 @@ The data is kept. One risk: the database schema follows the entities automatical
 version you roll back from changed an entity, the older version may not work with the altered schema. Then restore
 the backup `deploy.sh` took just before that deployment: the newest `vegelink-*-<older version>.dump` in the bucket
 (see [Restore](#restore)). Scans recorded since that backup are lost.
+
+Rolling back below the version that added the line kiosk breaks the conformity history of records changed at a kiosk
+(their author is a reader, not a user; spec 008, research R14). Restore the pre-deploy backup if that history matters.
 
 ## Backups
 

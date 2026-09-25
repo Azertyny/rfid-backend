@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.time.OffsetDateTime;
@@ -18,8 +19,11 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 import org.springframework.security.authentication.TestingAuthenticationToken;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.web.server.ResponseStatusException;
 
+import com.rfidback.entity.ReaderEntity;
 import com.rfidback.entity.RecordConformityChangeEntity;
 import com.rfidback.entity.RecordEntity;
 import com.rfidback.entity.Role;
@@ -31,10 +35,12 @@ import com.rfidback.repository.ReaderRepository;
 import com.rfidback.repository.RecordConformityChangeRepository;
 import com.rfidback.repository.RecordRepository;
 import com.rfidback.repository.UserRepository;
+import com.rfidback.security.ReaderAuthentication;
 
 class RecordServiceTest {
 
     private RecordRepository recordRepository;
+    private ReaderRepository readerRepository;
     private RecordConformityChangeRepository recordConformityChangeRepository;
     private UserRepository userRepository;
     private RecordService recordService;
@@ -45,7 +51,8 @@ class RecordServiceTest {
         recordRepository = Mockito.mock(RecordRepository.class);
         recordConformityChangeRepository = Mockito.mock(RecordConformityChangeRepository.class);
         userRepository = Mockito.mock(UserRepository.class);
-        recordService = new RecordService(recordRepository, Mockito.mock(ReaderRepository.class),
+        readerRepository = Mockito.mock(ReaderRepository.class);
+        recordService = new RecordService(recordRepository, readerRepository,
                 recordConformityChangeRepository, userRepository);
 
         SecurityContextHolder.getContext()
@@ -132,6 +139,89 @@ class RecordServiceTest {
         when(recordRepository.findById(id)).thenReturn(Optional.empty());
 
         assertThrows(RecordNotFoundException.class, () -> recordService.listConformityChanges(id));
+    }
+
+    // --- line kiosk with the reader token (spec 008 FR-005a, research R12-R13) ---
+
+    @Test
+    void list_asReader_otherName_throws403() {
+        actAsReader(reader("L1"));
+
+        ResponseStatusException exception = assertThrows(ResponseStatusException.class,
+                () -> recordService.listLatestRecordsForReader("L2"));
+
+        assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        verifyNoInteractions(readerRepository);
+    }
+
+    @Test
+    void update_asReader_ownRecord_writesChangeWithReaderAuthor() {
+        ReaderEntity lineOne = reader("L1");
+        actAsReader(lineOne);
+        RecordEntity record = lockedRecord(true, lineOne);
+
+        recordService.updateRecordConformity(record.getId(), false);
+
+        assertThat(record.isCompliant()).isFalse();
+        ArgumentCaptor<RecordConformityChangeEntity> change = ArgumentCaptor.forClass(RecordConformityChangeEntity.class);
+        verify(recordConformityChangeRepository).save(change.capture());
+        assertThat(change.getValue().getAuthorReader()).isSameAs(lineOne);
+        assertThat(change.getValue().getAuthor()).isNull();
+        verifyNoInteractions(userRepository);
+    }
+
+    @Test
+    void update_asReader_otherReadersRecord_throws403_writesNothing() {
+        actAsReader(reader("L1"));
+        RecordEntity record = lockedRecord(true, reader("L2"));
+
+        ResponseStatusException exception = assertThrows(ResponseStatusException.class,
+                () -> recordService.updateRecordConformity(record.getId(), false));
+
+        assertThat(exception.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(record.isCompliant()).isTrue();
+        verify(recordConformityChangeRepository, never()).save(any());
+    }
+
+    @Test
+    void update_asReader_sameValue_writesNothing() {
+        ReaderEntity lineOne = reader("L1");
+        actAsReader(lineOne);
+        RecordEntity record = lockedRecord(true, lineOne);
+
+        recordService.updateRecordConformity(record.getId(), true);
+
+        verify(recordConformityChangeRepository, never()).save(any());
+    }
+
+    @Test
+    void listConformityChanges_mapsReaderAuthor() {
+        RecordEntity record = RecordEntity.builder().id(UUID.randomUUID()).compliant(false).build();
+        when(recordRepository.findById(record.getId())).thenReturn(Optional.of(record));
+        RecordConformityChangeEntity change = RecordConformityChangeEntity.builder().record(record)
+                .previousCompliant(true).newCompliant(false).authorReader(reader("L1"))
+                .changedAt(OffsetDateTime.parse("2024-01-15T09:31:00Z")).build();
+        when(recordConformityChangeRepository.findAllByRecordOrderByChangedAtAsc(record)).thenReturn(List.of(change));
+
+        ConformityChange result = recordService.listConformityChanges(record.getId()).getChanges().get(0);
+
+        assertThat(result.getAuthorType()).isEqualTo(ConformityChange.AuthorTypeEnum.READER);
+        assertThat(result.getAuthorReaderUid()).isEqualTo("L1");
+        assertThat(result.getAuthorUsername()).isNull();
+    }
+
+    private static ReaderEntity reader(String name) {
+        return ReaderEntity.builder().id(UUID.randomUUID()).name(name).build();
+    }
+
+    private static void actAsReader(ReaderEntity reader) {
+        SecurityContextHolder.getContext().setAuthentication(new ReaderAuthentication(reader));
+    }
+
+    private RecordEntity lockedRecord(boolean compliant, ReaderEntity reader) {
+        RecordEntity record = RecordEntity.builder().id(UUID.randomUUID()).compliant(compliant).reader(reader).build();
+        when(recordRepository.findWithLockById(record.getId())).thenReturn(Optional.of(record));
+        return record;
     }
 
     private static RecordConformityChangeEntity change(RecordEntity record, boolean previous, boolean next,

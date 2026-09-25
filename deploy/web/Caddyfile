@@ -13,6 +13,9 @@ http://{$SITE_ADDRESS} {
 	}
 }
 
+# No access log on purpose: reader devices and line kiosks send their token in the x-api-token request header
+# (spec 008, SC-006). If a `log` directive is ever added, drop that header, e.g.
+#   log { format filter { wrap json; fields { request>headers>X-Api-Token delete } } }
 {$SITE_ADDRESS} {
 	encode gzip
 
