@@ -1,11 +1,14 @@
 package com.rfidback.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -222,6 +225,8 @@ class RecordApiTest {
                 .andExpect(jsonPath("$.changes[0].previousIsCompliant").value(true))
                 .andExpect(jsonPath("$.changes[0].newIsCompliant").value(false))
                 .andExpect(jsonPath("$.changes[0].authorUsername").value("record-op"))
+                .andExpect(jsonPath("$.changes[0].authorType").value("USER"))
+                .andExpect(content().string(not(containsString("authorReaderUid"))))
                 .andExpect(jsonPath("$.changes[0].changedAt").isNotEmpty())
                 .andExpect(jsonPath("$.changes[1].previousIsCompliant").value(false))
                 .andExpect(jsonPath("$.changes[1].newIsCompliant").value(true));

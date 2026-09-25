@@ -457,9 +457,14 @@ paths:
   /records/readers/{readerId}:
     get:
       summary: List latest records for a reader
-      description: Retrieve the 10 most recent records for the specified reader uid.
+      description: >
+        Last 10 records of the reader. Opérateur or Administrateur session, or the token of this reader (line kiosk);
+        another reader's token gets 403.
       operationId: listLatestRecordsForReader
       tags: [Record]
+      security:
+        - SessionCookie: []
+        - ReaderApiToken: []
       parameters:
         - in: path
           name: readerId
@@ -483,11 +488,16 @@ paths:
     patch:
       summary: Update record conformity
       description: >
-        Sets the record's compliance to the given value. If the value differs from the current one, the change is
-        recorded in the record's compliance history with the logged-in user as author, and duplicate scans no longer
-        change the record. If it is the current value, nothing is written (idempotent).
+        Sets the record's compliance to the given value. Opérateur or Administrateur session (with X-XSRF-TOKEN), or
+        the token of the record's reader (line kiosk, no CSRF header); another reader's token gets 403 and nothing
+        changes. If the value differs from the current one, the change is recorded in the record's compliance history
+        with the user or the reader as author, and duplicate scans no longer change the record. If it is the current
+        value, nothing is written (idempotent).
       operationId: updateRecordConformity
       tags: [Record]
+      security:
+        - SessionCookie: []
+        - ReaderApiToken: []
       parameters:
         - in: path
           name: recordId
@@ -1334,10 +1344,19 @@ components:
           type: boolean
           description: Compliance after the change
           example: false
+        authorType:
+          type: string
+          enum: [USER, READER]
+          description: USER for a logged-in user, READER for a change made at the line kiosk with the reader token
+          example: USER
         authorUsername:
           type: string
-          description: Username of the user who made the change
+          description: Username of the user who made the change. Only when authorType is USER.
           example: operateur1
+        authorReaderUid:
+          type: string
+          description: Uid of the reader whose kiosk made the change. Only when authorType is READER.
+          example: Ligne 1
         changedAt:
           type: string
           format: date-time
@@ -1346,7 +1365,7 @@ components:
       required:
         - previousIsCompliant
         - newIsCompliant
-        - authorUsername
+        - authorType
         - changedAt
 
     ConformityChangesList:
@@ -1525,4 +1544,6 @@ components:
       type: apiKey
       in: header
       name: x-api-token
-      description: API token assigned to the reader during its registration
+      description: >
+        API token of a reader. Authenticates the reader device on POST /tags/scan and the line kiosk on
+        GET /records/readers/{its uid} and PATCH /records/{id}/conformity for its own records.

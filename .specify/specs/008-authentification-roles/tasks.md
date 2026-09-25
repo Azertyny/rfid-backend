@@ -235,3 +235,95 @@ Task: "front/users.html"
 
 - [X] T042 Omit the `apitoken` key entirely (not just `null`) from `GET /api/readers` responses for Opérateurs, scoped to the `Reader` model only (a global `spring.jackson.default-property-inclusion: non_null` would also drop other null fields such as `pickerId`), and make `src/test/java/com/rfidback/security/ReaderTokenVisibilityTest.java` assert the key is absent per FR-006 (partial)
 - [X] T043 Review the bootstrap-username-already-taken guard in `src/main/java/com/rfidback/security/BootstrapAdminRunner.java` (skips creation and logs an error): either keep it and describe it as an edge case in spec/research R7, or remove it along with `doesNothing_whenBootstrapUsernameIsAlreadyTaken` in `BootstrapAdminRunnerTest` per plan: research R7 (unrequested)
+
+---
+
+# Amendment 2026-09-25: line kiosk with the reader token
+
+**Input**: [plan.md § Amendment 2026-09-25](plan.md#amendment-2026-09-25-line-kiosk-with-the-reader-token), research
+R11-R16, [data-model.md § Amendment](data-model.md#amendment-2026-09-25-kiosk-with-the-reader-token),
+[contracts/openapi-kiosk.yaml](contracts/openapi-kiosk.yaml), [contracts/front-auth.md § Kiosk mode](contracts/front-auth.md),
+[quickstart.md § 8](quickstart.md#8-line-kiosk-with-the-reader-token-amendment-2026-09-25).
+
+**Story**: all of it serves **US2** (Accès selon le rôle), scenarios 6-7, FR-005a, FR-005b, SC-006, and spec `005`
+FR-004 / US2 scenario 7. **Tests**: included, written first (same rule as above).
+
+**Traps to keep in mind**:
+- `ReaderAuthentication.getName()` is the `ReaderEntity`'s `toString()`, not a username: `RecordService` must test
+  `instanceof ReaderAuthentication` **before** calling `currentUsername()`.
+- The reader's public id in URLs is its `name` (`Reader.uid` in the API), not its UUID.
+- Kiosk requests carry no CSRF header: never add `.with(csrf())` to kiosk requests in tests (it would hide a missing
+  CSRF exemption), and remember `CLAUDE.md`'s warning about `csrf()` swapping the shared CSRF repository.
+
+## Phase 8: Setup (contract)
+
+- [X] T044 Merge [contracts/openapi-kiosk.yaml](contracts/openapi-kiosk.yaml) into `src/main/resources/openapi/api.yaml`: on `GET /records/readers/{readerId}` (`operationId: listLatestRecordsForReader`) and `PATCH /records/{recordId}/conformity` (`updateRecordConformity`) add `security: [ {SessionCookie: []}, {ReaderApiToken: []} ]` and replace their `description` with the contract's; in `components.schemas.ConformityChange` add `authorType` (enum `USER`, `READER`, required) and `authorReaderUid` (string), remove `authorUsername` from `required` and update its description; update `components.securitySchemes.ReaderApiToken.description` as in the contract. Run `mvn generate-sources` and check that `com.rfidback.generated.model.ConformityChange` now has `setAuthorType(ConformityChange.AuthorTypeEnum)` and `setAuthorReaderUid(String)`
+- [X] T045 In `src/main/java/com/rfidback/service/RecordService.java` `toConformityChange`, set `authorType` to `USER` for every change (all existing rows have a user author; T052 adds `READER`), and in `src/test/java/com/rfidback/controller/RecordApiTest.java` `history_afterTwoChanges_returnsThemOldestFirst` also assert `$.changes[0].authorType == "USER"`. `mvn clean test -Dtest='RecordApiTest,RecordServiceTest'` must stay green
+
+**Checkpoint**: contract generated, build green, behaviour unchanged.
+
+---
+
+## Phase 9: Foundational (history author can be a reader)
+
+**⚠️ Blocks Phase 10**: the kiosk `PATCH` writes a change without a user author.
+
+- [X] T046 [P] Create `src/test/java/com/rfidback/configuration/ConformityAuthorSchemaUpgradeTest.java` (plain JUnit, no Spring context): open an in-memory H2 `DriverManagerDataSource` (`jdbc:h2:mem:schema-upgrade-<random>;DB_CLOSE_DELAY=-1`), `create table record_conformity_change (id uuid primary key, author_id uuid not null)`, run `new ConformityAuthorSchemaUpgrade(new JdbcTemplate(dataSource)).run(null)`, then assert `insert into record_conformity_change (id, author_id) values (random_uuid(), null)` succeeds; run the upgrade a second time and assert it does not throw (idempotent, research R14). Must fail to compile until T048
+- [X] T047 [P] In `src/main/java/com/rfidback/entity/RecordConformityChangeEntity.java`: `author` becomes `@ManyToOne(fetch = LAZY)` + `@JoinColumn(name = "author_id")` (no `optional = false`, no `nullable = false`); add `@ManyToOne(fetch = FetchType.LAZY) @JoinColumn(name = "author_reader_id") private ReaderEntity authorReader;`; add a `@PrePersist void checkSingleAuthor()` throwing `IllegalStateException("A conformity change has exactly one author: a user or a reader")` unless exactly one of `author` / `authorReader` is non-null. Update the class comment: author is the logged-in user or, at the line kiosk, the reader (spec 008 FR-005a, research R13). No change to `RecordConformityChangeRepository` or to `TagService` (FR-006 check `existsByRecord` is author-agnostic)
+- [X] T048 Create `src/main/java/com/rfidback/configuration/ConformityAuthorSchemaUpgrade.java`: `@Component` implementing `ApplicationRunner`, constructor-injected `JdbcTemplate`; `run` executes `ALTER TABLE record_conformity_change ALTER COLUMN author_id DROP NOT NULL` and logs at INFO `"record_conformity_change.author_id is nullable (spec 008, kiosk conformity changes)"`. Class comment: `ddl-auto: update` never relaxes an existing NOT NULL (research R14); remove this class once a migration tool (Flyway/Liquibase) manages the schema. Let an SQL failure propagate (startup must fail loudly rather than answer 500 on the first kiosk change). T046 must pass; `mvn clean test` green (the `test` profile uses `create-drop`, where the statement is a harmless no-op)
+
+**Checkpoint**: a conformity change can be stored with a reader as author; existing databases are upgraded at startup.
+
+---
+
+## Phase 10: User Story 2 — Kiosk access with the reader token (Priority: P1)
+
+**Goal**: `reader.html` on a line kiosk lists that line's records and changes their conformity with the reader's token, with no login; the token opens nothing else; changes are credited to the reader.
+
+**Independent Test**: [quickstart.md § 8](quickstart.md#8-line-kiosk-with-the-reader-token-amendment-2026-09-25) curl table and history check.
+
+### Tests for the kiosk ⚠️ (write first, must fail)
+
+- [X] T049 [P] [US2] In `src/test/java/com/rfidback/security/AccessMatrixSecurityTest.java` add a parameterized test `readerToken_onOtherRoutes_returns403(Route route)` over the same route list (extract the list into a `static List<Route> routes()` used by both `matrix()` and the new source), skipping `GET /api/records/readers/*`, `PATCH /api/records/*/conformity` (covered by T050) and `/actuator/health` (outside `/api/**`, stays public). Each request carries `x-api-token` of a reader saved in `@BeforeEach` through `ReaderRepository` (unique name `"Matrix kiosk " + UUID.randomUUID()`), a JSON body when the route has one, **no** `csrf()` and **no** `user(...)`; expect `403`. Add `readerToken_unknown_returns401` (`GET /api/pickers` with `x-api-token: unknown-token` → `401`)
+- [X] T050 [P] [US2] Create `src/test/java/com/rfidback/security/KioskReaderTokenSecurityTest.java` (`@SpringBootTest @AutoConfigureMockMvc @ActiveProfiles("test") @Transactional`, like `ReaderScanSecurityTest`): two readers `Kiosk L1` / `Kiosk L2` and one record each (build `TagEntity` + `RecordEntity` through their repositories, as `RecordApiTest.saveRecord` does). No `csrf()` anywhere. Cases: `list_ownReader_returns200WithoutSession` (`GET /api/records/readers/Kiosk L1` → `200`, `Set-Cookie` absent); `list_otherReader_returns403`; `list_unknownReaderName_returns403`; `patch_ownRecord_returns204AndCreditsReader` (then the saved `RecordConformityChangeEntity` has `authorReader` = L1 and `author` null, and `GET /api/records/{id}/conformity-history` as `user("admin").roles("ADMINISTRATEUR")` returns `authorType == "READER"`, `authorReaderUid == "Kiosk L1"`, no `authorUsername`); `patch_otherReadersRecord_returns403AndChangesNothing` (record compliance unchanged, no change row); `patch_unknownRecord_returns404`; `disabledReader_returns401` (set `active=false`, `saveAndFlush`); `operatorSession_stillWorks_withoutToken` (`GET /api/records/readers/Kiosk L2` with `user("op").roles("OPERATEUR")` → `200`, proving the user chain is untouched)
+- [X] T051 [P] [US2] In `src/test/java/com/rfidback/service/RecordServiceTest.java` add, with `SecurityContextHolder` set to `new ReaderAuthentication(readerL1)` (a `ReaderEntity` with id and name `"L1"`): `list_asReader_otherName_throws403` (`ResponseStatusException` with `HttpStatus.FORBIDDEN`, `readerRepository` never queried); `update_asReader_ownRecord_writesChangeWithReaderAuthor` (captured change: `authorReader` = readerL1, `author` null, `userRepository` never called); `update_asReader_otherReadersRecord_throws403_writesNothing`; `update_asReader_sameValue_writesNothing` (idempotence unchanged); `listConformityChanges_mapsReaderAuthor` (`authorType` `READER`, `authorReaderUid` `"L1"`, `authorUsername` null). Keep the `ReaderRepository` mock in a field so the first case can `verifyNoInteractions` it
+
+### Implementation for the kiosk
+
+- [X] T052 [US2] In `src/main/java/com/rfidback/service/RecordService.java` (research R12): add `private static ReaderEntity currentReader()` returning the principal when the authentication is a `ReaderAuthentication`, else `null`. `listLatestRecordsForReader`: when `currentReader()` is non-null and `!reader.getName().equals(readerUid)`, throw `new ResponseStatusException(HttpStatus.FORBIDDEN, "A reader token only gives access to its own reader")` before any repository call. `updateRecordConformity`: after `findWithLockById` (404 first) and **before** the idempotence check, if the caller is a reader and `!record.getReader().getId().equals(reader.getId())`, throw the same `403`; when writing the change, set `authorReader(reader)` for a reader and keep today's `author(userRepository.findByUsername(...))` path for users (never call `currentUsername()` for a reader). `toConformityChange`: `READER` + `authorReaderUid(change.getAuthorReader().getName())` when `authorReader` is set, else `USER` + `authorUsername`. T051 must pass
+- [X] T053 [US2] In `src/main/java/com/rfidback/security/ReaderApiTokenAuthenticationFilter.java` remove the `protectedEndpoint` matcher and the early `filterChain.doFilter` for other paths: the filter now authenticates every request it sees, and the chains' `securityMatcher`s decide where it runs (research R11). Update the class comment accordingly. `ReaderScanSecurityTest` must stay green
+- [X] T054 [US2] In `src/main/java/com/rfidback/configuration/SecurityConfig.java` (research R11): add `kioskSecurityFilterChain` `@Bean @Order(2)` with `securityMatcher(new AndRequestMatcher(path(null, "/api/**"), new RequestHeaderRequestMatcher("x-api-token")))`, `cors(withDefaults())`, `csrf` disabled, `STATELESS` sessions, `requestCache` disabled, the same `ReaderApiTokenAuthenticationFilter` added before `UsernamePasswordAuthenticationFilter`, rules `OPTIONS /**` permitAll, `GET /api/records/readers/*` and `PATCH /api/records/*/conformity` `authenticated()`, `anyRequest().denyAll()`, entry point `HttpStatusEntryPoint(UNAUTHORIZED)`, `formLogin`/`httpBasic`/`logout` disabled. Move `userSecurityFilterChain` to `@Order(3)`. Update the comment above the chains: readers authenticate with their token on `/api/tags/scan` and, for the line kiosk, on their own records; users hold a session. T049 and T050 must pass; run `mvn clean test -Dtest='*Security*,RecordApiTest,RecordServiceTest'`
+- [X] T055 [P] [US2] In `front/auth.js` add kiosk mode per [contracts/front-auth.md § Kiosk mode](contracts/front-auth.md): at load, parse `location.hash` with `URLSearchParams`; if both `reader` and `token` are present store them in `sessionStorage` (`kioskReader`, `kioskToken`, each access in `try/catch`); if the hash had either key, remove it with `history.replaceState(null, '', location.pathname + location.search)`. Add `isKioskMode()`, `kioskReader()`, `showKioskUnavailable()` (full-page dark message "Kiosque désactivé, contactez un administrateur", no link to login). In `apiFetch`, when in kiosk mode: set header `x-api-token`, use `credentials: 'omit'`, skip `X-XSRF-TOKEN`, and on `401` call `showKioskUnavailable()` instead of `redirectToLogin()`. Nothing else changes for normal pages
+- [X] T056 [US2] In `front/reader.html` `window.onload`: if `isKioskMode()`, call `selectReader({ uid: kioskReader() })` directly (no `requireRole`, no `loadReaders`); otherwise keep today's `requireRole('ADMINISTRATEUR', 'OPERATEUR')` + `loadReaders()`. In `fetchRecords`, stop polling (clear the intervals started in `startApp`) once `showKioskUnavailable()` has replaced the page, so a disabled kiosk does not keep calling the API every 500 ms
+
+**Checkpoint**: quickstart § 8 passes by curl and in the browser.
+
+---
+
+## Phase 11: Polish (amendment)
+
+- [X] T057 [P] In `deploy/INSTALL.md` add a section `## Line kiosk` after `## Readers`: what the kiosk is (`reader.html` with the line reader's token, no login), the launcher example of research R15 (read the token from the reader's config file, `chromium --kiosk --noerrdialogs "https://vegelink.apolog.fr/reader.html#reader=<URL-encoded reader name>&token=<token>"`), that the URL must use `#` never `?`, that rotating or disabling the reader stops the kiosk until its config file is updated and the kiosk restarted, and that the kiosk can only view and change its own line; also state that Caddy access logs are off, and that anyone enabling them must exclude the `x-api-token` request header (reader devices and kiosks send their token in it; spec SC-006). In `deploy/web/Caddyfile`, add a comment above the `{$SITE_ADDRESS}` site block saying the same (no `log` directive on purpose; if added, drop `x-api-token` from the logged request headers, e.g. with a `log` + `format filter` that deletes `request>headers>X-Api-Token`). In `## Rollback` add: rolling back below this version breaks the conformity-history view for records changed at a kiosk (author is a reader, research R14); restore the pre-deploy backup if that matters
+- [X] T058 [P] Update `CLAUDE.md` § "Security: two kinds of callers" → three chains: reader devices on `POST /api/tags/scan`; the line kiosk (`@Order(2)`, any `/api/**` request carrying `x-api-token`, only `GET /api/records/readers/{own uid}` and `PATCH /api/records/{id}/conformity` on own records, checked in `RecordService`; conformity changes then credited to the reader); users `@Order(3)`. In § Persistence mention `ConformityAuthorSchemaUpgrade` as the one startup schema fix alongside `ddl-auto: update`
+- [X] T059 [P] Mark the delivered items: in `.specify/specs/005-consultation-lectures-conformite/spec.md` replace the four "à livrer" markers added on 2026-09-25 with "Livré" plus the evidence (`RecordService`, `SecurityConfig` kiosk chain, `KioskReaderTokenSecurityTest`); in `.specify/specs/008-authentification-roles/spec.md` extend SC-001's sentence to add the kiosk reader-token profile (a fourth profile, already named in US2's Independent Test) and state it is covered by `AccessMatrixSecurityTest` and `KioskReaderTokenSecurityTest`
+- [X] T060 Run `mvn clean install` (all green), then walk through [quickstart.md § 8](quickstart.md#8-line-kiosk-with-the-reader-token-amendment-2026-09-25) including the "schema upgrade on an existing database" check against a copy of `data/rfidbackdb.mv.db` created by the previous version
+
+---
+
+## Amendment: dependencies and parallel work
+
+- **Phase 8 → Phase 9 → Phase 10 → Phase 11.** T045 needs T044's generated model; T052 needs T047 (`authorReader`) and T044 (`AuthorTypeEnum.READER`).
+- **Inside Phase 9**: T046 and T047 in parallel, then T048.
+- **Inside Phase 10**: tests T049, T050, T051 in parallel (three files), all failing first. Then T052 (service), T053 then T054 (the chain relies on the filter no longer filtering by path; same package boundary, do in order). T055 in parallel with T052-T054 (front only); T056 after T055.
+- **Phase 11**: T057, T058, T059 in parallel; T060 last.
+
+```text
+# Parallel example, Phase 10 tests:
+T049 AccessMatrixSecurityTest (reader token → 403 elsewhere)
+T050 KioskReaderTokenSecurityTest (own line 200/204, other line 403, disabled 401)
+T051 RecordServiceTest (own-reader checks, reader author)
+# then, while the backend is being written:
+T055 front/auth.js kiosk mode
+```
+
+**MVP of the amendment**: Phases 8-10 (T044-T056). Deploy together: Phase 9 alone is harmless, but Phase 10 without
+Phase 9 answers `500` on the first kiosk change in production.

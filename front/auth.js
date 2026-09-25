@@ -2,6 +2,62 @@
 
 const WRITE_METHODS = ['POST', 'PUT', 'PATCH', 'DELETE'];
 
+// --- Line kiosk (spec 008, FR-005b) ---
+// The kiosk launcher opens reader.html#reader=<reader uid>&token=<reader token>. The fragment never reaches the
+// server; it is kept for the tab's lifetime (sessionStorage, never localStorage) and removed from the address bar.
+const KIOSK_READER_KEY = 'kioskReader';
+const KIOSK_TOKEN_KEY = 'kioskToken';
+let kioskUnavailable = false;
+
+function sessionGet(key) {
+    try {
+        return window.sessionStorage.getItem(key);
+    } catch (e) {
+        return null;
+    }
+}
+
+(function readKioskFragment() {
+    const fragment = new URLSearchParams(window.location.hash.substring(1));
+    if (!fragment.has('reader') && !fragment.has('token')) {
+        return;
+    }
+    const reader = fragment.get('reader');
+    const token = fragment.get('token');
+    if (reader && token) {
+        try {
+            window.sessionStorage.setItem(KIOSK_READER_KEY, reader);
+            window.sessionStorage.setItem(KIOSK_TOKEN_KEY, token);
+        } catch (e) {
+            console.error('Kiosk mode unavailable: sessionStorage is blocked');
+        }
+    }
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+})();
+
+function isKioskMode() {
+    return Boolean(sessionGet(KIOSK_TOKEN_KEY));
+}
+
+function kioskReader() {
+    return sessionGet(KIOSK_READER_KEY);
+}
+
+function isKioskUnavailable() {
+    return kioskUnavailable;
+}
+
+// The reader was disabled or its token changed: nobody can log in from the kiosk, an Administrateur must act.
+function showKioskUnavailable() {
+    kioskUnavailable = true;
+    document.body.innerHTML =
+        '<div style="position:fixed;inset:0;background:#000;color:#fff;display:flex;flex-direction:column;' +
+        'align-items:center;justify-content:center;font-family:\'Segoe UI\',sans-serif;text-align:center">' +
+        '<h1 style="color:#ff4d4d;font-size:3rem;margin:0 0 20px">Kiosque désactivé</h1>' +
+        '<p style="font-size:1.5rem;color:#aaa">Contactez un administrateur.</p>' +
+        '</div>';
+}
+
 function getCookie(name) {
     const prefix = name + '=';
     const cookie = document.cookie.split('; ').find(entry => entry.startsWith(prefix));
@@ -13,13 +69,16 @@ function redirectToLogin() {
     window.location.href = 'login.html?next=' + encodeURIComponent(currentPage);
 }
 
-// fetch() against the API with the session cookie and the CSRF header.
+// fetch() against the API with the session cookie and the CSRF header, or in kiosk mode with the reader token only.
 // options.silent: on 403, return the response without alerting (for background polling).
 async function apiFetch(path, options = {}) {
     const { silent, ...fetchOptions } = options;
     const method = (fetchOptions.method || 'GET').toUpperCase();
     const headers = new Headers(fetchOptions.headers || {});
-    if (WRITE_METHODS.includes(method)) {
+    const kiosk = isKioskMode();
+    if (kiosk) {
+        headers.set('x-api-token', sessionGet(KIOSK_TOKEN_KEY));
+    } else if (WRITE_METHODS.includes(method)) {
         const csrfToken = getCookie('XSRF-TOKEN');
         if (csrfToken) {
             headers.set('X-XSRF-TOKEN', csrfToken);
@@ -30,11 +89,15 @@ async function apiFetch(path, options = {}) {
         ...fetchOptions,
         method,
         headers,
-        credentials: 'same-origin'
+        credentials: kiosk ? 'omit' : 'same-origin'
     });
 
     if (response.status === 401) {
-        redirectToLogin();
+        if (kiosk) {
+            showKioskUnavailable();
+        } else {
+            redirectToLogin();
+        }
     } else if (response.status === 403 && !silent) {
         alert('Accès refusé');
     }
