@@ -144,7 +144,7 @@ Not code, but required before the quickstart can pass; `INSTALL.md` lists them:
 
 - Rent the VPS; DNS record `vegelink.apolog.fr` → VPS.
 - Create the bucket (another provider), lifecycle 30 days, write-no-delete key and read-only key.
-- GitHub: `production` environment + secrets, backup secrets, packages public, branch protection on `dev`/`main`.
+- GitHub: `vege_prod` environment + secrets, backup secrets, packages public, branch protection on `dev`/`main`.
 - Reconfigure each reader's target URL to `https://vegelink.apolog.fr/api/tags/scan`.
 
 ## Complexity Tracking
