@@ -195,3 +195,26 @@ T009 PickerService.java → T010 PickerController.java            # sequential
 ## Phase 8: Convergence
 
 - [X] T028 Reject a blank `lastname` or `firstname` after trimming with `400` (`ResponseStatusException(HttpStatus.BAD_REQUEST, ...)`, same pattern as the sort check) in `createPicker` and `updatePicker` of `src/main/java/com/rfidback/service/PickerService.java`, before `ensureUniqueName`; add `PickerServiceTest` cases (`"   "` and `""` for each field, on create and update, `save` never called) and one `PickerApiTest` case (`POST /api/pickers` with `lastname` `"   "` → `400`) per FR-001 (partial)
+
+---
+
+## Phase 9: Terminologie de l'interface (FR-009, SC-005)
+
+**Goal**: the front calls pickers "Cueilleurs" / "cueilleur" everywhere. "Opérateur" is left only where it names the user role (spec `008`), and "Picker" no longer appears in displayed text (Clarifications 2026-09-25).
+
+**Scope**: displayed text only. Do not rename files (`pickers.html`), element ids (`pickerModal`, `pickerForm`, …), JS identifiers, API routes or backend code. Keep the `fa-users` icon. French capitalisation: a capital only at the start of a label or title ("Cueilleurs", "Liste des cueilleurs", "Nouveau cueilleur").
+
+**Independent Test**: T034 returns only `front/users.html:49`. Then log in as Administrateur, open each page, and check that the nav reads "Cueilleurs" and that the pickers page, its add/edit/delete modals and its empty state never say "Opérateur" or "Picker".
+
+- [X] T029 [P] In `front/pickers.html` change the displayed text only: `<title>` line 6 `Opérateurs - Admin` → `Cueilleurs - Admin`; nav link line 24 `Opérateurs` → `Cueilleurs`; heading line 47 `Liste des Opérateurs` → `Liste des cueilleurs`; button line 49 `Nouveau Picker` → `Nouveau cueilleur`; modal title line 84 and `openModal()` line 240 `Ajouter un Picker` → `Ajouter un cueilleur`; `editPicker()` line 249 `Modifier le Picker` → `Modifier le cueilleur`; delete confirmation line 123 `supprimer cet opérateur ?` → `supprimer ce cueilleur ?`; empty state line 164 `Aucun opérateur` → `Aucun cueilleur`
+- [X] T030 [P] In `front/buckets.html` change the nav link text line 24 `Opérateurs` → `Cueilleurs`, and the link text line 90 `<a href="pickers.html">Opérateurs</a>` → `<a href="pickers.html">Cueilleurs</a>`
+- [X] T031 [P] Change the nav link text `Opérateurs` → `Cueilleurs` inside the `<a href="pickers.html" …>` element of `front/index.html` (line 38), `front/tags.html` (line 30), `front/readers.html` (line 44) and `front/users.html` (line 24). Do **not** touch `front/users.html:49` ("Comptes Administrateur et Opérateur"), which names the user role
+- [X] T032 [P] In `front/reader.html` line 229 change the subtitle prefix `` `Picker: ...${…}` `` → `` `Cueilleur : ...${…}` `` (French spacing before the colon); leave the comment on line 228 and `record.pickerId` unchanged
+- [X] T033 In `.specify/specs/001-gestion-cueilleurs/spec.md` FR-009, replace "État actuel — …" with "Livré (tâches T029–T032)" and keep the decision text (depends on T029–T032)
+- [X] T034 Verify SC-005: run `grep -rnE "Op[ée]rateur|Picker" front/*.html front/*.js | grep -vE "OPERATEUR|role"`, then check each remaining hit by hand. The only displayed text left MUST name the user role (`front/users.html:49`, plus the role option and labels at lines 103 and 122, which the `OPERATEUR` filter hides); any other hit that shows up on screen is a leftover to fix. JS identifiers such as `editPicker`, `fetchPickers` and `pickerModal` do not count (depends on T029–T032)
+
+### Phase 9 dependencies
+
+- T029–T032 touch different files and can run in parallel. None of them depends on Phases 1–8.
+- T033 and T034 run after T029–T032.
+- No automated test covers `front/` (no build, no JS tests), so T034 plus the manual check are this phase's acceptance.
