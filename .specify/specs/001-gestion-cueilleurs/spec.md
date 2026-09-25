@@ -20,6 +20,10 @@
 - Q: Roughly how many pickers should this system be expected to handle, to set a concrete success criterion for the paginated listing? → A: Small (< 200) — fits a single-orchard/small-cooperative harvest operation.
 - Q: When a caller sends a `sort` value that isn't allowed (unknown field or bad direction), what should `GET /api/pickers` do? → A: Allow only `lastname`, `firstname`, `creationDate` with `asc`/`desc`; answer `400` to anything else.
 
+### Session 2026-09-25
+
+- Q: What single French label should the interface use everywhere for pickers (nav tab, page title, headings, modals, empty states, messages)? → A: "Cueilleurs / cueilleur" — "Opérateur" is reserved for the user role (spec `008`), and the English "Picker" is not shown in the UI.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Créer un cueilleur (Priority: P1)
@@ -93,6 +97,7 @@ Un administrateur supprime un cueilleur.
 - **FR-006**: État actuel — le système DOIT permettre la suppression d'un cueilleur par id, **sans** vérification ni avertissement préalable concernant un seau affecté. Evidence: `PickerService.java:107-110`. **Décision (Clarifications 2026-09-24)** : cible = rejeter la suppression avec `409` tant qu'au moins un seau (`BucketEntity.picker`) référence encore ce cueilleur ; l'appelant doit d'abord désaffecter tous ses seaux via `DELETE /api/buckets/{bucketId}/picker` (voir spec `006-gestion-seaux-affectation`).
 - **FR-007**: Le système DOIT répondre 404 (`PickerNotFoundException`) pour toute opération de lecture/mise à jour/suppression sur un id inconnu. Evidence: `PickerService.java:112-115`, `exception/PickerNotFoundException.java`.
 - **FR-008**: État actuel — le système ne DOIT imposer **aucune** authentification ni autorisation sur les routes `/api/pickers/**`. Evidence: `SecurityConfig.java:32-36` (seul `/api/tags/scan` est `authenticated()`). **Décision (Clarifications 2026-09-24)** : cet état est un écart à corriger, pas la cible. **Livré par la spec `008`** : session utilisateur, `GET /api/pickers/**` pour Opérateur et Administrateur, `POST`/`PUT`/`DELETE` pour Administrateur seul (`SecurityConfig.java:119-121`, `AccessMatrixSecurityTest`).
+- **FR-009**: Livré (tâches T029–T032) — l'interface désignait auparavant les cueilleurs par « Opérateurs » (navigation, titre, en-tête, état vide, confirmation de suppression) et par « Picker » (bouton, modale, sous-titre de `reader.html`), alors que « Opérateur » est le nom d'un rôle utilisateur (spec `008`). **Décision (Clarifications 2026-09-25)** : cible = l'interface DOIT nommer cette entité « Cueilleurs » / « cueilleur » partout (navigation, titres, modales, états vides, messages) ; « Opérateur » DOIT désigner uniquement le rôle utilisateur et « Picker » ne DOIT pas apparaître dans les textes affichés. Les identifiants techniques (`pickers.html`, `/api/pickers`, code) restent inchangés.
 
 ### Key Entities
 
@@ -107,12 +112,13 @@ Un administrateur supprime un cueilleur.
 - **SC-002** (observé) : une tentative de doublon (même nom/prénom, casse ignorée) est systématiquement rejetée avec `409`.
 - **SC-003** : le comportement de ce module est protégé contre les régressions par des tests automatisés : `src/test/java/com/rfidback/service/PickerServiceTest.java` (règles du service) et `src/test/java/com/rfidback/controller/PickerApiTest.java` (codes HTTP de bout en bout). Les droits d'accès sont couverts par `AccessMatrixSecurityTest` (spec `008`).
 - **SC-004** (résolu, Clarifications 2026-09-24) : le système DOIT rester correct et réactif pour un volume de moins de 200 cueilleurs (échelle "petite exploitation / petite coopérative"). Une page contient au plus 100 cueilleurs (`size` > 100 ou `page` < 0 → `400`) ; le tableau de bord parcourt les pages de 100 (`front/index.html`, `fetchPickersInfo`) au lieu de l'ancien appel `size=500`, qui échouait en `500`.
+- **SC-005** (vérifié, Clarifications 2026-09-25) : aucun texte affiché par `front/` ne désigne un cueilleur par « Opérateur » ou « Picker » ; les seules occurrences affichées d'« Opérateur » concernent le rôle utilisateur (`users.html` : sous-titre, liste déroulante et libellés des rôles ; spec `008`).
 
 ## Assumptions
 
 - Le champ `sort` de l'API est actuellement inopérant ; il doit être implémenté (Clarifications 2026-09-24) plutôt que retiré de l'API, limité à `lastname`/`firstname`/`creationDate` avec rejet `400` du reste.
 - L'absence d'authentification sur ce module était un écart à corriger (Clarifications 2026-09-24) ; elle est corrigée par la spec `008`.
-- "Cueilleur" et "Picker" désignent la même entité (terminologie FR côté doc/front, EN côté code).
+- "Cueilleur" et "Picker" désignent la même entité (terminologie FR côté doc/front, EN côté code). "Opérateur" n'en est pas un synonyme : c'est un rôle utilisateur (spec `008`), anciennement utilisé à tort comme libellé de la page des cueilleurs (Clarifications 2026-09-25).
 
 ## Drift vs `doc/`
 
