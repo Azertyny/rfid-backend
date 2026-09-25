@@ -176,25 +176,41 @@
 
         // --- PHASE 2 : APP RUNTIME ---
 
+        let intervals = [];
+
         function startApp() {
             // Horloge
-            setInterval(() => {
+            intervals.push(setInterval(() => {
                 document.getElementById('clock').innerText = new Date().toLocaleTimeString('fr-FR');
-            }, 1000);
+            }, 1000));
 
             // Premier fetch immédiat
             fetchRecords();
             // Polling régulier
-            setInterval(fetchRecords, CONFIG.POLLING_INTERVAL);
+            intervals.push(setInterval(fetchRecords, CONFIG.POLLING_INTERVAL));
+        }
+
+        function stopApp() {
+            intervals.forEach(clearInterval);
+            intervals = [];
         }
 
         async function fetchRecords() {
             if (!CURRENT_READER.uid) return;
+            // Kiosk whose reader was disabled: the page was replaced, stop calling the API every 500 ms.
+            if (isKioskUnavailable()) {
+                stopApp();
+                return;
+            }
 
             try {
                 // GET /records/readers/{readerId}
                 // Attention: le readerId dans l'URL est bien l'UID du lecteur
                 const response = await apiFetch(`/records/readers/${encodeURIComponent(CURRENT_READER.uid)}`, { silent: true });
+                if (isKioskUnavailable()) {
+                    stopApp();
+                    return;
+                }
 
                 if (!response.ok) throw new Error(`API: ${response.status}`);
                 const data = await response.json();
@@ -283,6 +299,11 @@
 
         // Démarrage : Charge la liste des lecteurs
         window.onload = async () => {
+            // Line kiosk: the reader comes from the launcher, no login and no reader selection (spec 008, FR-005b).
+            if (isKioskMode()) {
+                selectReader({ uid: kioskReader() });
+                return;
+            }
             await requireRole('ADMINISTRATEUR', 'OPERATEUR');
             loadReaders();
         };

@@ -1,0 +1,57 @@
+# Changes to merge into src/main/resources/openapi/api.yaml (spec 008 amendment 2026-09-25, FR-005a).
+# Only the parts that change are shown.
+
+paths:
+  /records/readers/{readerId}:
+    get:
+      # Add: both schemes are accepted. A reader token only opens its own reader (readerId = its uid), else 403.
+      security:
+        - SessionCookie: []
+        - ReaderApiToken: []
+      description: >
+        Last 10 records of the reader. Opérateur or Administrateur session, or the token of this reader (line kiosk);
+        another reader's token gets 403.
+      # responses: unchanged (200, 401, 403, 404, 500)
+
+  /records/{recordId}/conformity:
+    patch:
+      security:
+        - SessionCookie: []
+        - ReaderApiToken: []
+      description: >
+        Sets the record's compliance. Opérateur or Administrateur session (with X-XSRF-TOKEN), or the token of the
+        record's reader (line kiosk, no CSRF header); another reader's token gets 403 and nothing changes. The history
+        entry's author is the user or the reader.
+      # responses: unchanged (204, 400, 401, 403, 404, 500)
+
+components:
+  schemas:
+    ConformityChange:
+      type: object
+      properties:
+        previousIsCompliant: { type: boolean, description: Compliance before the change, example: true }
+        newIsCompliant: { type: boolean, description: Compliance after the change, example: false }
+        authorType:
+          type: string
+          enum: [USER, READER]
+          description: USER for a logged-in user, READER for a change made at the line kiosk with the reader token
+          example: USER
+        authorUsername:
+          type: string
+          description: Username of the user who made the change. Only when authorType is USER.
+          example: operateur1
+        authorReaderUid:
+          type: string
+          description: Uid of the reader whose kiosk made the change. Only when authorType is READER.
+          example: Ligne 1
+        changedAt: { type: string, format: date-time, description: Date of the change, example: "2024-01-15T09:31:12Z" }
+      required:
+        - previousIsCompliant
+        - newIsCompliant
+        - authorType
+        - changedAt
+        # authorUsername is no longer required
+
+    # securitySchemes.ReaderApiToken: description becomes
+    # "API token of a reader. Authenticates the reader device on POST /tags/scan and the line kiosk on
+    #  GET /records/readers/{its uid} and PATCH /records/{id}/conformity for its own records."

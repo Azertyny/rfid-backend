@@ -81,3 +81,42 @@ cd deploy && docker compose --env-file .env up -d   # .env must define APP_BOOTS
 - Open `pickers.html` as Opérateur → "Accès refusé".
 - Log in as Administrateur → `users.html` lists `admin` and `op1`.
 - `grep -rn "x-api-token\|API_TOKEN" front/` → no result (SC-003).
+
+## 8. Line kiosk with the reader token (amendment 2026-09-25)
+
+Contracts: [openapi-kiosk.yaml](contracts/openapi-kiosk.yaml), [front-auth.md](contracts/front-auth.md#kiosk-mode-amendment-2026-09-25-spec-fr-005afr-005b-research-r15).
+Needs two readers, `Ligne 1` (token `T1`) and `Ligne 2` (token `T2`), and at least one record on each (send a scan with
+each token as in step 5).
+
+```zsh
+mvn clean test -Dtest='AccessMatrixSecurityTest,KioskReaderTokenSecurityTest,RecordServiceTest,ConformityAuthorSchemaUpgradeTest'
+```
+
+Expected: green. Then by hand (`<id1>` = a record of `Ligne 1`, `<id2>` = a record of `Ligne 2`):
+
+| Call (header `x-api-token`, no cookie, no CSRF header) | Expected |
+|---|---|
+| `T1`: `GET /api/records/readers/Ligne%201` | `200`, no `Set-Cookie` |
+| `T1`: `GET /api/records/readers/Ligne%202` | `403` |
+| `T1`: `PATCH /api/records/<id1>/conformity` `{"isCompliant":false}` | `204` |
+| `T1`: `PATCH /api/records/<id2>/conformity` `{"isCompliant":false}` | `403`, record `<id2>` unchanged |
+| `T1`: `GET /api/readers`, `GET /api/records/stats`, `POST /api/pickers` | `403` |
+| `wrong-token`: `GET /api/records/readers/Ligne%201` | `401` |
+| `T1` after disabling `Ligne 1` (`PATCH /api/readers/{id}` as admin) | `401` |
+| `T1`: `POST /api/tags/scan` (step 5) | unchanged (SC-004) |
+
+As admin, `GET /api/records/<id1>/conformity-history` → last entry has `"authorType":"READER"`, `"authorReaderUid":"Ligne 1"`,
+no `authorUsername`. Changes made by a logged-in Opérateur show `"authorType":"USER"`.
+
+**Schema upgrade on an existing database**: start the new version on a copy of the `dev` H2 file (or a prod dump) created
+by the previous version. Expected log line from the schema upgrade runner; then the kiosk `PATCH` above returns `204`
+(not `500`).
+
+**Browser** (through Caddy):
+
+- Open `https://<host>/reader.html#reader=Ligne%201&token=T1` → no login, no reader-selection screen, the `Ligne 1`
+  boxes appear; the address bar shows `reader.html` without the fragment; tapping a box toggles compliance.
+- Reload the tab → still works (`sessionStorage`). Close the browser and open `reader.html` without the fragment →
+  normal login flow.
+- Disable `Ligne 1` → the kiosk shows "Kiosque désactivé, contactez un administrateur".
+- Server access logs (`docker compose logs web backend`) contain no `T1` (SC-006); `grep -rn "T1" front/` → nothing.

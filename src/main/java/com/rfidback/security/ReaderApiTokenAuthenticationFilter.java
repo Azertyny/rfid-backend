@@ -4,7 +4,6 @@ import java.io.IOException;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -18,33 +17,19 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 
+// Authenticates every request it sees by the reader's x-api-token. Where it runs is decided by the securityMatcher of
+// the reader chains in SecurityConfig: reader scans, and the line kiosk's own records (spec 008, research R11).
 @Component
 @RequiredArgsConstructor
 public class ReaderApiTokenAuthenticationFilter extends OncePerRequestFilter {
 
     private static final String HEADER_NAME = "x-api-token";
-    private final RequestMatcher protectedEndpoint = request -> {
-        // normalize the request path by removing the context path (if any) and match
-        // exact endpoint
-        String expected = "/api/tags/scan";
-        String path = request.getRequestURI();
-        String context = request.getContextPath();
-        if (context != null && !context.isEmpty() && path.startsWith(context)) {
-            path = path.substring(context.length());
-        }
-        return expected.equals(path);
-    };
 
     private final ReaderRepository readerRepository;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
-
-        if (!protectedEndpoint.matches(request)) {
-            filterChain.doFilter(request, response);
-            return;
-        }
 
         String apiToken = request.getHeader(HEADER_NAME);
         if (!StringUtils.hasText(apiToken)) {

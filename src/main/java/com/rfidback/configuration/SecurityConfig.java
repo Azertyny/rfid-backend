@@ -37,6 +37,8 @@ import org.springframework.security.web.csrf.CsrfAuthenticationStrategy;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
 import org.springframework.security.web.session.HttpSessionEventPublisher;
+import org.springframework.security.web.util.matcher.AndRequestMatcher;
+import org.springframework.security.web.util.matcher.RequestHeaderRequestMatcher;
 import org.springframework.security.web.util.matcher.RequestMatcher;
 
 import com.rfidback.entity.Role;
@@ -50,14 +52,16 @@ import jakarta.servlet.DispatcherType;
 public class SecurityConfig {
 
     private static final String READER_SCAN_PATH = "/api/tags/scan";
+    private static final String READER_TOKEN_HEADER = "x-api-token";
     private static final String ADMINISTRATEUR = Role.ADMINISTRATEUR.name();
     private static final String OPERATEUR = Role.OPERATEUR.name();
 
     @Value("${app.security.allow-h2-console:false}")
     private boolean allowH2Console;
 
-    // Reader devices and human users are authenticated differently: readers send a stateless API token
-    // on /api/tags/scan only, users hold a server-side session protected by CSRF. Each gets its own chain.
+    // Readers and human users are authenticated differently. Readers send a stateless API token: reader devices on
+    // /api/tags/scan, and the line kiosk (reader.html on the line's touch screen) on its own reader's records.
+    // Users hold a server-side session protected by CSRF. Each gets its own chain.
     @Bean
     @Order(1)
     public SecurityFilterChain readerSecurityFilterChain(HttpSecurity http,
@@ -78,8 +82,36 @@ public class SecurityConfig {
         return http.build();
     }
 
+    // Any other /api/** request carrying x-api-token is the line kiosk (spec 008, FR-005a, research R11). It only
+    // opens the two routes of reader.html; RecordService limits them to the token's own reader. No session, no CSRF:
+    // a third-party page cannot make a browser send a custom header.
     @Bean
     @Order(2)
+    public SecurityFilterChain kioskSecurityFilterChain(HttpSecurity http,
+            ReaderApiTokenAuthenticationFilter readerApiTokenAuthenticationFilter) throws Exception {
+        http
+                .securityMatcher(new AndRequestMatcher(path(null, "/api/**"),
+                        new RequestHeaderRequestMatcher(READER_TOKEN_HEADER)))
+                .cors(withDefaults())
+                .csrf(csrf -> csrf.disable())
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .requestCache(cache -> cache.disable())
+                .addFilterBefore(readerApiTokenAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
+                .authorizeHttpRequests(auth -> auth
+                        .requestMatchers(path(HttpMethod.OPTIONS, "/**")).permitAll()
+                        .requestMatchers(path(HttpMethod.GET, "/api/records/readers/*")).authenticated()
+                        .requestMatchers(path(HttpMethod.PATCH, "/api/records/*/conformity")).authenticated()
+                        .anyRequest().denyAll())
+                .exceptionHandling(exceptions -> exceptions
+                        .authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
+                .formLogin(form -> form.disable())
+                .httpBasic(basic -> basic.disable())
+                .logout(logout -> logout.disable());
+        return http.build();
+    }
+
+    @Bean
+    @Order(3)
     public SecurityFilterChain userSecurityFilterChain(HttpSecurity http,
             CookieCsrfTokenRepository csrfTokenRepository,
             SecurityContextRepository securityContextRepository,
