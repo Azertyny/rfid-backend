@@ -32,7 +32,8 @@ jobs:
       - name: Lint deployment files
         if: always()
         run: |
-          shellcheck deploy/vps/*.sh
+          # Pinned image: same shellcheck version on CI and locally (the runner's apt version differs).
+          docker run --rm -v "$PWD":/mnt -w /mnt koalaman/shellcheck:v0.11.0 deploy/vps/*.sh
           docker compose -f deploy/compose.yml --env-file deploy/.env.example config -q
 
       - name: Test report

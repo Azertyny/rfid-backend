@@ -22,11 +22,13 @@ while [ $# -gt 0 ]; do
 done
 
 [ "$(id -u)" -eq 0 ] || die "run as root (sudo)"
-[ -n "$admin_user" ] && [ -n "$deploy_key" ] || die "usage: bootstrap.sh --admin-user <name> --deploy-key \"<pubkey>\""
+if [ -z "$admin_user" ] || [ -z "$deploy_key" ]; then
+    die "usage: bootstrap.sh --admin-user <name> --deploy-key \"<pubkey>\""
+fi
 # Key-only SSH is enforced below: refuse to go on unless the admin can already log in with a key and use sudo.
 admin_home=$(getent passwd "$admin_user" | cut -d: -f6) || die "user $admin_user does not exist"
 [ -s "$admin_home/.ssh/authorized_keys" ] || die "$admin_home/.ssh/authorized_keys is empty: add your key first"
-id -nG "$admin_user" | grep -qw sudo || die "$admin_user is not in group sudo"
+[[ " $(id -nG "$admin_user") " == *" sudo "* ]] || die "$admin_user is not in group sudo"
 echo "$deploy_key" | ssh-keygen -l -f - >/dev/null 2>&1 || die "--deploy-key is not a valid SSH public key"
 
 # shellcheck source=/dev/null

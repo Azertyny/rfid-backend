@@ -48,7 +48,13 @@ log "starting the application"
 compose start app || fail "start app"
 
 deadline=$((SECONDS + HEALTH_TIMEOUT))
-until compose exec -T web wget -qO- http://app:8080/actuator/health 2>/dev/null | grep -q '"UP"'; do
+# No "| grep -q" under pipefail: grep exits early and the writer's SIGPIPE would fail the check.
+app_healthy() {
+    local body
+    body=$(compose exec -T web wget -qO- http://app:8080/actuator/health 2>/dev/null) || return 1
+    [[ $body == *'"UP"'* ]]
+}
+until app_healthy; do
     [ "$SECONDS" -lt "$deadline" ] || fail "application not healthy after ${HEALTH_TIMEOUT}s"
     sleep 3
 done

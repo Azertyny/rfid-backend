@@ -21,7 +21,17 @@ db_running() {
     [ -n "$(docker ps -q --filter label=com.docker.compose.project=vegelink \
         --filter label=com.docker.compose.service=db --filter status=running)" ]
 }
-app_healthy() { compose exec -T web wget -qO- http://app:8080/actuator/health 2>/dev/null | grep -q '"UP"'; }
+# No "| grep -q" under pipefail: grep exits early and the writer's SIGPIPE would fail the check.
+app_healthy() {
+    local body
+    body=$(compose exec -T web wget -qO- http://app:8080/actuator/health 2>/dev/null) || return 1
+    [[ $body == *'"UP"'* ]]
+}
+site_healthy() {
+    local body
+    body=$(curl -fsS "https://$1/actuator/health" 2>/dev/null) || return 1
+    [[ $body == *'"UP"'* ]]
+}
 
 version=${1:-}
 [[ $version =~ ^main-[0-9a-f]{7}$ ]] || fail 2 "invalid version '${version}', expected main-<7-char sha>"
@@ -68,7 +78,7 @@ echo "$version" > "$STATE/current"
 log "waiting for the application to be healthy (up to ${HEALTH_TIMEOUT}s)"
 site=$(env_get SITE_ADDRESS)
 deadline=$((SECONDS + HEALTH_TIMEOUT))
-until app_healthy && curl -fsS "https://$site/actuator/health" 2>/dev/null | grep -q '"UP"'; do
+until app_healthy && site_healthy "$site"; do
     if [ "$SECONDS" -ge "$deadline" ]; then
         compose logs --tail 100 app
         fail 6 "$version is not healthy after ${HEALTH_TIMEOUT}s; redeploy $previous if needed"
