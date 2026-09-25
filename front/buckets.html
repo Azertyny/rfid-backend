@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Seaux - Admin</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>body { background-color: #f8f9fa; font-family: 'Segoe UI', sans-serif; }</style>
+</head>
+<body class="d-flex flex-column h-100">
+
+    <!-- MENU DE NAVIGATION HARMONISÉ -->
+    <nav class="navbar navbar-expand navbar-dark bg-dark shadow-sm">
+        <div class="container-fluid max-w-7xl mx-auto px-4">
+            <a class="navbar-brand fw-bold" href="index.html">
+                <i class="fas fa-wifi me-2"></i>RFID Admin
+            </a>
+            <div class="navbar-nav ms-auto gap-2">
+                <a href="index.html" class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-chart-line me-1"></i>Dashboard
+                </a>
+                <a href="pickers.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-users me-1"></i>Opérateurs
+                </a>
+                <a href="readers.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-satellite-dish me-1"></i>Lecteurs
+                </a>
+                <a href="tags.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-tags me-1"></i>Tags
+                </a>
+                <a href="buckets.html" data-admin-only class="btn btn-sm btn-primary">
+                    <i class="fas fa-fill me-1"></i>Seaux
+                </a>
+                <a href="users.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-user-shield me-1"></i>Utilisateurs
+                </a>
+                <button class="btn btn-sm btn-outline-light border-0" onclick="logout()">
+                    <i class="fas fa-sign-out-alt me-1"></i>Déconnexion
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid max-w-7xl mx-auto py-4">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <div>
+                <h3 class="fw-bold text-primary mb-0">Seaux</h3>
+                <small class="text-muted">Affectation des seaux aux cueilleurs</small>
+            </div>
+        </div>
+
+        <div class="alert alert-danger d-none" id="pageError"></div>
+
+        <div class="card shadow-sm border-0">
+            <div class="card-body p-0">
+                <table class="table table-hover table-striped mb-0 align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>N° du seau</th>
+                            <th>Tags</th>
+                            <th>Cueilleur</th>
+                            <th class="text-end">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="bucketsTable">
+                        <tr><td colspan="4" class="text-center py-4 text-muted">Chargement...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL AFFECTATION : étape 1 choix du cueilleur, étape 2 confirmation -->
+    <div class="modal fade" id="assignModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="assignTitle">Affecter le seau</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-danger d-none" id="assignError"></div>
+                    <div id="assignStep1">
+                        <div id="pickerChooser">
+                            <input type="text" class="form-control mb-2" id="pickerFilter" placeholder="Rechercher un cueilleur" autocomplete="off">
+                            <select id="pickerSelect" size="8" class="form-select"></select>
+                        </div>
+                        <div class="text-muted d-none" id="noPicker">
+                            Aucun cueilleur. Créez-en un dans la page <a href="pickers.html">Opérateurs</a>.
+                        </div>
+                    </div>
+                    <div id="assignStep2" class="d-none">
+                        <div class="alert mb-0" id="assignConfirmText"></div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn btn-light border d-none" id="assignBack" onclick="showAssignStep(1)">Retour</button>
+                    <button type="button" class="btn btn-primary" id="assignNext" onclick="showAssignStep(2)" disabled>Suivant</button>
+                    <button type="button" class="btn btn-primary d-none" id="assignConfirm" onclick="confirmAssign()">Valider</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL DÉSAFFECTATION -->
+    <div class="modal fade" id="unassignModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title"><i class="fas fa-user-minus me-2"></i>Désaffecter le seau</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-danger d-none" id="unassignError"></div>
+                    <p class="mb-0" id="unassignText"></p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-light border" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn btn-danger" id="unassignConfirm" onclick="confirmUnassign()">Confirmer</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="config.js"></script>
+    <script src="auth.js"></script>
+    <script>
+        const GONE_MESSAGE = "Ce seau ou ce cueilleur n'existe plus.";
+
+        let assignModal, unassignModal;
+        let buckets = [];
+        let pickers = []; // {id, label, lastname, firstname, search}
+        let selectedBucket = null;
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            assignModal = new bootstrap.Modal(document.getElementById('assignModal'));
+            unassignModal = new bootstrap.Modal(document.getElementById('unassignModal'));
+            document.getElementById('pickerFilter').addEventListener('input', renderPickerOptions);
+            const pickerSelect = document.getElementById('pickerSelect');
+            pickerSelect.addEventListener('change', () => {
+                document.getElementById('assignNext').disabled = !pickerSelect.value;
+            });
+            pickerSelect.addEventListener('dblclick', () => { if (pickerSelect.value) showAssignStep(2); });
+
+            await requireRole('ADMINISTRATEUR');
+            await Promise.all([loadBuckets(), loadPickers()]);
+        });
+
+        // --- LISTE DES SEAUX ---
+
+        async function loadBuckets() {
+            try {
+                const response = await apiFetch('/buckets');
+                if (!response.ok) { showPageError('Impossible de charger les seaux.'); return; }
+                const data = await response.json();
+                buckets = data.buckets || [];
+                renderBuckets();
+            } catch (e) { showPageError('Erreur réseau lors du chargement des seaux.'); }
+        }
+
+        function renderBuckets() {
+            const tbody = document.getElementById('bucketsTable');
+            if (!buckets.length) {
+                tbody.innerHTML = `<tr><td colspan="4" class="text-center py-4 text-muted">
+                    Aucun seau. Les seaux sont créés à l'enregistrement des <a href="tags.html">tags</a>.</td></tr>`;
+                return;
+            }
+            tbody.innerHTML = buckets.map((bucket, index) => {
+                const tags = bucket.tags || [];
+                const picker = bucket.picker;
+                const pickerCell = picker
+                    ? `<span class="fw-bold">${escapeHtml(pickerName(picker))}</span>`
+                        + (picker.comment ? `<br><small class="text-muted">${escapeHtml(picker.comment)}</small>` : '')
+                    : '<span class="text-muted">Non affecté</span>';
+                const assignButton = picker
+                    ? `<button class="btn btn-outline-secondary btn-sm me-1" onclick="openAssign(${index})"><i class="fas fa-exchange-alt me-1"></i>Réaffecter</button>`
+                    : `<button class="btn btn-outline-primary btn-sm me-1" onclick="openAssign(${index})"><i class="fas fa-user-plus me-1"></i>Affecter</button>`;
+                const unassignButton = picker
+                    ? `<button class="btn btn-outline-danger btn-sm" onclick="openUnassign(${index})"><i class="fas fa-user-minus me-1"></i>Désaffecter</button>`
+                    : '';
+                return `
+                    <tr>
+                        <td class="fw-bold">${escapeHtml(bucket.number)}</td>
+                        <td><span class="badge bg-secondary" title="${escapeHtml(tags.join(', '))}">${tags.length} tag${tags.length > 1 ? 's' : ''}</span></td>
+                        <td>${pickerCell}</td>
+                        <td class="text-end">${assignButton}${unassignButton}</td>
+                    </tr>`;
+            }).join('');
+        }
+
+        // --- LISTE DES CUEILLEURS (toutes les pages, l'API en sert au plus 100 par page) ---
+
+        async function loadPickers() {
+            const loaded = [];
+            try {
+                for (let page = 0; ; page++) {
+                    const response = await apiFetch(`/pickers?size=100&page=${page}&sort=lastname,asc`);
+                    if (!response.ok) { showPageError('Impossible de charger les cueilleurs.'); return; }
+                    const data = await response.json();
+                    (data.content || []).forEach(p => {
+                        const label = `${p.lastname} ${p.firstname}`;
+                        loaded.push({ id: p.id, label, lastname: p.lastname, firstname: p.firstname, search: normalize(label) });
+                    });
+                    if (!data.metadata || !data.metadata.hasNext) break;
+                }
+                pickers = loaded;
+            } catch (e) { showPageError('Erreur réseau lors du chargement des cueilleurs.'); }
+        }
+
+        function renderPickerOptions() {
+            const filter = normalize(document.getElementById('pickerFilter').value);
+            const current = selectedBucket && selectedBucket.picker;
+            const select = document.getElementById('pickerSelect');
+            // Names are unique (PickerService), and the bucket carries no picker id: match the current one by name.
+            select.innerHTML = pickers
+                .filter(p => !current || p.lastname !== current.lastname || p.firstname !== current.firstname)
+                .filter(p => p.search.includes(filter))
+                .map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.label)}</option>`)
+                .join('');
+            document.getElementById('assignNext').disabled = !select.value;
+        }
+
+        // --- AFFECTATION ---
+
+        function openAssign(index) {
+            selectedBucket = buckets[index];
+            document.getElementById('assignTitle').innerText = `Affecter le seau n°${selectedBucket.number}`;
+            document.getElementById('pickerFilter').value = '';
+            hideError('assignError');
+            const hasPickers = pickers.length > 0;
+            document.getElementById('pickerChooser').classList.toggle('d-none', !hasPickers);
+            document.getElementById('noPicker').classList.toggle('d-none', hasPickers);
+            renderPickerOptions();
+            showAssignStep(1);
+            assignModal.show();
+            if (hasPickers) setTimeout(() => document.getElementById('pickerFilter').focus(), 500);
+        }
+
+        function showAssignStep(step) {
+            const onConfirm = step === 2;
+            if (onConfirm) {
+                const chosen = pickers.find(p => p.id === document.getElementById('pickerSelect').value);
+                if (!chosen) return;
+                const current = selectedBucket.picker;
+                const confirmText = document.getElementById('assignConfirmText');
+                const target = `${chosen.firstname} ${chosen.lastname}`;
+                confirmText.className = 'alert mb-0 ' + (current ? 'alert-warning' : 'alert-info');
+                confirmText.innerText = current
+                    ? `Seau n°${selectedBucket.number} est actuellement affecté à ${pickerName(current)}, le réaffecter à ${target} ?`
+                    : `Affecter le seau n°${selectedBucket.number} à ${target} ?`;
+            }
+            document.getElementById('assignStep1').classList.toggle('d-none', onConfirm);
+            document.getElementById('assignStep2').classList.toggle('d-none', !onConfirm);
+            document.getElementById('assignNext').classList.toggle('d-none', onConfirm);
+            document.getElementById('assignBack').classList.toggle('d-none', !onConfirm);
+            document.getElementById('assignConfirm').classList.toggle('d-none', !onConfirm);
+        }
+
+        async function confirmAssign() {
+            const pickerId = document.getElementById('pickerSelect').value;
+            const button = document.getElementById('assignConfirm');
+            button.disabled = true;
+            try {
+                const response = await apiFetch(`/buckets/${selectedBucket.id}/picker`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pickerId })
+                });
+                if (response.ok) {
+                    assignModal.hide();
+                    await loadBuckets();
+                } else if (response.status === 404) {
+                    showError('assignError', GONE_MESSAGE);
+                    await Promise.all([loadBuckets(), loadPickers()]);
+                } else if (response.status !== 401 && response.status !== 403) {
+                    showError('assignError', "Erreur lors de l'affectation.");
+                }
+            } catch (e) {
+                showError('assignError', 'Erreur réseau.');
+            } finally {
+                button.disabled = false;
+            }
+        }
+
+        // --- DÉSAFFECTATION ---
+
+        function openUnassign(index) {
+            selectedBucket = buckets[index];
+            hideError('unassignError');
+            document.getElementById('unassignText').innerText =
+                `Retirer ${pickerName(selectedBucket.picker)} du seau n°${selectedBucket.number} ?`;
+            unassignModal.show();
+        }
+
+        async function confirmUnassign() {
+            const button = document.getElementById('unassignConfirm');
+            button.disabled = true;
+            try {
+                const response = await apiFetch(`/buckets/${selectedBucket.id}/picker`, { method: 'DELETE' });
+                if (response.ok) {
+                    unassignModal.hide();
+                    await loadBuckets();
+                } else if (response.status === 404) {
+                    showError('unassignError', GONE_MESSAGE);
+                    await loadBuckets();
+                } else if (response.status !== 401 && response.status !== 403) {
+                    showError('unassignError', 'Erreur lors de la désaffectation.');
+                }
+            } catch (e) {
+                showError('unassignError', 'Erreur réseau.');
+            } finally {
+                button.disabled = false;
+            }
+        }
+
+        // --- UTILITAIRES ---
+
+        function pickerName(picker) {
+            return `${picker.firstname} ${picker.lastname}`;
+        }
+
+        // Lower case, accents removed: "Hélène" matches "helene".
+        function normalize(text) {
+            return String(text ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
+        }
+
+        function showError(id, message) {
+            const element = document.getElementById(id);
+            element.innerText = message;
+            element.classList.remove('d-none');
+        }
+
+        function hideError(id) {
+            document.getElementById(id).classList.add('d-none');
+        }
+
+        function showPageError(message) { showError('pageError', message); }
+
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, c => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            })[c]);
+        }
+    </script>
+</body>
+</html>

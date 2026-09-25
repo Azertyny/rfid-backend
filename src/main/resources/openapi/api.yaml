@@ -541,7 +541,7 @@ paths:
           format: uuid
     put:
       summary: Assign a bucket to a picker
-      description: Assign an existing bucket to an existing picker.
+      description: Assign an existing bucket to an existing picker. If the bucket already has a picker, it is replaced (a picker may have several buckets).
       operationId: assignBucketToPicker
       tags: [Bucket]
       requestBody:
@@ -884,13 +884,16 @@ components:
               type: string
               format: date-time
               description: Picker creation date
-            bucketNumber:
-              type: integer
-              description: Bucket number currently assigned to the picker
-              example: 12
+            bucketNumbers:
+              type: array
+              description: Numbers of the buckets currently assigned to the picker, ascending; empty when none
+              items:
+                type: integer
+              example: [12, 47]
           required:
             - id
             - creationDate
+            - bucketNumbers
 
     PageMetadata:
       type: object
