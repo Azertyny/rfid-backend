@@ -119,6 +119,7 @@ Un Administrateur crée des comptes (identifiant, mot de passe initial, rôle), 
 | `POST /api/tags/buckets/{bucketNumber}` | — | — | ✓ | spec `003` |
 | Futures routes des lectures temporaires d'enregistrement (démarrer, consulter, effacer) | — | — | ✓ | spec `003` |
 | `/api/buckets/**` | — | — | ✓ | spec `006` |
+| `GET /api/records/{id}/conformity-history` | — | — | ✓ | spec `005` (FR-007), règle placée avant `/api/records/**` |
 | `/api/records/**` | — | ✓ | ✓ | spec `005` |
 | `/api/users/**` | — | — | ✓ | FR-008 |
 | `/actuator/health` | ✓ | ✓ | ✓ | supervision |
@@ -145,4 +146,4 @@ Un Administrateur crée des comptes (identifiant, mot de passe initial, rôle), 
 - Le front et l'API sont servis sur la même origine par `nginx` (`deploy/front/default.conf`) : un cookie de session fonctionne sans configuration CORS particulière.
 - Le passage en HTTPS est hors périmètre de cette itération (déploiement local sur le réseau de la ligne) ; c'est un risque connu, à traiter côté déploiement.
 - Les pages de gestion à créer ou compléter (enregistrement des tags `003`, affectation des seaux `006`, gestion des utilisateurs) appliqueront cette authentification, mais leur contenu fonctionnel relève de leurs propres specs, sauf la page de gestion des utilisateurs, minimale, incluse ici.
-- Hors périmètre : rotation/révocation des jetons de lecteur (`002`), historique des modifications de conformité (`005`), source de données du tableau de bord (`007`).
+- Hors périmètre : rotation/révocation des jetons de lecteur (`002`), source de données du tableau de bord (`007`). L'historique des modifications de conformité est livré par la spec `005`.

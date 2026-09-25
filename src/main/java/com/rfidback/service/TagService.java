@@ -32,6 +32,7 @@ import com.rfidback.generated.model.ScanTagRequest;
 import com.rfidback.generated.model.ScanTagResponse;
 import com.rfidback.generated.model.TagInOtherBucket;
 import com.rfidback.repository.BucketRepository;
+import com.rfidback.repository.RecordConformityChangeRepository;
 import com.rfidback.repository.RecordRepository;
 import com.rfidback.repository.TagRepository;
 
@@ -47,15 +48,18 @@ public class TagService {
     private final TagRepository tagRepository;
     private final RecordRepository recordRepository;
     private final BucketRepository bucketRepository;
+    private final RecordConformityChangeRepository recordConformityChangeRepository;
     private final Clock clock;
     private final Duration duplicateWindow;
 
     public TagService(TagRepository tagRepository, RecordRepository recordRepository,
-            BucketRepository bucketRepository, Clock clock,
+            BucketRepository bucketRepository, RecordConformityChangeRepository recordConformityChangeRepository,
+            Clock clock,
             @Value("${app.scan.duplicate-window}") Duration duplicateWindow) {
         this.tagRepository = tagRepository;
         this.recordRepository = recordRepository;
         this.bucketRepository = bucketRepository;
+        this.recordConformityChangeRepository = recordConformityChangeRepository;
         this.clock = clock;
         this.duplicateWindow = duplicateWindow;
     }
@@ -104,9 +108,12 @@ public class TagService {
                 cutoff);
     }
 
-    /** A repeated read creates no Record; a non-compliant one still lowers the Record (never raises it). */
+    /**
+     * A repeated read creates no Record; a non-compliant one still lowers the Record (never raises it), unless an
+     * Opérateur already changed it (spec 005, FR-006).
+     */
     private ScanTagResponse ignoreDuplicate(RecordEntity existing, boolean isCompliant) {
-        if (!isCompliant && existing.isCompliant()) {
+        if (!isCompliant && existing.isCompliant() && !recordConformityChangeRepository.existsByRecord(existing)) {
             existing.setCompliant(false);
             existing = recordRepository.saveAndFlush(existing);
         }

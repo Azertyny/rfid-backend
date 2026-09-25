@@ -96,7 +96,7 @@ No Constitution Check violations.
 
 - **Spec `004` itself**: FR-002's evidence and the "Relectures en rafale" edge case describe today's behavior. Once delivered, mark FR-002 and FR-008 delivered, and point SC-004 at [quickstart.md](quickstart.md) for how it's measured.
 - **Spec `003`**: note that a blank UID from an `ENREGISTREMENT` reader now gets `400` rather than "read ignored" (R1).
-- **Spec `005`, conformity history**: a non-compliant repeat changes `Record.compliant` (research R2). When `005` adds its history table, this change must be logged there too, with the reader as author.
+- ~~**Spec `005`, conformity history**: a non-compliant repeat changes `Record.compliant` (research R2). When `005` adds its history table, this change must be logged there too, with the reader as author.~~ **Superseded by spec `005` FR-006**: a duplicate scan no longer changes a record an Opérateur has changed, and the history only holds manual changes.
 - **Spec `005` / `007`**: counts and the dashboard now see one Record per pass instead of one per hardware read. Records created before this feature still hold the duplicates. No cleanup is planned; say so if one is wanted.
 - **Hard-coded scan path** (spec edge case): `ReaderApiTokenAuthenticationFilter` repeats the exact-path check that `SecurityConfig`'s `securityMatcher` already does. It is harmless while the filter only runs in its chain, so it's left alone here.
 - **Tooling**: `.specify/feature.json` pointed at `003-enregistrement-tags-seau` while the branch was `004`. It now points at `004`.

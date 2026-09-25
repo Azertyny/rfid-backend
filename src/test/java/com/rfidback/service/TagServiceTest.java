@@ -36,6 +36,7 @@ import com.rfidback.generated.model.RegisterTagsResponse;
 import com.rfidback.generated.model.ScanTagRequest;
 import com.rfidback.generated.model.ScanTagResponse;
 import com.rfidback.repository.BucketRepository;
+import com.rfidback.repository.RecordConformityChangeRepository;
 import com.rfidback.repository.RecordRepository;
 import com.rfidback.repository.TagRepository;
 
@@ -46,6 +47,7 @@ class TagServiceTest {
     private TagRepository tagRepository;
     private RecordRepository recordRepository;
     private BucketRepository bucketRepository;
+    private RecordConformityChangeRepository recordConformityChangeRepository;
     private Clock clock;
     private TagService tagService;
 
@@ -54,8 +56,10 @@ class TagServiceTest {
         tagRepository = Mockito.mock(TagRepository.class);
         recordRepository = Mockito.mock(RecordRepository.class);
         bucketRepository = Mockito.mock(BucketRepository.class);
+        recordConformityChangeRepository = Mockito.mock(RecordConformityChangeRepository.class);
         clock = Clock.fixed(Instant.parse("2024-01-15T09:30:00Z"), ZoneOffset.UTC);
-        tagService = new TagService(tagRepository, recordRepository, bucketRepository, clock, DUPLICATE_WINDOW);
+        tagService = new TagService(tagRepository, recordRepository, bucketRepository,
+                recordConformityChangeRepository, clock, DUPLICATE_WINDOW);
     }
 
     @Test
@@ -169,6 +173,7 @@ class TagServiceTest {
         ReaderEntity reader = scanReader();
         TagEntity tag = existingTag();
         RecordEntity record = recentRecord(reader, tag, true);
+        when(recordConformityChangeRepository.existsByRecord(record)).thenReturn(false);
         when(recordRepository.saveAndFlush(record)).thenReturn(record);
 
         ScanTagResponse response = tagService.registerScan(reader,
@@ -181,6 +186,33 @@ class TagServiceTest {
         assertEquals(false, response.getIsCompliant());
         assertEquals(OffsetDateTime.parse("2024-01-15T09:29:55Z"), response.getProcessedAt());
         assertEquals("Duplicate read ignored", response.getMessage());
+    }
+
+    @Test
+    void registerScan_nonCompliantRepeatOfChangedRecord_keepsIt() {
+        ReaderEntity reader = scanReader();
+        TagEntity tag = existingTag();
+        RecordEntity record = recentRecord(reader, tag, true);
+        when(recordConformityChangeRepository.existsByRecord(record)).thenReturn(true);
+
+        ScanTagResponse response = tagService.registerScan(reader,
+                new ScanTagRequest().uid(DUPLICATE_UID).isCompliant(false));
+
+        verify(recordRepository, never()).saveAndFlush(any(RecordEntity.class));
+        assertThat(record.isCompliant()).isTrue();
+        assertEquals(true, response.getIsCompliant());
+        assertEquals("Duplicate read ignored", response.getMessage());
+    }
+
+    @Test
+    void registerScan_compliantRepeat_skipsChangeLookup() {
+        ReaderEntity reader = scanReader();
+        TagEntity tag = existingTag();
+        recentRecord(reader, tag, true);
+
+        tagService.registerScan(reader, new ScanTagRequest().uid(DUPLICATE_UID).isCompliant(true));
+
+        verify(recordConformityChangeRepository, never()).existsByRecord(any());
     }
 
     @Test
@@ -227,8 +259,8 @@ class TagServiceTest {
 
     @Test
     void registerScan_zeroWindow_skipsDuplicateLookup() {
-        TagService withoutDeduplication = new TagService(tagRepository, recordRepository, bucketRepository, clock,
-                Duration.ZERO);
+        TagService withoutDeduplication = new TagService(tagRepository, recordRepository, bucketRepository,
+                recordConformityChangeRepository, clock, Duration.ZERO);
         ReaderEntity reader = scanReader();
         existingTag();
         stubNewRecordSave();
