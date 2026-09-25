@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -21,17 +22,20 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.domain.Sort.Order;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
+import com.rfidback.entity.BucketEntity;
 import com.rfidback.entity.PickerEntity;
 import com.rfidback.exception.PickerAlreadyExistsException;
 import com.rfidback.exception.PickerHasBucketsException;
 import com.rfidback.exception.PickerNotFoundException;
 import com.rfidback.generated.model.CreatePicker;
+import com.rfidback.generated.model.Picker;
 import com.rfidback.generated.model.UpdatePicker;
 import com.rfidback.repository.BucketRepository;
 import com.rfidback.repository.PickerRepository;
@@ -201,6 +205,61 @@ class PickerServiceTest {
         verify(pickerRepository, never()).findAll(any(Pageable.class));
     }
 
+    @Test
+    void listPickers_pickerWithTwoBuckets_returnsBothNumbersSorted() {
+        PickerEntity entity = picker("Dupont", "Jean");
+        when(pickerRepository.findAll(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(entity)));
+        when(bucketRepository.findAllByPickerIn(List.of(entity)))
+                .thenReturn(List.of(bucket(47, entity), bucket(12, entity)));
+
+        Picker picker = pickerService.listPickers(0, 20, null).getContent().get(0);
+
+        assertEquals(List.of(12, 47), picker.getBucketNumbers());
+    }
+
+    @Test
+    void listPickers_pickerWithoutBucket_returnsEmptyList() {
+        PickerEntity entity = picker("Dupont", "Jean");
+        when(pickerRepository.findAll(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(entity)));
+        when(bucketRepository.findAllByPickerIn(List.of(entity))).thenReturn(List.of());
+
+        Picker picker = pickerService.listPickers(0, 20, null).getContent().get(0);
+
+        assertEquals(List.of(), picker.getBucketNumbers());
+    }
+
+    @Test
+    void getPicker_twoBuckets_returnsBothNumbers() {
+        PickerEntity entity = picker("Dupont", "Jean");
+        when(pickerRepository.findById(entity.getId())).thenReturn(Optional.of(entity));
+        when(bucketRepository.findAllByPickerOrderByNumberAsc(entity))
+                .thenReturn(List.of(bucket(12, entity), bucket(47, entity)));
+
+        assertEquals(List.of(12, 47), pickerService.getPicker(entity.getId()).getBucketNumbers());
+    }
+
+    @Test
+    void getPicker_noBucket_returnsEmptyList() {
+        PickerEntity entity = picker("Dupont", "Jean");
+        when(pickerRepository.findById(entity.getId())).thenReturn(Optional.of(entity));
+        when(bucketRepository.findAllByPickerOrderByNumberAsc(entity)).thenReturn(List.of());
+
+        assertEquals(List.of(), pickerService.getPicker(entity.getId()).getBucketNumbers());
+    }
+
+    @Test
+    void updatePicker_returnsBucketNumbers() {
+        PickerEntity entity = picker("Dupont", "Jean");
+        when(pickerRepository.findById(entity.getId())).thenReturn(Optional.of(entity));
+        when(pickerRepository.save(any(PickerEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(bucketRepository.findAllByPickerOrderByNumberAsc(entity)).thenReturn(List.of(bucket(5, entity)));
+
+        Picker picker = pickerService.updatePicker(entity.getId(),
+                new UpdatePicker().lastname("Dupont").firstname("Jean"));
+
+        assertEquals(List.of(5), picker.getBucketNumbers());
+    }
+
     private Sort sortUsedFor(String sort) {
         when(pickerRepository.findAll(any(Pageable.class))).thenReturn(Page.empty());
         pickerService.listPickers(0, 20, sort);
@@ -216,5 +275,9 @@ class PickerServiceTest {
                 .firstname(firstname)
                 .creationDate(OffsetDateTime.now())
                 .build();
+    }
+
+    private BucketEntity bucket(int number, PickerEntity picker) {
+        return BucketEntity.builder().id(UUID.randomUUID()).number(number).picker(picker).build();
     }
 }

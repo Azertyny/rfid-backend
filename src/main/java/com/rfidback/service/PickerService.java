@@ -51,17 +51,20 @@ public class PickerService {
         Page<PickerEntity> pickerPage = pickerRepository.findAll(pageable);
 
         List<PickerEntity> pickerEntities = pickerPage.getContent();
-        Map<UUID, Integer> bucketNumberByPickerId = pickerEntities.isEmpty()
+        // A picker may hold several buckets (spec 006), so group the numbers instead of mapping one per picker.
+        Map<UUID, List<Integer>> bucketNumbersByPickerId = pickerEntities.isEmpty()
                 ? Map.of()
                 : bucketRepository.findAllByPickerIn(pickerEntities).stream()
                         .filter(bucket -> bucket.getPicker() != null)
-                        .collect(Collectors.toMap(bucket -> bucket.getPicker().getId(), BucketEntity::getNumber));
+                        .collect(Collectors.groupingBy(bucket -> bucket.getPicker().getId(),
+                                Collectors.mapping(BucketEntity::getNumber, Collectors.toList())));
 
         List<Picker> content = pickerEntities.stream()
                 .map(entity -> {
                     Picker picker = toPickerModel(entity);
-                    Integer bucketNumber = bucketNumberByPickerId.get(entity.getId());
-                    picker.setBucketNumber(bucketNumber);
+                    picker.setBucketNumbers(bucketNumbersByPickerId.getOrDefault(entity.getId(), List.of()).stream()
+                            .sorted()
+                            .toList());
                     return picker;
                 })
                 .toList();
@@ -90,14 +93,15 @@ public class PickerService {
                 .comment(extractComment(createPicker.getComment()))
                 .build();
 
-        return toPickerModel(pickerRepository.save(entity));
+        Picker picker = toPickerModel(pickerRepository.save(entity));
+        picker.setBucketNumbers(List.of());
+        return picker;
     }
 
     public Picker getPicker(UUID pickerId) {
         PickerEntity entity = loadPicker(pickerId);
         Picker picker = toPickerModel(entity);
-        bucketRepository.findByPicker(entity)
-                .ifPresent(bucket -> picker.setBucketNumber(bucket.getNumber()));
+        picker.setBucketNumbers(bucketNumbersOf(entity));
         return picker;
     }
 
@@ -112,7 +116,10 @@ public class PickerService {
         entity.setFirstname(firstname);
         entity.setComment(extractComment(updatePicker.getComment()));
 
-        return toPickerModel(pickerRepository.save(entity));
+        PickerEntity saved = pickerRepository.save(entity);
+        Picker picker = toPickerModel(saved);
+        picker.setBucketNumbers(bucketNumbersOf(saved));
+        return picker;
     }
 
     public void deletePicker(UUID pickerId) {
@@ -149,6 +156,12 @@ public class PickerService {
         return new ResponseStatusException(HttpStatus.BAD_REQUEST,
                 "Invalid sort '%s': expected field,asc|desc with field in lastname, firstname, creationDate"
                         .formatted(sort));
+    }
+
+    private List<Integer> bucketNumbersOf(PickerEntity entity) {
+        return bucketRepository.findAllByPickerOrderByNumberAsc(entity).stream()
+                .map(BucketEntity::getNumber)
+                .toList();
     }
 
     private PickerEntity loadPicker(UUID pickerId) {

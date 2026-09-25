@@ -63,7 +63,7 @@ entity "Reader" as reader {
 ' ===============================
 ' RELATIONS & CARDINALITÉS
 ' ===============================
-picker ||--o| bucket
+picker ||--o{ bucket
 tag }|--|| bucket
 picker ||--o{ record
 reader ||--o{ record
