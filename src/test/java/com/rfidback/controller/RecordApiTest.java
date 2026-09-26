@@ -46,6 +46,7 @@ import com.rfidback.repository.RecordConformityChangeRepository;
 import com.rfidback.repository.RecordRepository;
 import com.rfidback.repository.TagRepository;
 import com.rfidback.repository.UserRepository;
+import com.rfidback.support.ReferenceTagUids;
 
 /** HTTP-level checks of the /api/records routes (spec 005). */
 @SpringBootTest
@@ -114,6 +115,26 @@ class RecordApiTest {
             }
             previous = creationDate;
         }
+    }
+
+    @Test
+    void listLatest_flagsOffListTags_andOffListScanIsRecordedAsUsual() throws Exception {
+        String inList = ReferenceTagUids.nextInList();
+        String offList = ReferenceTagUids.offList();
+
+        scan(inList, true).andExpect(status().isOk());
+        // FR-006: same answer as for an in-list tag, with the verdict the reader sent.
+        scan(offList, false)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.uid").value(offList))
+                .andExpect(jsonPath("$.isCompliant").value(false))
+                .andExpect(jsonPath("$.processedAt").exists());
+
+        mockMvc.perform(get("/api/records/readers/{readerId}", READER_NAME).with(asOperator()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.records[?(@.tagUid == '%s')].tagOffList".formatted(inList)).value(false))
+                .andExpect(jsonPath("$.records[?(@.tagUid == '%s')].tagOffList".formatted(offList)).value(true))
+                .andExpect(jsonPath("$.records[?(@.tagUid == '%s')].isCompliant".formatted(offList)).value(false));
     }
 
     @Test

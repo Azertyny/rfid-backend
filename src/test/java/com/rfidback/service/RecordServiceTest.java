@@ -26,11 +26,13 @@ import org.springframework.web.server.ResponseStatusException;
 import com.rfidback.entity.ReaderEntity;
 import com.rfidback.entity.RecordConformityChangeEntity;
 import com.rfidback.entity.RecordEntity;
+import com.rfidback.entity.TagEntity;
 import com.rfidback.entity.Role;
 import com.rfidback.entity.UserEntity;
 import com.rfidback.exception.RecordNotFoundException;
 import com.rfidback.generated.model.ConformityChange;
 import com.rfidback.generated.model.ConformityChangesList;
+import com.rfidback.generated.model.RecordSummary;
 import com.rfidback.repository.ReaderRepository;
 import com.rfidback.repository.RecordConformityChangeRepository;
 import com.rfidback.repository.RecordRepository;
@@ -43,6 +45,7 @@ class RecordServiceTest {
     private ReaderRepository readerRepository;
     private RecordConformityChangeRepository recordConformityChangeRepository;
     private UserRepository userRepository;
+    private ReferenceTagList referenceTagList;
     private RecordService recordService;
     private UserEntity operator;
 
@@ -52,8 +55,9 @@ class RecordServiceTest {
         recordConformityChangeRepository = Mockito.mock(RecordConformityChangeRepository.class);
         userRepository = Mockito.mock(UserRepository.class);
         readerRepository = Mockito.mock(ReaderRepository.class);
+        referenceTagList = Mockito.mock(ReferenceTagList.class);
         recordService = new RecordService(recordRepository, readerRepository,
-                recordConformityChangeRepository, userRepository);
+                recordConformityChangeRepository, userRepository, referenceTagList);
 
         SecurityContextHolder.getContext()
                 .setAuthentication(new TestingAuthenticationToken("op1", null, "ROLE_OPERATEUR"));
@@ -141,6 +145,22 @@ class RecordServiceTest {
         assertThrows(RecordNotFoundException.class, () -> recordService.listConformityChanges(id));
     }
 
+    // --- tag off-list flag (spec 010, FR-008) ---
+
+    @Test
+    void list_flagsRecordsOfOffListTags() {
+        ReaderEntity lineOne = reader("L1");
+        when(readerRepository.findByName("L1")).thenReturn(Optional.of(lineOne));
+        when(recordRepository.findTop10ByReader_NameOrderByCreationDateDesc("L1")).thenReturn(List.of(
+                recordOf("OFF", lineOne), recordOf("IN", lineOne)));
+        when(referenceTagList.isOffList("OFF")).thenReturn(true);
+
+        List<RecordSummary> records = recordService.listLatestRecordsForReader("L1").getRecords();
+
+        assertThat(records).extracting(RecordSummary::getTagUid).containsExactly("OFF", "IN");
+        assertThat(records).extracting(RecordSummary::getTagOffList).containsExactly(true, false);
+    }
+
     // --- line kiosk with the reader token (spec 008 FR-005a, research R12-R13) ---
 
     @Test
@@ -208,6 +228,11 @@ class RecordServiceTest {
         assertThat(result.getAuthorType()).isEqualTo(ConformityChange.AuthorTypeEnum.READER);
         assertThat(result.getAuthorReaderUid()).isEqualTo("L1");
         assertThat(result.getAuthorUsername()).isNull();
+    }
+
+    private static RecordEntity recordOf(String tagUid, ReaderEntity reader) {
+        return RecordEntity.builder().id(UUID.randomUUID()).tag(TagEntity.builder().uid(tagUid).build())
+                .reader(reader).compliant(true).creationDate(OffsetDateTime.now()).build();
     }
 
     private static ReaderEntity reader(String name) {

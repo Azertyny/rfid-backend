@@ -59,12 +59,14 @@ public class RegistrationService {
     private final UserRepository userRepository;
     private final TagRepository tagRepository;
     private final TagService tagService;
+    private final ReferenceTagList referenceTagList;
     private final Clock clock;
     private final Duration sessionTimeout;
 
     public RegistrationService(RegistrationSessionRepository sessionRepository,
             RegistrationReadRepository readRepository, ReaderRepository readerRepository,
-            UserRepository userRepository, TagRepository tagRepository, TagService tagService, Clock clock,
+            UserRepository userRepository, TagRepository tagRepository, TagService tagService,
+            ReferenceTagList referenceTagList, Clock clock,
             @Value("${app.registration.session-timeout}") Duration sessionTimeout) {
         this.sessionRepository = sessionRepository;
         this.readRepository = readRepository;
@@ -72,6 +74,7 @@ public class RegistrationService {
         this.userRepository = userRepository;
         this.tagRepository = tagRepository;
         this.tagService = tagService;
+        this.referenceTagList = referenceTagList;
         this.clock = clock;
         this.sessionTimeout = sessionTimeout;
     }
@@ -178,7 +181,7 @@ public class RegistrationService {
             throw TagService.tooManyTags();
         }
         RegisterTagsResponse response = tagService.registerTagsForBucket(request.getBucketNumber(), uids,
-                Boolean.TRUE.equals(request.getMoveConfirmed()));
+                Boolean.TRUE.equals(request.getMoveConfirmed()), Boolean.TRUE.equals(request.getOffListConfirmed()));
         deleteSession(session);
         return response;
     }
@@ -233,7 +236,8 @@ public class RegistrationService {
         model.setStartedBy(session.getStartedBy().getUsername());
         model.setStartedAt(session.getStartedAt());
         model.setReads(reads.stream().map(read -> {
-            RegistrationRead readModel = new RegistrationRead(read.getUid(), read.getFirstReadAt());
+            RegistrationRead readModel = new RegistrationRead(read.getUid(), read.getFirstReadAt(),
+                    referenceTagList.isOffList(read.getUid()));
             readModel.setBucketNumber(bucketByUid.get(read.getUid()));
             return readModel;
         }).toList());

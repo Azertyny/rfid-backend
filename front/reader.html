@@ -69,6 +69,9 @@
         .defect .box-card { background: #FFD700; border-color: #FFD700; box-shadow: 0 0 40px rgba(255,215,0,0.4); }
         .defect .main-text { color: #000; }
         .defect .sub-text, .defect .timestamp { color: #333; }
+        /* Tag not in the reference list (spec 010): red frame and label, whatever the compliance */
+        .off-list .box-card { border-color: #dc3545; }
+        .off-list-badge { margin-top: 16px; padding: 6px 16px; border-radius: 6px; background: #dc3545; color: #fff; font-size: 1.4rem; font-weight: bold; letter-spacing: 0.1em; }
 
         /* Indicateurs */
         #status-indicator { position: fixed; bottom: 10px; right: 10px; font-size: 0.8rem; opacity: 0.5; }
@@ -237,7 +240,7 @@
 
             records.slice(0, 5).forEach(record => {
                 const el = document.createElement('div');
-                el.className = `box-container ${!record.isCompliant ? 'defect' : ''}`;
+                el.className = `box-container ${!record.isCompliant ? 'defect' : ''} ${record.tagOffList ? 'off-list' : ''}`;
                 
                 const timeStr = new Date(record.creationDate).toLocaleTimeString('fr-FR');
                 const title = record.tagUid || "TAG ???";
@@ -248,6 +251,7 @@
                     <div class="box-card">
                         <div class="status-icon">${record.isCompliant ? '✅' : '⚠️'}</div>
                         <div class="timestamp">${timeStr}</div>
+                        ${record.tagOffList ? '<div class="off-list-badge">HORS LISTE</div>' : ''}
                     </div>
                 `;
 
