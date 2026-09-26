@@ -20,6 +20,7 @@ import org.springframework.util.Assert;
 import org.springframework.util.StringUtils;
 import org.springframework.web.server.ResponseStatusException;
 
+import com.rfidback.entity.ActivityEntity;
 import com.rfidback.entity.BucketEntity;
 import com.rfidback.entity.PickerEntity;
 import com.rfidback.entity.ReaderEntity;
@@ -32,6 +33,7 @@ import com.rfidback.generated.model.ScanTagRequest;
 import com.rfidback.generated.model.ScanTagResponse;
 import com.rfidback.generated.model.TagInOtherBucket;
 import com.rfidback.repository.BucketRepository;
+import com.rfidback.repository.ReaderRepository;
 import com.rfidback.repository.RecordConformityChangeRepository;
 import com.rfidback.repository.RecordRepository;
 import com.rfidback.repository.TagRepository;
@@ -53,25 +55,31 @@ public class TagService {
     private final BucketRepository bucketRepository;
     private final RecordConformityChangeRepository recordConformityChangeRepository;
     private final ReferenceTagList referenceTagList;
+    private final ReaderRepository readerRepository;
+    private final LineActivityService lineActivityService;
     private final Clock clock;
     private final Duration duplicateWindow;
 
     public TagService(TagRepository tagRepository, RecordRepository recordRepository,
             BucketRepository bucketRepository, RecordConformityChangeRepository recordConformityChangeRepository,
-            ReferenceTagList referenceTagList, Clock clock,
+            ReferenceTagList referenceTagList, ReaderRepository readerRepository,
+            LineActivityService lineActivityService, Clock clock,
             @Value("${app.scan.duplicate-window}") Duration duplicateWindow) {
         this.tagRepository = tagRepository;
         this.recordRepository = recordRepository;
         this.bucketRepository = bucketRepository;
         this.recordConformityChangeRepository = recordConformityChangeRepository;
         this.referenceTagList = referenceTagList;
+        this.readerRepository = readerRepository;
+        this.lineActivityService = lineActivityService;
         this.clock = clock;
         this.duplicateWindow = duplicateWindow;
     }
 
     /**
      * A scan from a PRODUCTION reader. A tag not in the reference list is ignored before any database access: no Tag,
-     * no Record, and {@code isCompliant} true so the line raises no alert (spec 010 révision, FR-006).
+     * no Record, and {@code isCompliant} true so the line raises no alert (spec 010 révision, FR-006). The record
+     * carries the line's current activity at scan time, if any (spec 012, FR-014).
      */
     @Transactional
     public ScanTagResponse registerScan(ReaderEntity reader, ScanTagRequest scanTagRequest) {
@@ -103,6 +111,7 @@ public class TagService {
                 .tag(tag)
                 .reader(reader)
                 .picker(picker)
+                .activity(currentActivity(reader))
                 .compliant(isCompliant)
                 .build();
 
@@ -114,6 +123,16 @@ public class TagService {
         response.setProcessedAt(saved.getCreationDate());
         response.setMessage(saved.getComment());
         return response;
+    }
+
+    /**
+     * Read from the database, not from the reader authenticated at the start of the request: that one is detached
+     * and may predate a change of activity (spec 012, research R2). No lock, the scan never waits.
+     */
+    private ActivityEntity currentActivity(ReaderEntity reader) {
+        return readerRepository.findWithCurrentActivityById(reader.getId())
+                .map(lineActivityService::effectiveActivity)
+                .orElse(null);
     }
 
     /** FR-008: a Record of this tag by this reader within the duplicate window; a new tag has none. */

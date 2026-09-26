@@ -46,6 +46,9 @@
                 <a href="readers.html" data-admin-only class="btn btn-sm btn-primary">
                     <i class="fas fa-satellite-dish me-1"></i>Lecteurs
                 </a>
+                <a href="activities.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-seedling me-1"></i>Activités
+                </a>
                 <a href="tags.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
                     <i class="fas fa-tags me-1"></i>Tags
                 </a>
@@ -291,7 +294,7 @@
         // En mode enregistrement, les lectures servent à la page Tags et ne créent aucune lecture de conformité.
         async function switchMode(id, mode) {
             const warning = mode === 'ENREGISTREMENT'
-                ? "Les lectures de ce lecteur ne seront plus comptées en production : elles serviront à enregistrer des tags. Continuer ?"
+                ? "Les lectures de ce lecteur ne seront plus comptées en production : elles serviront à enregistrer des tags. Son activité en cours sera retirée. Continuer ?"
                 : "Le lecteur reprendra les lectures de production. Une session d'enregistrement en cours sera annulée. Continuer ?";
             if (!confirm(warning)) return;
             try {

@@ -13,6 +13,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import com.rfidback.entity.ActivityEntity;
 import com.rfidback.entity.ReaderEntity;
 import com.rfidback.entity.RecordEntity;
 import com.rfidback.entity.TagEntity;
@@ -21,9 +22,14 @@ import jakarta.persistence.LockModeType;
 
 public interface RecordRepository extends JpaRepository<RecordEntity, UUID> {
 
-    /** The 10 newest records of a reader, with their tag loaded in the same query (spec 005, SC-003). */
-    @EntityGraph(attributePaths = "tag")
+    /** The 10 newest records of a reader, with their tag and activity loaded in the same query (spec 005, SC-003). */
+    @EntityGraph(attributePaths = { "tag", "activity" })
     List<RecordEntity> findTop10ByReader_NameOrderByCreationDateDesc(String readerUid);
+
+    boolean existsByActivity(ActivityEntity activity);
+
+    /** Records of the line since {@code since} without an activity: the kiosk banner's count (spec 012, FR-009a). */
+    long countByReaderAndCreationDateGreaterThanEqualAndActivityIsNull(ReaderEntity reader, OffsetDateTime since);
 
     /**
      * The latest record of this tag by this reader created after {@code cutoff} (spec 004, FR-008). Row-locked, so an

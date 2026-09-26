@@ -10,8 +10,10 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.server.ResponseStatusException;
 
+import com.rfidback.exception.LinesLosingActivityException;
 import com.rfidback.exception.ReaderBusyException;
 import com.rfidback.exception.RegistrationNotConfirmedException;
+import com.rfidback.generated.model.LinesLosingActivity;
 import com.rfidback.generated.model.ReaderBusy;
 import com.rfidback.generated.model.TagsInOtherBuckets;
 
@@ -66,6 +68,14 @@ public class ApiExceptionHandler {
         body.setMessage(exception.getMessage());
         body.setStartedBy(exception.getStartedBy());
         body.setStartedAt(exception.getStartedAt());
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+    }
+
+    @ExceptionHandler(LinesLosingActivityException.class)
+    public ResponseEntity<LinesLosingActivity> handleLinesLosingActivity(LinesLosingActivityException exception) {
+        LinesLosingActivity body = new LinesLosingActivity();
+        body.setMessage(exception.getMessage());
+        body.setReaderUids(exception.getReaderUids());
         return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
     }
 }

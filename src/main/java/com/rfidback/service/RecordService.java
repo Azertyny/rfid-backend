@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import com.rfidback.entity.ActivityEntity;
 import com.rfidback.entity.PickerEntity;
 import com.rfidback.entity.ReaderEntity;
 import com.rfidback.entity.RecordConformityChangeEntity;
@@ -76,6 +77,11 @@ public class RecordService {
         }
         model.setIsCompliant(record.isCompliant());
         model.setCreationDate(record.getCreationDate());
+        ActivityEntity activity = record.getActivity();
+        if (activity != null) {
+            model.setActivityId(activity.getId());
+            model.setActivityName(activity.getName());
+        }
         return model;
     }
 

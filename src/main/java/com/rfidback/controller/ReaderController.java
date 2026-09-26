@@ -9,9 +9,12 @@ import org.springframework.stereotype.Service;
 
 import com.rfidback.generated.api.ReaderApiDelegate;
 import com.rfidback.generated.model.CreateReader;
+import com.rfidback.generated.model.LineActivity;
 import com.rfidback.generated.model.Reader;
 import com.rfidback.generated.model.ReadersList;
+import com.rfidback.generated.model.SetReaderActivities;
 import com.rfidback.generated.model.UpdateReader;
+import com.rfidback.service.ActivityService;
 import com.rfidback.service.ReaderService;
 
 @Service
@@ -19,6 +22,9 @@ public class ReaderController implements ReaderApiDelegate {
 
     @Autowired
     private ReaderService readerService;
+
+    @Autowired
+    private ActivityService activityService;
 
     @Override
     public ResponseEntity<Reader> createReader(CreateReader createReader) throws Exception {
@@ -39,6 +45,12 @@ public class ReaderController implements ReaderApiDelegate {
     @Override
     public ResponseEntity<Reader> rotateReaderToken(UUID readerId) throws Exception {
         return ResponseEntity.ok(readerService.rotateToken(readerId));
+    }
+
+    @Override
+    public ResponseEntity<LineActivity> setReaderActivities(UUID readerId, SetReaderActivities setReaderActivities)
+            throws Exception {
+        return ResponseEntity.ok(activityService.setReaderActivities(readerId, setReaderActivities));
     }
 
 }

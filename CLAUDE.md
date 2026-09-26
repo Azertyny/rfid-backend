@@ -12,6 +12,8 @@ RFID Back — a Spring Boot 3.5.7 (Java 21) backend for tracking fruit-harvest l
 - **Tag** — RFID tag attached to a bucket
 - **Reader** (lecteur) — RFID reader device that scans tags; authenticates via its own token, not a user login
 - **Record** — a scan event linking tag/bucket/picker, carries a conformity flag that can be revised later
+- **Activity** (activité) — product type a production line runs; the Administrateur associates activities with lines,
+  the line's kiosk chooses the current one, and each record carries the one current at scan time (spec 012)
 
 ## Commands
 
@@ -66,9 +68,10 @@ Standard layered structure under `src/main/java/com/rfidback/`:
   registration is disabled on purpose, so it only runs inside the reader chains.
 - **Line kiosk** (`@Order(2)`, any other `/api/**` request carrying `x-api-token`): `reader.html` on a line's touch
   screen, with that reader's token (given by the kiosk launcher in the URL fragment, `front/auth.js`). Stateless, no
-  CSRF; only `GET /api/records/readers/{uid}` and `PATCH /api/records/{id}/conformity`, everything else `403`.
-  `RecordService` limits both to the token's own reader and credits conformity changes to the reader
-  (`record_conformity_change.author_reader_id`).
+  CSRF; only `GET /api/records/readers/{uid}`, `PATCH /api/records/{id}/conformity` and `GET/PUT
+  /api/lines/{uid}/current-activity` (spec 012), everything else `403`.
+  `RecordService` and `LineActivityService` limit them to the token's own reader and credit conformity and activity
+  changes to the reader (`record_conformity_change.author_reader_id`, `line_activity_change.author_reader_id`).
 - **Human users** (`@Order(3)`, everything else): server-side session opened by `POST /api/auth/login`
   (`AuthService`), with two roles `ADMINISTRATEUR` / `OPERATEUR` (`entity/Role`, users in table `app_user`). The
   route × role matrix lives in this chain's `authorizeHttpRequests` (spec `.specify/specs/008-*/spec.md`); unlisted
@@ -89,7 +92,9 @@ constraint: the one such change so far (`author_id` nullable, spec 008 kiosk) is
 `data_upgrade` so they run once (`configuration/OffListTagPurge`: deleted the tags not in the reference list stored
 before spec 010's revision).
 `APP_STATION_TIME_ZONE` (default `Europe/Paris`) is the zone of the dashboard's days and hours (`GET /api/records/stats`,
-spec 007); startup fails for a zone whose offset is not a whole number of hours. The reference tag list (spec 010) is
+spec 007) and of the midnight reset of every line's current activity (spec 012: `service/ActivityDailyReset` at midnight
+and at startup, plus the rule on read in `service/LineActivityService`, so a choice from a previous day is never
+stamped on a record); startup fails for a zone whose offset is not a whole number of hours. The reference tag list (spec 010) is
 `src/main/resources/tags/rfid_tag_list.csv`, loaded at startup by `service/ReferenceTagList` (startup fails on a missing,
 empty or malformed file); a uid is matched on its last 12 characters only (the readers send `E28069150000…` where
 the file has `E28069152000…`). A uid not in it is never stored: its scans and registration reads are ignored

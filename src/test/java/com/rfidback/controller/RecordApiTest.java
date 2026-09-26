@@ -1,6 +1,8 @@
 package com.rfidback.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.nullValue;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.not;
@@ -36,12 +38,14 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.rfidback.entity.ActivityEntity;
 import com.rfidback.entity.ReaderEntity;
 import com.rfidback.entity.RecordConformityChangeEntity;
 import com.rfidback.entity.RecordEntity;
 import com.rfidback.entity.Role;
 import com.rfidback.entity.TagEntity;
 import com.rfidback.entity.UserEntity;
+import com.rfidback.repository.ActivityRepository;
 import com.rfidback.repository.ReaderRepository;
 import com.rfidback.repository.RecordConformityChangeRepository;
 import com.rfidback.repository.RecordRepository;
@@ -78,6 +82,9 @@ class RecordApiTest {
 
     @Autowired
     private UserRepository userRepository;
+
+    @Autowired
+    private ActivityRepository activityRepository;
 
     @Autowired
     private PasswordEncoder passwordEncoder;
@@ -296,6 +303,23 @@ class RecordApiTest {
 
     private List<RecordConformityChangeEntity> changesOf(RecordEntity record) {
         return recordConformityChangeRepository.findAllByRecordOrderByChangedAtAsc(record);
+    }
+
+    @Test
+    void listLatest_showsEachRecordsActivity() throws Exception {
+        ActivityEntity fraise = activityRepository.save(ActivityEntity.builder().name("Record fraise").build());
+        saveRecord("ACTIVITY-NONE", true);
+        RecordEntity withActivity = saveRecord("ACTIVITY-FRAISE", true);
+        withActivity.setActivity(fraise);
+        recordRepository.saveAndFlush(withActivity);
+
+        mockMvc.perform(get("/api/records/readers/{readerId}", READER_NAME).with(asOperator()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.records[?(@.tagUid == 'ACTIVITY-FRAISE')].activityId")
+                        .value(fraise.getId().toString()))
+                .andExpect(jsonPath("$.records[?(@.tagUid == 'ACTIVITY-FRAISE')].activityName").value("Record fraise"))
+                .andExpect(jsonPath("$.records[?(@.tagUid == 'ACTIVITY-NONE')].activityId").value(contains(nullValue())))
+                .andExpect(jsonPath("$.records[?(@.tagUid == 'ACTIVITY-NONE')].activityName").value(contains(nullValue())));
     }
 
     private RecordEntity saveRecord(String tagUid, boolean compliant) {
