@@ -88,7 +88,8 @@ constraint: the one such change so far (`author_id` nullable, spec 008 kiosk) is
 `APP_STATION_TIME_ZONE` (default `Europe/Paris`) is the zone of the dashboard's days and hours (`GET /api/records/stats`,
 spec 007); startup fails for a zone whose offset is not a whole number of hours. The reference tag list (spec 010) is
 `src/main/resources/tags/rfid_tag_list.csv`, loaded at startup by `service/ReferenceTagList` (startup fails on a missing,
-empty or malformed file); tags not in it are flagged "hors liste", and changing it means shipping a new version. Config is split across
+empty or malformed file); a uid is matched on its last 12 characters only (the readers send `E28069150000…` where
+the file has `E28069152000…`), tags not in it are flagged "hors liste", and changing it means shipping a new version. Config is split across
 `application.yml` (activates the `dev` profile) plus `application-dev.yml` / `application-prod.yml`.
 
 ### Deployment

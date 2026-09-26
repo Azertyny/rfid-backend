@@ -243,6 +243,23 @@ class RegistrationApiTest {
     }
 
     @Test
+    void readInTheFormTheReadersSend_isNotFlaggedAndSavesWithoutConfirmation() throws Exception {
+        UserEntity admin = admin();
+        ReaderEntity reader = registrationReader();
+        String asReaderSends = ReferenceTagUids.nextInListAsReaderSends();
+        String sessionId = startedSessionId(admin, reader);
+
+        scan(reader, asReaderSends).andExpect(status().isOk());
+
+        mockMvc.perform(get(SESSIONS + "/" + sessionId).with(as(admin)))
+                .andExpect(jsonPath("$.reads[0].uid").value(asReaderSends))
+                .andExpect(jsonPath("$.reads[0].offList").value(false));
+        save(admin, sessionId, Map.of("bucketNumber", randomBucketNumber()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.registeredCount").value(1));
+    }
+
+    @Test
     void save_withoutReads_returns400() throws Exception {
         UserEntity admin = admin();
         String sessionId = startedSessionId(admin, registrationReader());

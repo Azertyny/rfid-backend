@@ -30,6 +30,15 @@ public final class ReferenceTagUids {
         return Holder.UIDS.get(index);
     }
 
+    /**
+     * An unused in-list uid as the production readers send it: {@code 0000} where the file has {@code 2000} in
+     * characters 9 to 12 (spec 010, FR-002).
+     */
+    public static String nextInListAsReaderSends() {
+        String uid = nextInList();
+        return uid.substring(0, 8) + "0000" + uid.substring(12);
+    }
+
     public static String offList() {
         return "OFF-LIST-" + UUID.randomUUID();
     }

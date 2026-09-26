@@ -44,7 +44,8 @@ The log shows the list loaded (5,008 UIDs). In-list UID used below: `E2806915200
 
 3. **Production scan (User Story 2)** — scan the off-list UID with the production reader token: `200`, same response
    shape as for an in-list tag. Open `reader.html` for that reader: the box shows "hors liste", the compliance stays
-   the one the reader sent.
+   the one the reader sent. Then scan `E2806915000040287477C993` (line 1469 in the form the production readers send it,
+   `0000` instead of `2000`): its box must **not** show "hors liste" (FR-002, SC-003).
 
 4. **Off-list tags (User Story 3)** — in `tags.html`, open "Tags hors liste": the off-list tag appears with its bucket,
    read count and last read; no in-list tag appears. With an Opérateur session, `GET /api/tags/off-list` answers `403`.
