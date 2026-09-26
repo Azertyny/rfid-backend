@@ -213,3 +213,13 @@ After T024 (contract):
 3. + US2 → off-list reads visible on the line.
 4. + US3 → clean-up view for tags registered before the feature.
 5. Polish → docs, full build, latency check.
+
+---
+
+## Phase 7: Convergence
+
+- [X] T036 In `src/main/java/com/rfidback/service/ReferenceTagList.java`, key the list on the last 12 characters of each line (upper-cased) instead of the whole uid, and make `contains(uid)` compare the last 12 characters of `uid.trim().toUpperCase(Locale.ROOT)`; a uid shorter than 12 characters is never in the list, and `size()` stays the number of lines. Update the class and `contains` Javadoc per FR-002, SC-003 (contradicts)
+- [X] T037 In `src/main/java/com/rfidback/service/ReferenceTagList.java`, refuse to load (IllegalStateException naming both line numbers and the shared 12 characters) a list where two lines end with the same 12 characters, instead of ignoring duplicates per FR-002 (missing)
+- [X] T038 In `src/test/java/com/rfidback/service/ReferenceTagListTest.java`, add cases: every line of the shipped file is found in its reader form (characters 9–12 `2000` → `0000`), `E2806915000040287477C993` is found, a uid shorter than 12 characters and one whose last 12 characters match no line are not; add a fixture `src/test/resources/tags/duplicate-ending-reference-list.csv` (two lines differing only before their last 12 characters) that refuses to load per SC-002 (partial)
+- [X] T039 In `src/test/java/com/rfidback/controller/RecordApiTest.java` and `RegistrationApiTest.java`, add cases with the production reader form of an in-list uid (`"E28069150000" + last 12 characters`, add a `ReferenceTagUids.nextInListAsReaderSends()` helper in `src/test/java/com/rfidback/support/ReferenceTagUids.java`): a production scan gives `tagOffList: false`, a registration read gives `offList: false` and saves without `offListConfirmed`; then run `mvn clean test` per SC-003, US2/AC2, US1/AC1 (partial)
+- [X] T040 Update `.specify/specs/010-controle-tags-reference/research.md` (R3: compare the last 12 characters, why, and the accepted side effect), `data-model.md` (Membership rule, startup check on duplicate endings), `quickstart.md` (step 3 also scans `E2806915000040287477C993` and expects no "HORS LISTE") and the reference-list sentence in `CLAUDE.md` per plan: research R3, data-model (contradicts)

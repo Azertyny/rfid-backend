@@ -138,6 +138,17 @@ class RecordApiTest {
     }
 
     @Test
+    void listLatest_uidInTheFormTheReadersSend_isNotFlagged() throws Exception {
+        String asReaderSends = ReferenceTagUids.nextInListAsReaderSends();
+
+        scan(asReaderSends, true).andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/records/readers/{readerId}", READER_NAME).with(asOperator()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.records[?(@.tagUid == '%s')].tagOffList".formatted(asReaderSends)).value(false));
+    }
+
+    @Test
     void listLatest_unknownReader_returns404() throws Exception {
         mockMvc.perform(get("/api/records/readers/unknown-reader").with(asOperator()))
                 .andExpect(status().isNotFound());

@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-26
 
-**Status**: Delivered (2026-09-26) — reference list shipped in the app and checked at startup; off-list tags flagged at registration (confirmation `offListConfirmed`), on the line kiosk and in `GET /api/tags/off-list`; see [plan.md](plan.md)
+**Status**: Delivered (2026-09-26); comparison rule revised the same day after production feedback (FR-002: last 12 characters of the UID) and implemented (tasks T036–T040) — see Clarifications
 
 **Input**: User description: "I would like to check and alert if a tag is not part of the list @doc/rfid_tag_list.csv in the app"
 
@@ -17,6 +17,9 @@
 - Q: Que devient un scan de production d'un tag hors liste ? → A: La lecture est créée comme aujourd'hui et marquée "tag hors liste" ; ni sa conformité ni les comptages ne changent.
 - Q: Quand la confirmation montre un tag hors liste que l'Administrateur veut écarter, comment fait-il ? → A: Il annule toute la session et recommence sans ce tag ; aucun retrait d'une lecture isolée n'est ajouté.
 - Q: Un même tag lu une fois en minuscules et une fois en majuscules doit-il être traité comme un seul tag ? → A: La casse n'est ignorée que pour la comparaison à la liste ; les UID restent enregistrés tels que reçus, unifier leur casse est hors périmètre.
+- Q: Sur quel écran le tag scanné aurait-il dû apparaître comme hors liste ? → A: L'écran de contrôle de la ligne (`reader.html`). Constaté en production le 2026-09-26, connecté en Opérateur : toutes les lectures de la ligne y sont affichées "hors liste", y compris celles de tags achetés, si bien qu'un tag étranger ne se distingue pas.
+- Q: À quoi ressemble l'UID d'un tag acheté tel que l'application le reçoit en production ? → A: `E2806915000040287477C993`, alors que la liste contient `E2806915200040287477C993` (ligne 1469) : seul le 9e caractère diffère (`0` au lieu de `2`). Les 5 008 lignes de la liste ont `2000` en positions 9 à 12 ; les lecteurs de production envoient `0000` à cet endroit.
+- Q: Comment comparer les UID reçus des lecteurs à la liste, puisqu'ils diffèrent de ses lignes ? → A: Seuls les 12 derniers caractères de l'UID comptent. Toutes les lignes de la liste commencent par les mêmes 12 caractères (`E28069152000`) et leurs 12 derniers caractères sont tous différents : ils suffisent à identifier chaque tag acheté.
 
 ## Contexte
 
@@ -113,10 +116,14 @@ vérifier qu'elle contient exactement ceux-là, avec leur seau le cas échéant.
 
 - **Casse et espaces** : un UID lu en minuscules ou entouré d'espaces est comparé à la liste après suppression des
   espaces en début et fin et passage en majuscules ; `e2806915...` et `E2806915...` sont tous deux reconnus comme dans
-  la liste. L'enregistrement des UID en base reste inchangé (espaces retirés, casse conservée) : unifier la casse des
+  la liste.
+- **Début d'UID différent de la liste** : les lecteurs de production envoient `E28069150000…` là où la liste porte
+  `E28069152000…`. Seuls les 12 derniers caractères étant comparés (FR-002), les deux formes désignent le même tag
+  acheté. Conséquence acceptée : un UID d'une autre longueur ou d'un autre préfixe qui se termine par les 12 mêmes
+  caractères qu'une ligne de la liste est reconnu comme dans la liste. L'enregistrement des UID en base reste inchangé (espaces retirés, casse conservée) : unifier la casse des
   tags est hors périmètre (research R3).
-- **UID de longueur ou de format inattendu** (pas 24 caractères hexadécimaux) : il ne peut pas figurer dans la liste,
-  il est donc hors liste ; aucun rejet supplémentaire n'est introduit (le rejet de l'UID vide, spec `004`, reste
+- **UID de format inattendu** : un UID de moins de 12 caractères, ou dont les 12 derniers caractères ne sont ceux
+  d'aucune ligne de la liste, est hors liste ; aucun rejet supplémentaire n'est introduit (le rejet de l'UID vide, spec `004`, reste
   inchangé).
 - **Liste de référence absente, vide ou mal formée** : la liste est livrée avec l'application (FR-001) ; une version
   dont la liste manque, est vide ou contient une ligne qui n'est pas un UID ne doit pas démarrer, plutôt que de
@@ -137,9 +144,11 @@ vérifier qu'elle contient exactement ceux-là, avec leur seau le cas échéant.
 - **FR-001**: Le système DOIT disposer d'une liste de référence des tags autorisés, initialisée avec les 5 008 UID du
   fichier fourni (`src/main/resources/tags/rfid_tag_list.csv`, d'abord remis dans `doc/`). La liste est livrée avec l'application et n'est pas modifiable depuis celle-ci : l'ajout ou le retrait de tags se
   fait en modifiant le fichier puis en déployant une nouvelle version (Clarifications 2026-09-26).
-- **FR-002**: Le système DOIT déterminer si un UID est dans la liste de référence après normalisation (suppression
-  des espaces en début et fin, passage en majuscules). Cette normalisation ne sert qu'à la comparaison : l'UID enregistré n'est
-  pas modifié.
+- **FR-002**: Le système DOIT déterminer si un UID est dans la liste de référence en comparant ses **12 derniers
+  caractères**, après suppression des espaces en début et fin et passage en majuscules, aux 12 derniers caractères des
+  lignes de la liste (Clarifications 2026-09-26). Un UID de moins de 12 caractères n'est jamais dans la liste. Cette
+  normalisation ne sert qu'à la comparaison : l'UID enregistré n'est pas modifié. Le chargement de la liste DOIT
+  refuser une liste où deux lignes ont les mêmes 12 derniers caractères, puisqu'elles ne se distingueraient plus.
 - **FR-003**: La page d'enregistrement des tags DOIT signaler chaque tag lu hors liste, dès son affichage, par une
   alerte distincte de celle d'un tag déjà associé à un autre seau.
 - **FR-004**: Lors de l'enregistrement de tags sur un seau (page d'enregistrement comme service d'association),
@@ -167,8 +176,8 @@ vérifier qu'elle contient exactement ceux-là, avec leur seau le cas échéant.
 
 ### Key Entities
 
-- **Liste de référence des tags** : l'ensemble des UID de tags autorisés (5 008 à l'initialisation). Chaque UID est
-  unique. Indépendante des tags connus de l'application : un UID peut être dans la liste sans avoir jamais été lu.
+- **Liste de référence des tags** : l'ensemble des UID de tags autorisés (5 008 à l'initialisation). Un tag y est
+  identifié par les 12 derniers caractères de son UID, uniques dans la liste. Indépendante des tags connus de l'application : un UID peut être dans la liste sans avoir jamais été lu.
 - **Tag** (existant, spec `003`) : gagne une propriété dérivée "hors liste", vraie si son UID n'est pas dans la liste
   de référence.
 - **Lecture (Record)** (existante, spec `004`) : doit permettre de savoir si le tag lu était hors liste.
@@ -180,9 +189,11 @@ vérifier qu'elle contient exactement ceux-là, avec leur seau le cas échéant.
 - **SC-001**: 100 % des tags hors liste lus pendant une session d'enregistrement sont signalés sur la page avant
   l'enregistrement du seau, et aucun tag de la liste n'est signalé à tort.
 - **SC-002**: Avec les 5 008 UID du fichier fourni, chacun est reconnu comme dans la liste, quelle que soit sa casse,
-  et un UID qui n'y figure pas est reconnu hors liste.
+  sous sa forme du fichier (`E28069152000…`) comme sous celle des lecteurs de production (`E28069150000…`, par exemple
+  `E2806915000040287477C993`), et un UID dont les 12 derniers caractères n'y figurent pas est reconnu hors liste.
 - **SC-003**: Une lecture de tag hors liste en production est visible sur l'écran de contrôle de la ligne dans le
-  même délai qu'une lecture ordinaire.
+  même délai qu'une lecture ordinaire, et aucune lecture d'un tag de la liste n'y est signalée à tort, avec les UID
+  tels que les lecteurs de production les envoient réellement.
 - **SC-004**: L'objectif de temps de réponse des scans (95 % en moins de 200 ms, spec `004`) reste tenu avec le
   contrôle actif.
 - **SC-005**: Un Administrateur obtient la liste complète des tags déjà enregistrés hors liste en une seule

@@ -10,19 +10,22 @@ No table, column or index is added. The feature adds one in-memory structure and
 | Source | `src/main/resources/tags/rfid_tag_list.csv`, set by `app.tags.reference-list` |
 | Format | one UID per line, 24 hexadecimal characters, no header; `\n` or `\r\n`; optional UTF-8 BOM |
 | Content at delivery | 5,008 unique UIDs (moved from `doc/rfid_tag_list.csv`) |
-| Held as | immutable set of upper-cased UIDs, loaded once at startup (`ReferenceTagList`) |
+| Held as | immutable set of the last 12 characters of each UID, upper-cased, loaded once at startup (`ReferenceTagList`) |
 | Changes | only by editing the file and deploying a new version (clarification Q1) |
 
 **Validation at startup** (R2) — the application does not start when:
 
 - the resource does not exist or cannot be read;
 - no UID is found;
-- a non-blank line, once trimmed, is not 24 characters `[0-9A-Fa-f]`.
+- a non-blank line, once trimmed, is not 24 characters `[0-9A-Fa-f]`;
+- two lines end with the same 12 characters (the error names both line numbers).
 
-Blank lines are skipped, duplicates are ignored.
+Blank lines are skipped.
 
-**Membership** (R3): `contains(uid)` is true when `uid.trim().toUpperCase(Locale.ROOT)` is in the set. A `null` or
-blank UID is not in the list.
+**Membership** (R3): the list is held as the last 12 characters of each line, upper-cased. `contains(uid)` is true
+when the last 12 characters of `uid.trim().toUpperCase(Locale.ROOT)` are in that set. A `null` or blank UID, or one
+shorter than 12 characters, is not in the list. So `E2806915000040287477C993` (as the readers send it) and
+`E2806915200040287477C993` (as in the file) are both in the list.
 
 ## Existing entities (unchanged in the database)
 
