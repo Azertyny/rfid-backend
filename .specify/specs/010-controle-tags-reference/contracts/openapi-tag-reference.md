@@ -1,87 +1,57 @@
-# Contract changes: Contrôle des tags par rapport à la liste de référence
+# Contract changes: Contrôle des tags par rapport à la liste de référence (révision)
 
-Changes to `src/main/resources/openapi/api.yaml`, made before any code (API-first). Decisions: [research](../research.md)
-R5, R6.
+Changes to `src/main/resources/openapi/api.yaml`, made before any code (API-first), from the version delivered on
+2026-09-26. Decisions: [research](../research.md) R4–R6, R9.
 
-## Unchanged
+## `POST /tags/scan` — schemas unchanged, one behaviour added
 
-- `POST /tags/scan` and `ScanTagRequest` / `ScanTagResponse`: readers change nothing (FR-005, FR-006). An off-list tag
-  scanned by a `PRODUCTION` reader creates its Record as today; an `ENREGISTREMENT` reader still gets "read kept".
+`ScanTagRequest` / `ScanTagResponse` are unchanged: readers change nothing (FR-005, FR-006). Add to the description:
 
-## New route: `GET /tags/off-list`
+> The uid is checked against the reference tag list shipped with the application (its last 12 characters). A uid not
+> in the list creates nothing, whatever the reader's mode: the answer is 200 with isCompliant true and the message
+> "Tag not in reference list, ignored" (PRODUCTION) or "Registration read ignored: tag not in reference list"
+> (ENREGISTREMENT).
 
-```yaml
-/tags/off-list:
-  get:
-    summary: List known tags that are not in the reference list
-    description: >
-      Tags known to the application (registered on a bucket or created by a scan) whose uid is not in the
-      reference tag list shipped with this version. Administrateur only.
-    operationId: listOffListTags
-    tags: [Tag]
-    responses:
-      "200":
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/OffListTagsList" }
-      "401": { $ref: "#/components/responses/Unauthorized" }
-      "403": { $ref: "#/components/responses/Forbidden" }
-      "500": { $ref: "#/components/responses/InternalError" }
-```
+## `POST /tags/registration-reads` — schemas unchanged
 
-Security: already covered by `/api/tags/**` → `ADMINISTRATEUR` in the user chain; no `SecurityConfig` change. Not
-reachable with a reader token (kiosk chain allows two routes only).
+Description, after "all of them or none are kept": "Uids not in the reference list are never kept; they still count
+in receivedCount." `RegistrationReadsResponse.addedCount` description: "Uids newly added to the session (already
+present ones and uids not in the reference list are not counted). 0 without a session."
 
-```yaml
-OffListTag:
-  type: object
-  properties:
-    uid:          { type: string, example: E2000017221101891400A23G }
-    bucketNumber: { type: integer, nullable: true }
-    recordCount:  { type: integer, format: int64 }
-    lastRecordAt: { type: string, format: date-time, nullable: true }
-    createdAt:    { type: string, format: date-time }
-  required: [uid, recordCount, createdAt]
+## `POST /tags/buckets/{bucketNumber}` and `POST /tags/registration-sessions/{sessionId}/save`
 
-OffListTagsList:
-  type: object
-  properties:
-    referenceListSize: { type: integer, description: Number of uids in the reference list }
-    tags:
-      type: array
-      items: { $ref: "#/components/schemas/OffListTag" }
-  required: [referenceListSize, tags]
-```
+- Remove "Tags not in the reference list are registered only when offListConfirmed is true" from both descriptions;
+  add "A uid not in the reference list refuses the whole request with 400, naming those uids; nothing is saved (on
+  save, the session stays open)."
+- `409` description goes back to: "Some tags are linked to another bucket; nothing is saved. Resend with moveConfirmed
+  true to move them."
+- `400` keeps `$ref: "#/components/responses/InvalidRequest"` (no schema declared; the body is the `ProblemDetail`
+  that `ApiExceptionHandler` renders for every `ResponseStatusException`); its `detail` reads
+  `Tags not in the reference list: <uid>, <uid>`.
 
-## Changed schemas
+## Removed
 
-| Schema | Change |
+| Item | Kind |
 |---|---|
-| `RegisterTagsRequest` | + `offListConfirmed: boolean, default false` — "Must be true to register tags that are not in the reference list. Otherwise the request is refused with 409 and nothing is saved." |
-| `SaveRegistrationSession` | + `offListConfirmed: boolean, default false` (same meaning) |
-| `TagsInOtherBuckets` (409 body) | + `offListTags: array of string`, required. `tags` stays required and may be empty. Description: "409 body when the registration needs confirmation: tags that would be moved from another bucket, and/or tags not in the reference list." |
-| `RegistrationRead` | + `offList: boolean`, required — "True when the uid is not in the reference list" |
-| `RecordSummary` | + `tagOffList: boolean`, required — "True when the record's tag is not in the reference list" |
+| `GET /tags/off-list` (`listOffListTags`) | route |
+| `OffListTag`, `OffListTagsList` | schemas |
+| `RegisterTagsRequest.offListConfirmed` | property |
+| `SaveRegistrationSession.offListConfirmed` | property |
+| `TagsInOtherBuckets.offListTags` (and from `required`) | property; `tags` becomes required non-empty again, description back to "409 body: tags linked to another bucket" |
+| `RegistrationRead.offList` (and from `required`) | property |
+| `RecordSummary.tagOffList` (and from `required`) | property |
 
-## Changed descriptions
+A client still sending `offListConfirmed` is not refused (unknown JSON properties are ignored).
 
-- `POST /tags/buckets/{bucketNumber}` and `POST /tags/registration-sessions/{sessionId}/save`: add "Tags not in the
-  reference list are registered only when offListConfirmed is true"; `409` description becomes "Some tags need
-  confirmation (move from another bucket, or not in the reference list)".
+## Response table for a bucket registration
 
-## Response table for a registration
-
-| In another bucket (unconfirmed) | Off-list (unconfirmed) | Answer |
+| Off-list UIDs | In another bucket, `moveConfirmed` false | Answer |
 |---|---|---|
-| none | none | `200`, as today |
-| some | none | `409`, `tags` filled, `offListTags` empty (as today plus an empty array) |
-| none | some | `409`, `tags` empty, `offListTags` filled |
-| some | some | `409`, both filled |
+| none | none | `200`, as before spec 010 |
+| none | some | `409`, `tags` filled |
+| some | any | `400`, `detail` names the off-list UIDs; no flag changes it |
 
-"Unconfirmed" means the matching flag is `false`. The lists in a `409` are always complete (for the front's single
-dialog), including the kind already confirmed.
+## Security
 
-## Error bodies
-
-`409` bodies stay rendered by `ApiExceptionHandler` (handler renamed with the exception, R5); message:
-"Some tags need confirmation; resend with moveConfirmed and/or offListConfirmed set to true".
+No change to `SecurityConfig`. The removed route was covered by `/api/tags/**` → `ADMINISTRATEUR`; the other routes keep
+their chains (reader token for `/tags/scan` and `/tags/registration-reads`, session for the rest).

@@ -39,7 +39,6 @@ public class RecordService {
     private final ReaderRepository readerRepository;
     private final RecordConformityChangeRepository recordConformityChangeRepository;
     private final UserRepository userRepository;
-    private final ReferenceTagList referenceTagList;
 
     private static final String OTHER_READER = "A reader token only gives access to its own reader";
 
@@ -71,8 +70,6 @@ public class RecordService {
         if (tag != null) {
             model.setTagUid(tag.getUid());
         }
-        // Derived from the list shipped with this version, never stored (spec 010, research R4).
-        model.setTagOffList(tag == null || referenceTagList.isOffList(tag.getUid()));
         PickerEntity picker = record.getPicker();
         if (picker != null) {
             model.setPickerId(picker.getId());

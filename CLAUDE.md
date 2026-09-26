@@ -59,9 +59,10 @@ Standard layered structure under `src/main/java/com/rfidback/`:
 ### Security: two kinds of callers, three filter chains
 
 `SecurityConfig` defines three `SecurityFilterChain`s:
-- **Reader devices** (`@Order(1)`, only `POST /api/tags/scan`): stateless, `x-api-token` header checked by
-  `ReaderApiTokenAuthenticationFilter`. Controllers acting for a reader take it from `SecurityContextHolder` as a
-  `ReaderAuthentication` (see `TagController.scanTag`). This filter is a `@Component` whose automatic servlet
+- **Reader devices** (`@Order(1)`, only `POST /api/tags/scan` and `POST /api/tags/registration-reads`): stateless,
+  `x-api-token` header checked by `ReaderApiTokenAuthenticationFilter`. The second route is for ENREGISTREMENT readers
+  only (`403` otherwise): a batch of up to 100 tags into the open registration session (spec 011). Controllers acting
+  for a reader take it from `SecurityContextHolder` as a `ReaderAuthentication` (`controller/AuthenticatedReader`). This filter is a `@Component` whose automatic servlet
   registration is disabled on purpose, so it only runs inside the reader chains.
 - **Line kiosk** (`@Order(2)`, any other `/api/**` request carrying `x-api-token`): `reader.html` on a line's touch
   screen, with that reader's token (given by the kiosk launcher in the URL fragment, `front/auth.js`). Stateless, no
@@ -84,12 +85,15 @@ H2 by default (dev), file-based at `./data/rfidbackdb.mv.db`; production (`prod`
 and before every deployment to external storage (`deploy/vps/backup.sh`). `spring.jpa.hibernate.ddl-auto: update` — there is no migration tool (Flyway/Liquibase) yet, so schema
 changes happen by editing entities and letting Hibernate update the schema at boot. `ddl-auto` never relaxes an existing
 constraint: the one such change so far (`author_id` nullable, spec 008 kiosk) is run at startup by
-`configuration/ConformityAuthorSchemaUpgrade`.
+`configuration/ConformityAuthorSchemaUpgrade`. One-off data changes also run at startup, recorded in table
+`data_upgrade` so they run once (`configuration/OffListTagPurge`: deleted the tags not in the reference list stored
+before spec 010's revision).
 `APP_STATION_TIME_ZONE` (default `Europe/Paris`) is the zone of the dashboard's days and hours (`GET /api/records/stats`,
 spec 007); startup fails for a zone whose offset is not a whole number of hours. The reference tag list (spec 010) is
 `src/main/resources/tags/rfid_tag_list.csv`, loaded at startup by `service/ReferenceTagList` (startup fails on a missing,
 empty or malformed file); a uid is matched on its last 12 characters only (the readers send `E28069150000…` where
-the file has `E28069152000…`), tags not in it are flagged "hors liste", and changing it means shipping a new version. Config is split across
+the file has `E28069152000…`). A uid not in it is never stored: its scans and registration reads are ignored
+(`200`), a bucket registration with it is refused (`400`). Changing the list means shipping a new version. Config is split across
 `application.yml` (activates the `dev` profile) plus `application-dev.yml` / `application-prod.yml`.
 
 ### Deployment

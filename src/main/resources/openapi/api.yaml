@@ -10,7 +10,7 @@ servers:
   - url: https://vegelink.apolog.fr/api
     description: Serveur de production
 
-# Default: a logged-in user session. /tags/scan uses the reader token, /auth/login is public.
+# Default: a logged-in user session. /tags/scan and /tags/registration-reads use the reader token, /auth/login is public.
 security:
   - SessionCookie: []
 
@@ -222,8 +222,8 @@ paths:
       description: >
         Add the provided tags to the bucket (created if unknown). Tags already linked to this
         bucket stay linked. Tags linked to another bucket are moved only when moveConfirmed is true;
-        otherwise the request is refused with 409 and nothing is saved. Tags not in the reference list
-        are registered only when offListConfirmed is true.
+        otherwise the request is refused with 409 and nothing is saved. A uid not in the reference tag list
+        refuses the whole request with 400, naming those uids; nothing is saved.
       operationId: registerTagsForBucket
       tags: [Tag]
       parameters:
@@ -251,31 +251,11 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409":
-          description: Some tags need confirmation (move from another bucket, or not in the reference list); nothing is saved
+          description: Some tags belong to another bucket and the move was not confirmed
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/TagsInOtherBuckets"
-        "500": { $ref: "#/components/responses/InternalError" }
-
-  /tags/off-list:
-    get:
-      summary: List known tags that are not in the reference list
-      description: >
-        Tags known to the application (registered on a bucket or created by a scan) whose uid is not in the
-        reference tag list shipped with this version, with their bucket, record count and last record.
-        Administrateur only.
-      operationId: listOffListTags
-      tags: [Tag]
-      responses:
-        "200":
-          description: Off-list tags, most recently read first
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/OffListTagsList"
-        "401": { $ref: "#/components/responses/Unauthorized" }
-        "403": { $ref: "#/components/responses/Forbidden" }
         "500": { $ref: "#/components/responses/InternalError" }
 
   /tags/scan:
@@ -287,7 +267,11 @@ paths:
         401 is also returned when the reader is disabled.
         For a reader in ENREGISTREMENT mode, the read is kept for tag registration (or ignored when
         no registration session is open), no record is created, and isCompliant is always true.
-        A blank uid is rejected with 400. For a reader in PRODUCTION mode, a scan of the same tag by the same
+        A blank uid is rejected with 400. The uid is then checked against the reference tag list shipped with
+        the application (its last 12 characters): for a reader in ENREGISTREMENT mode, a uid not in the list is not
+        kept and the message is "Registration read ignored: tag not in reference list"; for a reader in PRODUCTION
+        mode, no tag and no record are created, isCompliant is true and the message is "Tag not in reference list,
+        ignored". For a reader in PRODUCTION mode, a scan of the same tag by the same
         reader within app.scan.duplicate-window (10 s by default) of that tag's latest record creates no new
         record: the response carries the existing record and the message "Duplicate read ignored". If that
         repeat reports isCompliant false and the record is compliant, the record becomes non-compliant.
@@ -394,7 +378,8 @@ paths:
       summary: Register the session's tags on a bucket and close the session
       description: >
         Same rules as POST /tags/buckets/{bucketNumber}. On 409 nothing is saved and the session
-        stays open. Tags not in the reference list are registered only when offListConfirmed is true.
+        stays open. A uid not in the reference tag list refuses the save with 400, naming those uids; the
+        session stays open.
       operationId: saveRegistrationSession
       tags: [Registration]
       requestBody:
@@ -415,11 +400,49 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
-          description: Some tags need confirmation (move from another bucket, or not in the reference list); nothing is saved
+          description: Some tags belong to another bucket and the move was not confirmed
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/TagsInOtherBuckets"
+
+  /tags/registration-reads:
+    post:
+      summary: Send the tags read by a registration reader in one call
+      description: >
+        Called by a reader in ENREGISTREMENT mode with the list of tags it has read. Each distinct, non-blank uid
+        becomes a read of the reader's open registration session, as if sent one by one to /tags/scan; all of them
+        or none are kept. Uids not in the reference tag list are never kept; they still count in receivedCount.
+        No tag, bucket or record is created. Surrounding spaces are removed and blank elements
+        ignored. Without an open session (or with an expired one) nothing is kept and the answer is still 200.
+        A reader in PRODUCTION mode is refused with 403. More than 100 distinct uids, none at all, or a uid longer
+        than 50 characters is refused with 400. The body is validated before the reader's mode is checked.
+      operationId: recordRegistrationReads
+      tags: [Registration]
+      security:
+        - ReaderApiToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegistrationReadsRequest"
+      responses:
+        "200":
+          description: Batch processed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegistrationReadsResponse"
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: The reader is not in ENREGISTREMENT mode
+        "409":
+          description: >
+            Concurrent reads of the same tags, or the reader's session stayed locked too long; nothing was kept,
+            the reader may send the batch again
+        "500": { $ref: "#/components/responses/InternalError" }
 
   # -----------------------------------------------------------------------------------------------
   # Record section
@@ -1080,12 +1103,6 @@ components:
           description: >
             Must be true to move tags that currently belong to another bucket.
             Otherwise the request is refused with 409 and nothing is saved.
-        offListConfirmed:
-          type: boolean
-          default: false
-          description: >
-            Must be true to register tags that are not in the reference list.
-            Otherwise the request is refused with 409 and nothing is saved.
       required:
         - uids
 
@@ -1124,9 +1141,7 @@ components:
 
     TagsInOtherBuckets:
       type: object
-      description: >
-        409 body when the registration needs confirmation: tags that would be moved from another bucket,
-        and/or tags not in the reference list. Each list is complete; either may be empty.
+      description: 409 body when tags would be moved from another bucket without confirmation
       properties:
         message:
           type: string
@@ -1134,56 +1149,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/TagInOtherBucket"
-        offListTags:
-          type: array
-          description: Tags not in the reference list
-          items:
-            type: string
       required:
         - message
-        - tags
-        - offListTags
-
-    OffListTag:
-      type: object
-      properties:
-        uid:
-          type: string
-          example: E2000017221101891400A23G
-        bucketNumber:
-          type: integer
-          nullable: true
-          description: Bucket the tag belongs to, or null if none
-        recordCount:
-          type: integer
-          format: int64
-          description: Number of records of this tag
-        lastRecordAt:
-          type: string
-          format: date-time
-          nullable: true
-          description: Creation date of the tag's latest record, or null if it was never read
-        createdAt:
-          type: string
-          format: date-time
-          description: Date the application first knew the tag
-      required:
-        - uid
-        - recordCount
-        - createdAt
-
-    OffListTagsList:
-      type: object
-      properties:
-        referenceListSize:
-          type: integer
-          description: Number of uids in the reference list
-        tags:
-          type: array
-          items:
-            $ref: "#/components/schemas/OffListTag"
-      required:
-        - referenceListSize
         - tags
 
     StartRegistrationSession:
@@ -1208,13 +1175,9 @@ components:
           type: integer
           nullable: true
           description: Bucket the tag currently belongs to, or null if none
-        offList:
-          type: boolean
-          description: True when the uid is not in the reference list
       required:
         - uid
         - firstReadAt
-        - offList
 
     RegistrationSession:
       type: object
@@ -1271,12 +1234,55 @@ components:
         moveConfirmed:
           type: boolean
           default: false
-        offListConfirmed:
-          type: boolean
-          default: false
-          description: Must be true to register tags that are not in the reference list
       required:
         - bucketNumber
+
+    RegistrationReadsRequest:
+      type: object
+      properties:
+        uids:
+          type: array
+          description: >
+            Tags read by the reader. Repeats and blank elements are allowed; at most 100 distinct non-blank uids.
+          minItems: 1
+          maxItems: 1000
+          items:
+            type: string
+            example: E2806915000040287477C993
+      required:
+        - uids
+
+    RegistrationReadsResponse:
+      type: object
+      properties:
+        sessionOpen:
+          type: boolean
+          description: False when no registration session was open on the reader; nothing was kept then.
+          example: true
+        receivedCount:
+          type: integer
+          description: Distinct non-blank uids in the request.
+          example: 12
+        addedCount:
+          type: integer
+          description: >
+            Uids newly added to the session (already present ones and uids not in the reference tag list are not
+            counted). 0 without a session.
+          example: 12
+        processedAt:
+          type: string
+          format: date-time
+          example: "2026-09-26T09:30:00Z"
+        message:
+          type: string
+          description: '"Registration reads kept", or "Registration reads ignored: no session started".'
+          example: Registration reads kept
+      required:
+        - sessionOpen
+        - receivedCount
+        - addedCount
+        - processedAt
+        - message
 
     RecordSummary:
       type: object
@@ -1303,15 +1309,11 @@ components:
           format: date-time
           description: Record creation date
           example: "2024-01-15T09:30:00Z"
-        tagOffList:
-          type: boolean
-          description: True when the record's tag is not in the reference list
       required:
         - id
         - tagUid
         - isCompliant
         - creationDate
-        - tagOffList
 
     RecordsList:
       type: object
@@ -1634,5 +1636,6 @@ components:
       in: header
       name: x-api-token
       description: >
-        API token of a reader. Authenticates the reader device on POST /tags/scan and the line kiosk on
+        API token of a reader. Authenticates the reader device on POST /tags/scan and POST /tags/registration-reads
+        (ENREGISTREMENT readers only), and the line kiosk on
         GET /records/readers/{its uid} and PATCH /records/{id}/conformity for its own records.

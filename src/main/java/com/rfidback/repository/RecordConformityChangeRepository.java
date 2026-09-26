@@ -1,10 +1,14 @@
 package com.rfidback.repository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import com.rfidback.entity.RecordConformityChangeEntity;
 import com.rfidback.entity.RecordEntity;
@@ -17,4 +21,10 @@ public interface RecordConformityChangeRepository extends JpaRepository<RecordCo
     /** Compliance history of a record, oldest first (spec 005, FR-007). */
     @EntityGraph(attributePaths = "author")
     List<RecordConformityChangeEntity> findAllByRecordOrderByChangedAtAsc(RecordEntity record);
+
+    // Bulk delete for the one-off purge of off-list tags (spec 010 révision, OffListTagPurge).
+    @Modifying
+    @Query("delete from RecordConformityChangeEntity c"
+            + " where c.record.id in (select r.id from RecordEntity r where r.tag.id in :tagIds)")
+    int deleteByRecordTagIdIn(@Param("tagIds") Collection<UUID> tagIds);
 }

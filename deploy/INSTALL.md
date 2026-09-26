@@ -118,6 +118,11 @@ printed).
 Set each reader's target to `https://vegelink.apolog.fr/api/tags/scan`; its `x-api-token` does not change. A reader
 configured with `http://` gets `403 HTTPS required` and its scans are not recorded.
 
+The enregistreur (reader in `ENREGISTREMENT` mode) can instead send all the tags it has read in one call to
+`https://vegelink.apolog.fr/api/tags/registration-reads`, body `{"uids": ["…", "…"]}`, same `x-api-token` (spec 011).
+`/api/tags/scan` keeps working for it until it is reconfigured. A production reader pointed at this route by mistake
+gets `403`.
+
 ## Line kiosk
 
 The touch screen of a line runs `reader.html` with that line's reader token: operators check boxes and change their

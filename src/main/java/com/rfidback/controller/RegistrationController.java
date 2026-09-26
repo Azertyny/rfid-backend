@@ -8,6 +8,8 @@ import org.springframework.stereotype.Service;
 
 import com.rfidback.generated.api.RegistrationApiDelegate;
 import com.rfidback.generated.model.RegisterTagsResponse;
+import com.rfidback.generated.model.RegistrationReadsRequest;
+import com.rfidback.generated.model.RegistrationReadsResponse;
 import com.rfidback.generated.model.RegistrationSession;
 import com.rfidback.generated.model.SaveRegistrationSession;
 import com.rfidback.generated.model.StartRegistrationSession;
@@ -41,5 +43,10 @@ public class RegistrationController implements RegistrationApiDelegate {
     public ResponseEntity<RegisterTagsResponse> saveRegistrationSession(UUID sessionId,
             SaveRegistrationSession request) {
         return ResponseEntity.ok(registrationService.save(sessionId, request));
+    }
+
+    @Override
+    public ResponseEntity<RegistrationReadsResponse> recordRegistrationReads(RegistrationReadsRequest request) {
+        return ResponseEntity.ok(registrationService.recordReads(AuthenticatedReader.require(), request.getUids()));
     }
 }

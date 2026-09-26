@@ -2,7 +2,7 @@ package com.rfidback.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsInAnyOrder;
-import static org.hamcrest.Matchers.empty;
+import static org.hamcrest.Matchers.containsString;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -31,7 +31,7 @@ import com.rfidback.support.ReferenceTagUids;
 
 /**
  * HTTP-level checks of POST /api/tags/buckets/{bucketNumber} (spec 003: add-only, move confirmation; spec 010:
- * off-list confirmation).
+ * a uid not in the reference list refuses the whole request).
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -123,25 +123,25 @@ class TagRegistrationApiTest {
     }
 
     @Test
-    void register_offListTag_returns409UntilConfirmed() throws Exception {
+    void register_offListTag_returns400NamingIt_andSavesNothing() throws Exception {
         int bucketNumber = randomBucketNumber();
+        String inList = uniqueUid();
         String offList = ReferenceTagUids.offList();
 
-        register(bucketNumber, Map.of("uids", new String[] { offList }))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.offListTags[0]").value(offList))
-                .andExpect(jsonPath("$.tags", empty()));
-        assertThat(tagRepository.findByUid(offList)).isEmpty();
-        assertThat(bucketRepository.findByNumber(bucketNumber)).isEmpty();
+        register(bucketNumber, Map.of("uids", new String[] { inList, offList }))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value(containsString(offList)));
+        // The flag of the first delivery is ignored: nothing can let an off-list tag in (spec 010 révision, FR-004).
+        register(bucketNumber, Map.of("uids", new String[] { inList, offList }, "offListConfirmed", true))
+                .andExpect(status().isBadRequest());
 
-        register(bucketNumber, Map.of("uids", new String[] { offList }, "offListConfirmed", true))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.registeredCount").value(1));
-        assertThat(tagRepository.findByUid(offList).orElseThrow().getBucket().getNumber()).isEqualTo(bucketNumber);
+        assertThat(tagRepository.findByUid(offList)).isEmpty();
+        assertThat(tagRepository.findByUid(inList)).isEmpty();
+        assertThat(bucketRepository.findByNumber(bucketNumber)).isEmpty();
     }
 
     @Test
-    void register_moveAndOffList_moveConfirmationAloneIsNotEnough() throws Exception {
+    void register_moveAndOffList_returns400EvenWithMoveConfirmed() throws Exception {
         int firstBucket = randomBucketNumber();
         int secondBucket = firstBucket + 1;
         String moved = uniqueUid();
@@ -149,15 +149,11 @@ class TagRegistrationApiTest {
         register(firstBucket, Map.of("uids", new String[] { moved })).andExpect(status().isOk());
 
         register(secondBucket, Map.of("uids", new String[] { moved, offList }, "moveConfirmed", true))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.tags[0].uid").value(moved))
-                .andExpect(jsonPath("$.offListTags[0]").value(offList));
-        assertThat(tagRepository.findByUid(moved).orElseThrow().getBucket().getNumber()).isEqualTo(firstBucket);
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value(containsString(offList)));
 
-        register(secondBucket,
-                Map.of("uids", new String[] { moved, offList }, "moveConfirmed", true, "offListConfirmed", true))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.totalCount").value(2));
+        assertThat(tagRepository.findByUid(moved).orElseThrow().getBucket().getNumber()).isEqualTo(firstBucket);
+        assertThat(tagRepository.findByUid(offList)).isEmpty();
     }
 
     private ResultActions register(int bucketNumber, Map<String, Object> body) throws Exception {
@@ -177,7 +173,7 @@ class TagRegistrationApiTest {
         return ThreadLocalRandom.current().nextInt(100_000, 1_000_000_000);
     }
 
-    // In the reference list, so only the tests about the list meet its confirmation (spec 010).
+    // In the reference list, so only the tests about the list meet its refusal (spec 010).
     private static String uniqueUid() {
         return ReferenceTagUids.nextInList();
     }

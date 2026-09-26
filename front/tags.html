@@ -105,7 +105,7 @@
                         <button class="btn btn-outline-secondary me-2" onclick="cancelSession()">
                             <i class="fas fa-times me-1"></i>Annuler
                         </button>
-                        <button class="btn btn-primary" onclick="saveSession(false, false)">
+                        <button class="btn btn-primary" onclick="saveSession(false)">
                             <i class="fas fa-save me-1"></i>Enregistrer
                         </button>
                     </div>
@@ -122,61 +122,23 @@
                 </table>
             </div>
         </div>
-
-        <!-- TAGS HORS LISTE (spec 010) : tags connus absents de la liste de référence -->
-        <div class="card shadow-sm border-0 mt-4">
-            <div class="card-header bg-white d-flex justify-content-between align-items-center">
-                <div>
-                    <i class="fas fa-ban text-danger me-2"></i><span class="fw-bold">Tags hors liste</span>
-                    <small id="referenceListSize" class="text-muted ms-2"></small>
-                </div>
-                <button id="offListButton" class="btn btn-outline-secondary btn-sm" onclick="loadOffListTags()">
-                    <i class="fas fa-sync-alt me-1"></i>Charger
-                </button>
-            </div>
-            <div class="card-body">
-                <p class="small text-muted">Tags déjà enregistrés sur un seau ou lus en production, qui ne figurent pas
-                    dans la liste des tags achetés.</p>
-                <table class="table table-sm table-striped align-middle mb-0">
-                    <thead class="table-light">
-                        <tr>
-                            <th>UID du tag</th>
-                            <th style="width: 15%">Seau</th>
-                            <th style="width: 15%">Lectures</th>
-                            <th style="width: 25%">Dernière lecture</th>
-                        </tr>
-                    </thead>
-                    <tbody id="offListTable">
-                        <tr><td colspan="4" class="text-center text-muted py-3">Cliquez sur Charger pour afficher les tags hors liste.</td></tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
     </div>
 
-    <!-- MODAL : CONFIRMATION (DÉPLACEMENT D'UN AUTRE SEAU, TAGS HORS LISTE) -->
-    <div class="modal fade" id="confirmModal" tabindex="-1">
+    <!-- MODAL : CONFIRMATION DU DÉPLACEMENT -->
+    <div class="modal fade" id="moveModal" tabindex="-1">
         <div class="modal-dialog">
             <div class="modal-content">
                 <div class="modal-header bg-warning">
-                    <h5 class="modal-title"><i class="fas fa-exclamation-triangle me-2"></i>Confirmation nécessaire</h5>
+                    <h5 class="modal-title"><i class="fas fa-exchange-alt me-2"></i>Tags déjà associés à un autre seau</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
-                    <div id="moveSection">
-                        <p><i class="fas fa-exchange-alt me-1"></i>Ces tags seront retirés de leur seau actuel et associés au seau <strong id="moveTarget"></strong> :</p>
-                        <ul id="moveList"></ul>
-                    </div>
-                    <div id="offListSection">
-                        <p class="text-danger"><i class="fas fa-ban me-1"></i>Ces tags ne figurent pas dans la liste de référence des tags achetés.
-                            Vérifiez qu'il ne s'agit pas d'un tag étranger avant de confirmer :</p>
-                        <ul id="offListList"></ul>
-                        <p class="small text-muted mb-0">Pour écarter un tag, annulez la session et recommencez sans lui.</p>
-                    </div>
+                    <p>Ces tags seront retirés de leur seau actuel et associés au seau <strong id="moveTarget"></strong> :</p>
+                    <ul id="moveList" class="mb-0"></ul>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
-                    <button type="button" class="btn btn-warning" onclick="confirmSave()">Confirmer et enregistrer</button>
+                    <button type="button" class="btn btn-warning" onclick="confirmMove()">Déplacer et enregistrer</button>
                 </div>
             </div>
         </div>
@@ -189,17 +151,14 @@
         const SESSIONS = '/tags/registration-sessions';
         // FR-011 : le serveur refuse aussi (400) un enregistrement de plus de 100 tags.
         const MAX_TAGS = 100;
-        let confirmModal;
-        // Kinds shown in the confirmation dialog: each flag is sent only for what the Administrateur saw (spec 010).
-        let pendingMove = false;
-        let pendingOffList = false;
+        let moveModal;
         let sessionId = null;
         let lastReads = [];
         let pollTimer = null;
         let pollInFlight = false;
 
         document.addEventListener('DOMContentLoaded', async () => {
-            confirmModal = new bootstrap.Modal(document.getElementById('confirmModal'));
+            moveModal = new bootstrap.Modal(document.getElementById('moveModal'));
             await requireRole('ADMINISTRATEUR');
             loadReaders();
         });
@@ -338,10 +297,6 @@
                 } else {
                     status = `<span class="badge bg-warning text-dark"><i class="fas fa-exclamation-triangle me-1"></i>Seau ${read.bucketNumber}</span>`;
                 }
-                if (read.offList) {
-                    const offList = '<span class="badge bg-danger"><i class="fas fa-ban me-1"></i>Hors liste</span>';
-                    status = read.bucketNumber == null ? offList : `${status} ${offList}`;
-                }
                 return `<tr>
                     <td class="tag-uid">${escapeHtml(read.uid)}</td>
                     <td class="text-muted small">${formatTime(read.firstReadAt)}</td>
@@ -351,7 +306,7 @@
         }
 
         // 4. ENREGISTRER (POST /tags/registration-sessions/{id}/save)
-        async function saveSession(moveConfirmed, offListConfirmed) {
+        async function saveSession(moveConfirmed) {
             clearMessages();
             const bucketNumber = parseInt(document.getElementById('bucketNumber').value, 10);
             if (!Number.isInteger(bucketNumber) || bucketNumber < 1) {
@@ -371,41 +326,35 @@
             const response = await apiFetch(`${SESSIONS}/${sessionId}/save`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ bucketNumber, moveConfirmed, offListConfirmed })
+                body: JSON.stringify({ bucketNumber, moveConfirmed })
             });
             if (response.ok) {
                 const result = await response.json();
-                confirmModal.hide();
+                moveModal.hide();
                 showIdle();
                 showMessage('success', `${result.registeredCount} tag(s) enregistré(s) — le seau ${result.bucketNumber} contient maintenant ${result.totalCount} tag(s).`);
             } else if (response.status === 409) {
                 const conflict = await response.json();
-                const moves = conflict.tags || [];
-                const offListTags = conflict.offListTags || [];
-                pendingMove = moves.length > 0;
-                pendingOffList = offListTags.length > 0;
-                document.getElementById('moveSection').classList.toggle('d-none', !pendingMove);
-                document.getElementById('offListSection').classList.toggle('d-none', !pendingOffList);
                 document.getElementById('moveTarget').textContent = bucketNumber;
-                document.getElementById('moveList').innerHTML = moves
+                document.getElementById('moveList').innerHTML = conflict.tags
                     .map(tag => `<li><span class="tag-uid">${escapeHtml(tag.uid)}</span> → actuellement seau ${tag.bucketNumber}</li>`)
                     .join('');
-                document.getElementById('offListList').innerHTML = offListTags
-                    .map(uid => `<li><span class="tag-uid">${escapeHtml(uid)}</span></li>`)
-                    .join('');
-                confirmModal.show();
+                moveModal.show();
             } else if (response.status === 404) {
                 showIdle();
                 showMessage('warning', 'Session expirée : les lectures ont été perdues. Cliquez sur Démarrer pour recommencer.');
             } else if (response.status === 400) {
-                showMessage('warning', 'Enregistrement refusé : vérifiez le numéro de seau et qu\'au moins un tag a été lu.');
+                // The server's reason (e.g. a tag not in the reference list, spec 010) when it gives one.
+                const problem = await response.json().catch(() => ({}));
+                const reason = problem.detail ? ` (${escapeHtml(problem.detail)})` : '';
+                showMessage('warning', `Enregistrement refusé : vérifiez le numéro de seau et qu'au moins un tag a été lu${reason}.`);
             } else if (response.status !== 401 && response.status !== 403) {
                 showMessage('danger', `Erreur à l'enregistrement (code ${response.status}).`);
             }
         }
 
-        function confirmSave() {
-            saveSession(pendingMove, pendingOffList);
+        function confirmMove() {
+            saveSession(true);
         }
 
         // 5. ANNULER (DELETE /tags/registration-sessions/{id})
@@ -428,31 +377,6 @@
 
         function clearMessages() {
             document.getElementById('messages').innerHTML = '';
-        }
-
-        // 6. TAGS HORS LISTE (GET /tags/off-list)
-        async function loadOffListTags() {
-            const tbody = document.getElementById('offListTable');
-            const response = await apiFetch('/tags/off-list');
-            if (!response.ok) {
-                if (response.status !== 401 && response.status !== 403) {
-                    showMessage('danger', `Erreur au chargement des tags hors liste (code ${response.status}).`);
-                }
-                return;
-            }
-            const result = await response.json();
-            document.getElementById('referenceListSize').textContent = `Liste de référence : ${result.referenceListSize} tags`;
-            document.getElementById('offListButton').innerHTML = '<i class="fas fa-sync-alt me-1"></i>Actualiser';
-            if (result.tags.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-3">Aucun tag hors liste.</td></tr>';
-                return;
-            }
-            tbody.innerHTML = result.tags.map(tag => `<tr>
-                <td class="tag-uid">${escapeHtml(tag.uid)}</td>
-                <td>${tag.bucketNumber ?? '—'}</td>
-                <td>${tag.recordCount}</td>
-                <td class="text-muted small">${tag.lastRecordAt ? new Date(tag.lastRecordAt).toLocaleString('fr-FR') : '—'}</td>
-            </tr>`).join('');
         }
 
         function formatTime(iso) {

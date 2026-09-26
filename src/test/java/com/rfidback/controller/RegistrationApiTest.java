@@ -45,8 +45,8 @@ import com.rfidback.repository.UserRepository;
 import com.rfidback.support.ReferenceTagUids;
 
 /**
- * HTTP-level checks of the tag-registration sessions, including scans sent with a real reader token (spec 003) and
- * the off-list flag and confirmation (spec 010).
+ * HTTP-level checks of the tag-registration sessions, including scans sent with a real reader token (spec 003);
+ * reads of tags not in the reference list are never kept (spec 010).
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -204,7 +204,7 @@ class RegistrationApiTest {
     }
 
     @Test
-    void offListRead_isFlaggedAndNeedsConfirmationToSave() throws Exception {
+    void offListRead_isNotKept_andSaveRegistersOnlyInListTags() throws Exception {
         UserEntity admin = admin();
         ReaderEntity reader = registrationReader();
         String inList = uniqueUid();
@@ -212,38 +212,30 @@ class RegistrationApiTest {
         long recordsBefore = recordRepository.count();
         String sessionId = startedSessionId(admin, reader);
 
-        // FR-005: the reader gets the usual answer, and nothing but the session read is stored.
+        // FR-003, FR-005: the reader gets the usual answer shape; the off-list read is not stored at all.
         scan(reader, inList).andExpect(status().isOk());
         scan(reader, offList)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.isCompliant").value(true))
-                .andExpect(jsonPath("$.message").value("Registration read"));
+                .andExpect(jsonPath("$.message").value("Registration read ignored: tag not in reference list"));
         assertThat(tagRepository.findByUid(offList)).isEmpty();
         assertThat(recordRepository.count()).isEqualTo(recordsBefore);
 
         mockMvc.perform(get(SESSIONS + "/" + sessionId).with(as(admin)))
+                .andExpect(jsonPath("$.reads", hasSize(1)))
                 .andExpect(jsonPath("$.reads[0].uid").value(inList))
-                .andExpect(jsonPath("$.reads[0].offList").value(false))
-                .andExpect(jsonPath("$.reads[1].uid").value(offList))
-                .andExpect(jsonPath("$.reads[1].offList").value(true));
+                .andExpect(jsonPath("$.reads[0].offList").doesNotExist());
 
         int bucketNumber = randomBucketNumber();
         save(admin, sessionId, Map.of("bucketNumber", bucketNumber))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.offListTags[0]").value(offList))
-                .andExpect(jsonPath("$.tags", hasSize(0)));
-        mockMvc.perform(get(SESSIONS + "/" + sessionId).with(as(admin))).andExpect(status().isOk());
-        assertThat(bucketRepository.findByNumber(bucketNumber)).isEmpty();
-
-        save(admin, sessionId, Map.of("bucketNumber", bucketNumber, "offListConfirmed", true))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.registeredCount").value(2));
-        assertThat(tagRepository.findByUid(offList).orElseThrow().getBucket().getNumber()).isEqualTo(bucketNumber);
-        mockMvc.perform(get(SESSIONS + "/" + sessionId).with(as(admin))).andExpect(status().isNotFound());
+                .andExpect(jsonPath("$.registeredCount").value(1));
+        assertThat(tagRepository.findByUid(inList).orElseThrow().getBucket().getNumber()).isEqualTo(bucketNumber);
+        assertThat(tagRepository.findByUid(offList)).isEmpty();
     }
 
     @Test
-    void readInTheFormTheReadersSend_isNotFlaggedAndSavesWithoutConfirmation() throws Exception {
+    void readInTheFormTheReadersSend_isKeptAndSaves() throws Exception {
         UserEntity admin = admin();
         ReaderEntity reader = registrationReader();
         String asReaderSends = ReferenceTagUids.nextInListAsReaderSends();
@@ -252,8 +244,7 @@ class RegistrationApiTest {
         scan(reader, asReaderSends).andExpect(status().isOk());
 
         mockMvc.perform(get(SESSIONS + "/" + sessionId).with(as(admin)))
-                .andExpect(jsonPath("$.reads[0].uid").value(asReaderSends))
-                .andExpect(jsonPath("$.reads[0].offList").value(false));
+                .andExpect(jsonPath("$.reads[0].uid").value(asReaderSends));
         save(admin, sessionId, Map.of("bucketNumber", randomBucketNumber()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.registeredCount").value(1));

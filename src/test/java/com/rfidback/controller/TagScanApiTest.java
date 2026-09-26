@@ -27,8 +27,9 @@ import com.rfidback.entity.RecordEntity;
 import com.rfidback.repository.ReaderRepository;
 import com.rfidback.repository.RecordRepository;
 import com.rfidback.repository.TagRepository;
+import com.rfidback.support.ReferenceTagUids;
 
-/** HTTP-level checks of POST /api/tags/scan from a PRODUCTION reader (spec 004: blank uid, duplicate reads). */
+/** HTTP-level checks of POST /api/tags/scan from a PRODUCTION reader (spec 004: blank uid, duplicate reads; spec 010: uid not in the reference list). */
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
@@ -92,22 +93,24 @@ class TagScanApiTest {
 
     @Test
     void scan_withSurroundingSpaces_isTrimmed() throws Exception {
-        scan(reader, "  X-2  ", true)
+        String uid = ReferenceTagUids.nextInList();
+        scan(reader, "  " + uid + "  ", true)
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.uid").value("X-2"));
+                .andExpect(jsonPath("$.uid").value(uid));
     }
 
     @Test
     void scan_sameTagTwiceBySameReader_createsOneRecord() throws Exception {
+        String uid = ReferenceTagUids.nextInList();
         long recordsBefore = recordRepository.count();
 
-        String first = scan(reader, "D-1", true)
+        String first = scan(reader, uid, true)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.message").doesNotExist())
                 .andReturn().getResponse().getContentAsString();
         String firstProcessedAt = objectMapper.readTree(first).get("processedAt").asText();
 
-        scan(reader, "D-1", true)
+        scan(reader, uid, true)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.message").value("Duplicate read ignored"))
                 .andExpect(jsonPath("$.isCompliant").value(true))
@@ -118,14 +121,15 @@ class TagScanApiTest {
 
     @Test
     void scan_nonCompliantRepeat_lowersExistingRecord() throws Exception {
+        String uid = ReferenceTagUids.nextInList();
         long recordsBefore = recordRepository.count();
 
-        scan(reader, "D-3", true).andExpect(status().isOk());
-        scan(reader, "D-3", false)
+        scan(reader, uid, true).andExpect(status().isOk());
+        scan(reader, uid, false)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.isCompliant").value(false))
                 .andExpect(jsonPath("$.message").value("Duplicate read ignored"));
-        scan(reader, "D-3", true)
+        scan(reader, uid, true)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.isCompliant").value(false));
 
@@ -137,17 +141,37 @@ class TagScanApiTest {
 
     @Test
     void scan_sameTagByTwoReaders_createsTwoRecords() throws Exception {
+        String uid = ReferenceTagUids.nextInList();
         ReaderEntity otherReader = readerRepository.save(ReaderEntity.builder().name("Other tag scan test").build());
         long recordsBefore = recordRepository.count();
 
-        scan(reader, "D-2", true)
+        scan(reader, uid, true)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.message").doesNotExist());
-        scan(otherReader, "D-2", true)
+        scan(otherReader, uid, true)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.message").doesNotExist());
 
         assertThat(recordRepository.count()).isEqualTo(recordsBefore + 2);
+    }
+
+    @Test
+    void scan_offListUid_returns200Ignored_andCreatesNothing() throws Exception {
+        String uid = ReferenceTagUids.offList();
+        long tagsBefore = tagRepository.count();
+        long recordsBefore = recordRepository.count();
+
+        // isCompliant true whatever the reader sent: the line must not raise an alert for an ignored tag.
+        scan(reader, uid, false)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.uid").value(uid))
+                .andExpect(jsonPath("$.isCompliant").value(true))
+                .andExpect(jsonPath("$.processedAt").exists())
+                .andExpect(jsonPath("$.message").value("Tag not in reference list, ignored"));
+
+        assertThat(tagRepository.findByUid(uid)).isEmpty();
+        assertThat(tagRepository.count()).isEqualTo(tagsBefore);
+        assertThat(recordRepository.count()).isEqualTo(recordsBefore);
     }
 
     private ResultActions scan(ReaderEntity from, String uid, Boolean isCompliant) throws Exception {

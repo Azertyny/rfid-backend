@@ -18,8 +18,9 @@ import org.springframework.util.StringUtils;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * The tags bought for the site (spec 010): any other uid is "hors liste". Loaded once at startup from
- * {@code app.tags.reference-list}; a missing, empty or malformed list stops the boot rather than flag every tag.
+ * The tags bought for the site (spec 010): any other uid is "hors liste" and never stored. Loaded once at startup
+ * from {@code app.tags.reference-list}; a missing, empty or malformed list stops the boot rather than refuse every
+ * tag.
  *
  * <p>A tag is identified by the last {@value #KEY_LENGTH} characters of its uid (spec 010, FR-002): the readers send
  * {@code E28069150000…} where the list has {@code E28069152000…}, and every line of the list shares the same start.
