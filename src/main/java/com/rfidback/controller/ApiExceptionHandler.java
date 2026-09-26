@@ -11,7 +11,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.rfidback.exception.ReaderBusyException;
-import com.rfidback.exception.TagsInOtherBucketsException;
+import com.rfidback.exception.RegistrationNotConfirmedException;
 import com.rfidback.generated.model.ReaderBusy;
 import com.rfidback.generated.model.TagsInOtherBuckets;
 
@@ -51,11 +51,13 @@ public class ApiExceptionHandler {
                 .body(exception.getBody());
     }
 
-    @ExceptionHandler(TagsInOtherBucketsException.class)
-    public ResponseEntity<TagsInOtherBuckets> handleTagsInOtherBuckets(TagsInOtherBucketsException exception) {
+    @ExceptionHandler(RegistrationNotConfirmedException.class)
+    public ResponseEntity<TagsInOtherBuckets> handleRegistrationNotConfirmed(
+            RegistrationNotConfirmedException exception) {
         TagsInOtherBuckets body = new TagsInOtherBuckets();
         body.setMessage(exception.getMessage());
         body.setTags(exception.getTags());
+        body.setOffListTags(exception.getOffListTags());
         return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
     }
 

@@ -1,6 +1,7 @@
 package com.rfidback.repository;
 
 import java.time.OffsetDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -76,6 +77,11 @@ public interface RecordRepository extends JpaRepository<RecordEntity, UUID> {
     List<HourCountsView> countByUtcHourForReader(@Param("start") OffsetDateTime start,
             @Param("end") OffsetDateTime end, @Param("reader") ReaderEntity reader);
 
+    /** Record count and latest record date of each given tag that has records (spec 010, FR-009). */
+    @Query("select r.tag.id as tagId, count(r) as recordCount, max(r.creationDate) as lastRecordAt"
+            + " from RecordEntity r where r.tag.id in :tagIds group by r.tag.id")
+    List<TagRecordsView> findStatsByTagIds(@Param("tagIds") Collection<UUID> tagIds);
+
     // Numbers, not Long: count, sum and floor come back as Long, Integer, Double or BigDecimal depending on the
     // database. A sum over no row is null.
     interface CountsView {
@@ -94,5 +100,13 @@ public interface RecordRepository extends JpaRepository<RecordEntity, UUID> {
 
     interface HourCountsView extends CountsView {
         Number getHourIndex();
+    }
+
+    interface TagRecordsView {
+        UUID getTagId();
+
+        Number getRecordCount();
+
+        OffsetDateTime getLastRecordAt();
     }
 }

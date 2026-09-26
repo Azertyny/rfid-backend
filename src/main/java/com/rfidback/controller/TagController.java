@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import com.rfidback.entity.ReaderEntity;
 import com.rfidback.entity.ReaderMode;
 import com.rfidback.generated.api.TagApiDelegate;
+import com.rfidback.generated.model.OffListTagsList;
 import com.rfidback.generated.model.RegisterTagsRequest;
 import com.rfidback.generated.model.RegisterTagsResponse;
 import com.rfidback.generated.model.ScanTagRequest;
@@ -42,6 +43,11 @@ public class TagController implements TagApiDelegate {
     public ResponseEntity<RegisterTagsResponse> registerTagsForBucket(Integer bucketNumber,
             RegisterTagsRequest registerTagsRequest) {
         return ResponseEntity.ok(tagService.registerTagsForBucket(bucketNumber, registerTagsRequest));
+    }
+
+    @Override
+    public ResponseEntity<OffListTagsList> listOffListTags() {
+        return ResponseEntity.ok(tagService.listOffListTags());
     }
 
     private Optional<ReaderEntity> resolveAuthenticatedReader() {
