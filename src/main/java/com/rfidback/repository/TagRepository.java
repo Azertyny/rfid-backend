@@ -6,7 +6,9 @@ import java.util.Optional;
 import java.util.UUID;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import com.rfidback.entity.BucketEntity;
 import com.rfidback.entity.TagEntity;
@@ -23,7 +25,8 @@ public interface TagRepository extends JpaRepository<TagEntity, UUID> {
 
     long countByBucket(BucketEntity bucket);
 
-    /** Every known tag with its bucket in one query, for the off-list tags page (spec 010, FR-009). */
-    @Query("select t from TagEntity t left join fetch t.bucket")
-    List<TagEntity> findAllWithBucket();
+    // Bulk delete for the one-off purge of off-list tags (spec 010 révision, OffListTagPurge).
+    @Modifying
+    @Query("delete from TagEntity t where t.id in :ids")
+    int deleteByIdIn(@Param("ids") Collection<UUID> ids);
 }

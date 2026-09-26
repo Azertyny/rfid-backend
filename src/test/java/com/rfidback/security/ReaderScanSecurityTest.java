@@ -26,6 +26,7 @@ import com.rfidback.entity.ReaderMode;
 import com.rfidback.repository.ReaderRepository;
 import com.rfidback.repository.RecordRepository;
 import com.rfidback.repository.RegistrationReadRepository;
+import com.rfidback.support.ReferenceTagUids;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -33,8 +34,10 @@ import com.rfidback.repository.RegistrationReadRepository;
 @Transactional
 class ReaderScanSecurityTest {
 
-    private static final String SCAN_BODY = "{\"uid\":\"E2000017221101891400A23G\",\"isCompliant\":true}";
-    private static final String READS_BODY = "{\"uids\":[\"E2000017221101891400A23G\"]}";
+    // In the reference list, so the scans these cases let through are really stored (spec 010).
+    private static final String UID = ReferenceTagUids.nextInList();
+    private static final String SCAN_BODY = "{\"uid\":\"%s\",\"isCompliant\":true}".formatted(UID);
+    private static final String READS_BODY = "{\"uids\":[\"%s\"]}".formatted(UID);
 
     @Autowired
     private MockMvc mockMvc;
@@ -108,7 +111,7 @@ class ReaderScanSecurityTest {
 
         mockMvc.perform(post("/api/tags/scan").header("x-api-token", registrationReader.getApitoken())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"uid\":\"E2000017221101891400A23G\",\"isCompliant\":false}"))
+                        .content("{\"uid\":\"%s\",\"isCompliant\":false}".formatted(UID)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.isCompliant").value(true))
                 .andExpect(header().doesNotExist("Set-Cookie"));

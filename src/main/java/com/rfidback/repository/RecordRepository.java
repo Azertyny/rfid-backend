@@ -9,6 +9,7 @@ import java.util.UUID;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -77,10 +78,10 @@ public interface RecordRepository extends JpaRepository<RecordEntity, UUID> {
     List<HourCountsView> countByUtcHourForReader(@Param("start") OffsetDateTime start,
             @Param("end") OffsetDateTime end, @Param("reader") ReaderEntity reader);
 
-    /** Record count and latest record date of each given tag that has records (spec 010, FR-009). */
-    @Query("select r.tag.id as tagId, count(r) as recordCount, max(r.creationDate) as lastRecordAt"
-            + " from RecordEntity r where r.tag.id in :tagIds group by r.tag.id")
-    List<TagRecordsView> findStatsByTagIds(@Param("tagIds") Collection<UUID> tagIds);
+    // Bulk delete for the one-off purge of off-list tags (spec 010 révision, OffListTagPurge).
+    @Modifying
+    @Query("delete from RecordEntity r where r.tag.id in :tagIds")
+    int deleteByTagIdIn(@Param("tagIds") Collection<UUID> tagIds);
 
     // Numbers, not Long: count, sum and floor come back as Long, Integer, Double or BigDecimal depending on the
     // database. A sum over no row is null.
@@ -100,13 +101,5 @@ public interface RecordRepository extends JpaRepository<RecordEntity, UUID> {
 
     interface HourCountsView extends CountsView {
         Number getHourIndex();
-    }
-
-    interface TagRecordsView {
-        UUID getTagId();
-
-        Number getRecordCount();
-
-        OffsetDateTime getLastRecordAt();
     }
 }

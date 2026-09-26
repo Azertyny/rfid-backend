@@ -296,7 +296,7 @@ class TagServiceTest {
         when(tagRepository.findAllByUidIn(anyCollection())).thenReturn(List.of());
         when(tagRepository.countByBucket(bucket)).thenReturn(2L);
 
-        RegisterTagsResponse response = tagService.registerTagsForBucket(12, List.of("T2"), false, false);
+        RegisterTagsResponse response = tagService.registerTagsForBucket(12, List.of("T2"), false);
 
         assertEquals(12, response.getBucketNumber());
         assertEquals(1, response.getRegisteredCount());
@@ -314,7 +314,7 @@ class TagServiceTest {
         when(bucketRepository.save(any(BucketEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(tagRepository.findAllByUidIn(anyCollection())).thenReturn(List.of());
 
-        tagService.registerTagsForBucket(12, List.of("T1"), false, false);
+        tagService.registerTagsForBucket(12, List.of("T1"), false);
 
         ArgumentCaptor<BucketEntity> captor = ArgumentCaptor.forClass(BucketEntity.class);
         verify(bucketRepository).save(captor.capture());
@@ -327,8 +327,7 @@ class TagServiceTest {
         existingBucket(12);
         when(tagRepository.findAllByUidIn(anyCollection())).thenReturn(List.of());
 
-        RegisterTagsResponse response = tagService.registerTagsForBucket(12, List.of(" A ", "A", "", "B"), false,
-                false);
+        RegisterTagsResponse response = tagService.registerTagsForBucket(12, List.of(" A ", "A", "", "B"), false);
 
         assertEquals(2, response.getRegisteredCount());
         assertThat(savedTags()).extracting(TagEntity::getUid).containsExactly("A", "B");
@@ -339,7 +338,7 @@ class TagServiceTest {
         List<String> uids = java.util.stream.IntStream.range(0, 101).mapToObj(i -> "T" + i).toList();
 
         ResponseStatusException exception = assertThrows(ResponseStatusException.class,
-                () -> tagService.registerTagsForBucket(12, uids, false, false));
+                () -> tagService.registerTagsForBucket(12, uids, false));
 
         assertEquals(HttpStatus.BAD_REQUEST, exception.getStatusCode());
         verify(tagRepository, never()).saveAll(anyIterable());
@@ -349,7 +348,7 @@ class TagServiceTest {
     @Test
     void registerTagsForBucket_allBlankUids_throws400AndWritesNothing() {
         ResponseStatusException exception = assertThrows(ResponseStatusException.class,
-                () -> tagService.registerTagsForBucket(12, List.of(" ", ""), false, false));
+                () -> tagService.registerTagsForBucket(12, List.of(" ", ""), false));
 
         assertEquals(HttpStatus.BAD_REQUEST, exception.getStatusCode());
         verify(tagRepository, never()).saveAll(anyIterable());
@@ -363,13 +362,12 @@ class TagServiceTest {
         when(tagRepository.findAllByUidIn(anyCollection())).thenReturn(List.of(tag));
 
         RegistrationNotConfirmedException exception = assertThrows(RegistrationNotConfirmedException.class,
-                () -> tagService.registerTagsForBucket(12, List.of("T1", "T2"), false, false));
+                () -> tagService.registerTagsForBucket(12, List.of("T1", "T2"), false));
 
         assertThat(exception.getTags()).singleElement().satisfies(conflict -> {
             assertEquals("T1", conflict.getUid());
             assertEquals(7, conflict.getBucketNumber());
         });
-        assertThat(exception.getOffListTags()).isEmpty();
         assertEquals(otherBucket, tag.getBucket());
         verify(tagRepository, never()).saveAll(anyIterable());
         verify(bucketRepository, never()).save(any());
@@ -382,7 +380,7 @@ class TagServiceTest {
         TagEntity tag = TagEntity.builder().uid("T1").bucket(otherBucket).build();
         when(tagRepository.findAllByUidIn(anyCollection())).thenReturn(List.of(tag));
 
-        tagService.registerTagsForBucket(12, List.of("T1"), true, false);
+        tagService.registerTagsForBucket(12, List.of("T1"), true);
 
         assertEquals(bucket, tag.getBucket());
         assertThat(savedTags()).containsExactly(tag);
@@ -394,72 +392,68 @@ class TagServiceTest {
         TagEntity tag = TagEntity.builder().uid("T1").bucket(bucket).build();
         when(tagRepository.findAllByUidIn(anyCollection())).thenReturn(List.of(tag));
 
-        RegisterTagsResponse response = tagService.registerTagsForBucket(12, List.of("T1"), false, false);
+        RegisterTagsResponse response = tagService.registerTagsForBucket(12, List.of("T1"), false);
 
         assertEquals(1, response.getRegisteredCount());
         assertThat(savedTags()).containsExactly(tag);
     }
 
-    // --- registerTagsForBucket: reference list (spec 010, FR-004) ---
+    // --- registerScan: reference list (spec 010 révision, FR-006) ---
 
     @Test
-    void registerTagsForBucket_offListTag_withoutConfirmation_throwsConflictAndWritesNothing() {
+    void registerScan_offListUid_returnsIgnored_withoutTouchingTheDatabase() {
+        ReaderEntity reader = ReaderEntity.builder().id(UUID.randomUUID()).apitoken("token").name("Reader").build();
+        when(referenceTagList.isOffList("OFF")).thenReturn(true);
+
+        ScanTagResponse response = tagService.registerScan(reader, new ScanTagRequest().uid(" OFF ").isCompliant(false));
+
+        assertEquals("OFF", response.getUid());
+        assertEquals(true, response.getIsCompliant());
+        assertEquals(OffsetDateTime.now(clock), response.getProcessedAt());
+        assertEquals(TagService.OFF_LIST_SCAN_IGNORED, response.getMessage());
+        Mockito.verifyNoInteractions(tagRepository, recordRepository, recordConformityChangeRepository);
+    }
+
+    @Test
+    void registerScan_blankUid_isRefusedBeforeTheListIsConsulted() {
+        ReaderEntity reader = ReaderEntity.builder().id(UUID.randomUUID()).apitoken("token").name("Reader").build();
+
+        assertThrows(IllegalArgumentException.class,
+                () -> tagService.registerScan(reader, new ScanTagRequest().uid("  ").isCompliant(true)));
+
+        Mockito.verifyNoInteractions(referenceTagList, tagRepository, recordRepository);
+    }
+
+    // --- registerTagsForBucket: reference list (spec 010 révision, FR-004) ---
+
+    @Test
+    void registerTagsForBucket_offListTag_throws400NamingItAndWritesNothing() {
         when(tagRepository.findAllByUidIn(anyCollection())).thenReturn(List.of());
         when(referenceTagList.isOffList("OFF")).thenReturn(true);
 
-        RegistrationNotConfirmedException exception = assertThrows(RegistrationNotConfirmedException.class,
-                () -> tagService.registerTagsForBucket(12, List.of("IN", "OFF"), false, false));
+        ResponseStatusException exception = assertThrows(ResponseStatusException.class,
+                () -> tagService.registerTagsForBucket(12, List.of("IN", "OFF"), false));
 
-        assertThat(exception.getOffListTags()).containsExactly("OFF");
-        assertThat(exception.getTags()).isEmpty();
+        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatusCode());
+        assertThat(exception.getReason()).contains("Tags not in the reference list").contains("OFF")
+                .doesNotContain(": IN");
         verify(tagRepository, never()).saveAll(anyIterable());
+        verify(tagRepository, never()).save(any());
         verify(bucketRepository, never()).save(any());
     }
 
     @Test
-    void registerTagsForBucket_offListTag_withConfirmation_registersIt() {
-        BucketEntity bucket = existingBucket(12);
-        when(tagRepository.findAllByUidIn(anyCollection())).thenReturn(List.of());
-        when(referenceTagList.isOffList("OFF")).thenReturn(true);
-
-        tagService.registerTagsForBucket(12, List.of("IN", "OFF"), false, true);
-
-        assertThat(savedTags()).extracting(TagEntity::getUid).containsExactly("IN", "OFF");
-        assertThat(savedTags()).allSatisfy(tag -> assertEquals(bucket, tag.getBucket()));
-    }
-
-    @Test
-    void registerTagsForBucket_moveAndOffList_eachConfirmationCoversOnlyItsKind() {
+    void registerTagsForBucket_moveAndOffList_moveConfirmed_stillThrows400() {
         BucketEntity otherBucket = BucketEntity.builder().id(UUID.randomUUID()).number(7).build();
         TagEntity moved = TagEntity.builder().uid("MOVED").bucket(otherBucket).build();
         when(tagRepository.findAllByUidIn(anyCollection())).thenReturn(List.of(moved));
         when(referenceTagList.isOffList("OFF")).thenReturn(true);
-        List<String> uids = List.of("MOVED", "OFF");
 
-        RegistrationNotConfirmedException onlyMove = assertThrows(RegistrationNotConfirmedException.class,
-                () -> tagService.registerTagsForBucket(12, uids, true, false));
-        RegistrationNotConfirmedException onlyOffList = assertThrows(RegistrationNotConfirmedException.class,
-                () -> tagService.registerTagsForBucket(12, uids, false, true));
+        ResponseStatusException exception = assertThrows(ResponseStatusException.class,
+                () -> tagService.registerTagsForBucket(12, List.of("MOVED", "OFF"), true));
 
-        for (RegistrationNotConfirmedException exception : List.of(onlyMove, onlyOffList)) {
-            assertThat(exception.getTags()).extracting(conflict -> conflict.getUid()).containsExactly("MOVED");
-            assertThat(exception.getOffListTags()).containsExactly("OFF");
-        }
+        assertEquals(HttpStatus.BAD_REQUEST, exception.getStatusCode());
         verify(tagRepository, never()).saveAll(anyIterable());
         assertEquals(otherBucket, moved.getBucket());
-    }
-
-    @Test
-    void registerTagsForBucket_moveAndOffList_bothConfirmed_registersAll() {
-        BucketEntity bucket = existingBucket(12);
-        BucketEntity otherBucket = BucketEntity.builder().id(UUID.randomUUID()).number(7).build();
-        TagEntity moved = TagEntity.builder().uid("MOVED").bucket(otherBucket).build();
-        when(tagRepository.findAllByUidIn(anyCollection())).thenReturn(List.of(moved));
-        when(referenceTagList.isOffList("OFF")).thenReturn(true);
-
-        tagService.registerTagsForBucket(12, List.of("MOVED", "OFF"), true, true);
-
-        assertEquals(bucket, moved.getBucket());
-        assertThat(savedTags()).extracting(TagEntity::getUid).containsExactly("MOVED", "OFF");
     }
 }

@@ -95,16 +95,18 @@ class RegistrationReadsApiTest {
         RegistrationSessionEntity session = openSession(reader, admin);
         OffsetDateTime activityBefore = session.getLastActivityAt();
         List<String> uids = inListUids(4);
-        uids.add(ReferenceTagUids.offList());
+        List<String> sent = new ArrayList<>(uids);
+        sent.add(ReferenceTagUids.offList());
         long tagsBefore = tagRepository.count();
         long bucketsBefore = bucketRepository.count();
         long recordsBefore = recordRepository.count();
 
-        send(reader, uids)
+        // The off-list uid counts as received but is never kept (spec 010 révision, FR-003).
+        send(reader, sent)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.sessionOpen").value(true))
                 .andExpect(jsonPath("$.receivedCount").value(5))
-                .andExpect(jsonPath("$.addedCount").value(5))
+                .andExpect(jsonPath("$.addedCount").value(4))
                 .andExpect(jsonPath("$.processedAt").exists())
                 .andExpect(jsonPath("$.message").value("Registration reads kept"));
 
@@ -115,11 +117,24 @@ class RegistrationReadsApiTest {
         assertThat(bucketRepository.count()).isEqualTo(bucketsBefore);
         assertThat(recordRepository.count()).isEqualTo(recordsBefore);
 
-        // What the registration page polls (SC-002): every tag, in the reader's order, the off-list one flagged.
+        // What the registration page polls (SC-002): every in-list tag, in the reader's order.
         mockMvc.perform(get("/api/tags/registration-sessions/" + session.getId()).with(as(admin)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.reads[*].uid", contains(uids.toArray())))
-                .andExpect(jsonPath("$.reads[4].offList").value(true));
+                .andExpect(jsonPath("$.reads[*].uid", contains(uids.toArray())));
+    }
+
+    @Test
+    void batch_ofOffListUidsOnly_keepsNothing() throws Exception {
+        ReaderEntity reader = registrationReader();
+        RegistrationSessionEntity session = openSession(reader, admin());
+
+        send(reader, List.of(ReferenceTagUids.offList(), ReferenceTagUids.offList()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sessionOpen").value(true))
+                .andExpect(jsonPath("$.receivedCount").value(2))
+                .andExpect(jsonPath("$.addedCount").value(0));
+
+        assertThat(readUids(session)).isEmpty();
     }
 
     @Test
@@ -343,7 +358,7 @@ class RegistrationReadsApiTest {
         return user(admin.getUsername()).roles("ADMINISTRATEUR");
     }
 
-    // In the reference list, so saving meets no off-list confirmation (spec 010).
+    // In the reference list, so the reads are kept (spec 010).
     private static List<String> inListUids(int count) {
         List<String> uids = new ArrayList<>();
         for (int i = 0; i < count; i++) {
