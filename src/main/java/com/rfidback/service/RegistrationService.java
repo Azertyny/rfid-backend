@@ -3,19 +3,28 @@ package com.rfidback.service;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -30,6 +39,7 @@ import com.rfidback.exception.ReaderNotFoundException;
 import com.rfidback.exception.RegistrationSessionNotFoundException;
 import com.rfidback.generated.model.RegisterTagsResponse;
 import com.rfidback.generated.model.RegistrationRead;
+import com.rfidback.generated.model.RegistrationReadsResponse;
 import com.rfidback.generated.model.RegistrationSession;
 import com.rfidback.generated.model.SaveRegistrationSession;
 import com.rfidback.generated.model.ScanTagResponse;
@@ -51,6 +61,12 @@ public class RegistrationService {
 
     static final String READ_KEPT = "Registration read";
     static final String READ_IGNORED = "Registration read ignored: no session started";
+    static final String READS_KEPT = "Registration reads kept";
+    static final String READS_IGNORED = "Registration reads ignored: no session started";
+    /** Spec 011: a batch may repeat tags, but not beyond this many elements (research R4). */
+    static final int MAX_RAW_UIDS = 1000;
+    /** Length of the uid columns of tag and registration_read. */
+    static final int MAX_UID_LENGTH = 50;
     private static final Duration GET_TOUCH_THRESHOLD = Duration.ofSeconds(30);
 
     private final RegistrationSessionRepository sessionRepository;
@@ -62,12 +78,14 @@ public class RegistrationService {
     private final ReferenceTagList referenceTagList;
     private final Clock clock;
     private final Duration sessionTimeout;
+    private final TransactionTemplate transactionTemplate;
 
     public RegistrationService(RegistrationSessionRepository sessionRepository,
             RegistrationReadRepository readRepository, ReaderRepository readerRepository,
             UserRepository userRepository, TagRepository tagRepository, TagService tagService,
             ReferenceTagList referenceTagList, Clock clock,
-            @Value("${app.registration.session-timeout}") Duration sessionTimeout) {
+            @Value("${app.registration.session-timeout}") Duration sessionTimeout,
+            PlatformTransactionManager transactionManager) {
         this.sessionRepository = sessionRepository;
         this.readRepository = readRepository;
         this.readerRepository = readerRepository;
@@ -77,6 +95,7 @@ public class RegistrationService {
         this.referenceTagList = referenceTagList;
         this.clock = clock;
         this.sessionTimeout = sessionTimeout;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
     public RegistrationSession start(UUID readerId) {
@@ -148,6 +167,82 @@ public class RegistrationService {
         }
         sessionRepository.touch(session.getId(), now);
         return scanResponse(uid, now, READ_KEPT);
+    }
+
+    /**
+     * A batch from an ENREGISTREMENT reader (spec 011): every distinct uid joins its open session, all or none. Not
+     * transactional itself, so that a failed attempt can be rolled back and run again in a fresh transaction.
+     */
+    public RegistrationReadsResponse recordReads(ReaderEntity reader, List<String> rawUids) {
+        if (reader.getMode() != ReaderMode.ENREGISTREMENT) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "This route is reserved for readers in ENREGISTREMENT mode");
+        }
+        if (rawUids == null || rawUids.size() > MAX_RAW_UIDS) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "A batch holds 1 to %d uids".formatted(MAX_RAW_UIDS));
+        }
+        Set<String> distinct = new LinkedHashSet<>();
+        for (String rawUid : rawUids) {
+            String uid = rawUid == null ? "" : rawUid.trim();
+            if (StringUtils.hasText(uid)) {
+                distinct.add(uid);
+            }
+        }
+        if (distinct.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No tag uid in the request");
+        }
+        if (distinct.size() > TagService.MAX_TAGS_PER_REGISTRATION) {
+            throw TagService.tooManyTags();
+        }
+        for (String uid : distinct) {
+            if (uid.length() > MAX_UID_LENGTH) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Tag uid longer than %d characters: %s".formatted(MAX_UID_LENGTH, uid));
+            }
+        }
+        List<String> uids = List.copyOf(distinct);
+        return retryOnce(() -> transactionTemplate.execute(status -> storeReads(reader, uids)));
+    }
+
+    // Two failures can abort a batch: the constraint race with a tag-by-tag read of the same tag (recordRead takes no
+    // lock), and a lock wait that timed out behind a stuck transaction. Neither may end in a 500 (research R5).
+    private static <T> T retryOnce(Supplier<T> attempt) {
+        for (int run = 1;; run++) {
+            try {
+                return attempt.get();
+            } catch (DataIntegrityViolationException | PessimisticLockingFailureException exception) {
+                if (run == 2) {
+                    throw new ResponseStatusException(HttpStatus.CONFLICT, "Concurrent reads, send the batch again");
+                }
+            }
+        }
+    }
+
+    private RegistrationReadsResponse storeReads(ReaderEntity reader, List<String> uids) {
+        OffsetDateTime now = now();
+        Optional<RegistrationSessionEntity> found = sessionRepository.findLockedByReader(reader);
+        if (found.isEmpty()) {
+            return readsResponse(false, uids.size(), 0, now, READS_IGNORED);
+        }
+        RegistrationSessionEntity session = found.get();
+        if (isExpired(session)) {
+            deleteSession(session);
+            return readsResponse(false, uids.size(), 0, now, READS_IGNORED);
+        }
+
+        Set<String> known = new HashSet<>(readRepository.findUidsBySessionAndUidIn(session, uids));
+        List<RegistrationReadEntity> newReads = new ArrayList<>();
+        for (int i = 0; i < uids.size(); i++) {
+            if (!known.contains(uids.get(i))) {
+                // One microsecond apart, so the page lists the batch in the reader's order (research R6).
+                newReads.add(RegistrationReadEntity.builder().session(session).uid(uids.get(i))
+                        .firstReadAt(now.plus(i, ChronoUnit.MICROS)).build());
+            }
+        }
+        readRepository.saveAllAndFlush(newReads);
+        session.setLastActivityAt(now);
+        return readsResponse(true, uids.size(), newReads.size(), now, READS_KEPT);
     }
 
     @Transactional(noRollbackFor = RegistrationSessionNotFoundException.class)
@@ -260,6 +355,11 @@ public class RegistrationService {
         response.setProcessedAt(now);
         response.setMessage(message);
         return response;
+    }
+
+    private static RegistrationReadsResponse readsResponse(boolean sessionOpen, int receivedCount, int addedCount,
+            OffsetDateTime now, String message) {
+        return new RegistrationReadsResponse(sessionOpen, receivedCount, addedCount, now, message);
     }
 
     private OffsetDateTime now() {
