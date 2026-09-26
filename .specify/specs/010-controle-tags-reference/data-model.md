@@ -1,68 +1,83 @@
 # Data Model: Contrôle des tags par rapport à la liste de référence
 
-No table, column or index is added. The feature adds one in-memory structure and derived fields in API answers
-([research](research.md) R1, R4).
+Revision of 2026-09-26: tags not in the reference list never enter the database, and those already stored are deleted
+once at deployment ([research](research.md) R4–R8). The reference list itself is unchanged since the first delivery
+(R1–R3).
 
-## Reference tag list (new, in memory)
+## Reference tag list (in memory, unchanged)
 
 | Aspect | Value |
 |---|---|
 | Source | `src/main/resources/tags/rfid_tag_list.csv`, set by `app.tags.reference-list` |
 | Format | one UID per line, 24 hexadecimal characters, no header; `\n` or `\r\n`; optional UTF-8 BOM |
-| Content at delivery | 5,008 unique UIDs (moved from `doc/rfid_tag_list.csv`) |
+| Content at delivery | 5,008 unique UIDs |
 | Held as | immutable set of the last 12 characters of each UID, upper-cased, loaded once at startup (`ReferenceTagList`) |
 | Changes | only by editing the file and deploying a new version (clarification Q1) |
 
-**Validation at startup** (R2) — the application does not start when:
+**Validation at startup** (R2): the application does not start when the resource does not exist or cannot be read;
+no UID is found; a non-blank line, once trimmed, is not 24 characters `[0-9A-Fa-f]`; two lines end with the same 12
+characters (the error names both line numbers). Blank lines are skipped.
 
-- the resource does not exist or cannot be read;
-- no UID is found;
-- a non-blank line, once trimmed, is not 24 characters `[0-9A-Fa-f]`;
-- two lines end with the same 12 characters (the error names both line numbers).
+**Membership** (R3): `isOffList(uid)` is false when the last 12 characters of `uid.trim().toUpperCase(Locale.ROOT)`
+are in the set. A `null` or blank UID, or one shorter than 12 characters, is off-list. So `E2806915000040287477C993`
+(as the readers send it) and `E2806915200040287477C993` (as in the file) are both in the list.
 
-Blank lines are skipped.
+## New entity: `DataUpgradeEntity` (table `data_upgrade`)
 
-**Membership** (R3): the list is held as the last 12 characters of each line, upper-cased. `contains(uid)` is true
-when the last 12 characters of `uid.trim().toUpperCase(Locale.ROOT)` are in that set. A `null` or blank UID, or one
-shorter than 12 characters, is not in the list. So `E2806915000040287477C993` (as the readers send it) and
-`E2806915200040287477C993` (as in the file) are both in the list.
+Records one-off data changes already applied, so that each runs only once (R8).
 
-## Existing entities (unchanged in the database)
+| Column | Type | Constraint | Meaning |
+|---|---|---|---|
+| `name` | varchar(100) | primary key | identifier of the change; `010-off-list-tag-purge` for this feature |
+| `applied_at` | timestamp with time zone | not null | when it ran (`Clock` bean) |
 
-| Entity | Derived property | Rule |
+Created by `ddl-auto: update`. Rows are only ever inserted, by the runner that applied the change, in the same
+transaction as the change itself. Repository: `DataUpgradeRepository` (`existsById`, `save`).
+
+## Existing entities: invariant after the revision
+
+| Entity (table) | Invariant | Enforced by |
 |---|---|---|
-| `TagEntity` (`tag`) | off-list | `!referenceTagList.contains(uid)` |
-| `RegistrationReadEntity` (`registration_read`) | off-list | same, on its `uid` |
-| `RecordEntity` (`record`) | tag off-list | same, on `record.tag.uid` |
+| `TagEntity` (`tag`) | every `uid` is in the list | scan (R4) and bucket registration (R6) refuse off-list UIDs; purge (R7) removed the older ones |
+| `RecordEntity` (`record`) | every record's tag is in the list | follows from `tag`; records of off-list tags purged |
+| `RecordConformityChangeEntity` (`record_conformity_change`) | belongs to a record of an in-list tag | purged with their records |
+| `RegistrationReadEntity` (`registration_read`) | every `uid` is in the list | reads filtered on the way in (R5); older ones purged |
+| `BucketEntity` (`bucket`) | unchanged | a bucket that lost its off-list tags is kept, possibly with no tag |
 
-The derived property is computed each time an answer is built, so it always follows the list shipped with the running
-version (spec assumption).
+No column is added to or removed from these tables; no derived "off-list" property is exposed any more (R9).
 
-## Registration rule (FR-004, R5)
+**Exception to the invariant (accepted)**: a tag already stored and later removed from the list by a new version stays,
+with its records (clarification révision Q4). Only its new scans and registrations are refused.
 
-Inputs: bucket number, UIDs (unique, trimmed, non-blank, at most 100), `moveConfirmed`, `offListConfirmed`.
+## Entry rules
 
-1. `inOtherBuckets` = known tags among the UIDs linked to a bucket with another number.
-2. `offList` = UIDs not in the reference list.
-3. If (`inOtherBuckets` non-empty and not `moveConfirmed`) or (`offList` non-empty and not `offListConfirmed`):
-   answer `409` with both lists (each list as computed, whatever the flags), write nothing; a registration session
-   stays open.
-4. Otherwise register as today (spec `003`): off-list tags are saved like any other.
+| Entry point | Off-list UID | Rest of the request |
+|---|---|---|
+| `POST /tags/scan`, `PRODUCTION` reader | `200`, `isCompliant: true`, message "Tag not in reference list, ignored"; nothing written | n/a (one UID) |
+| `POST /tags/scan`, `ENREGISTREMENT` reader | `200`, `isCompliant: true`, message "Registration read ignored: tag not in reference list"; session untouched | n/a |
+| `POST /tags/registration-reads` | not added to the session; counted in `receivedCount`, never in `addedCount` | in-list UIDs added as today |
+| `POST /tags/buckets/{n}`, `POST /tags/registration-sessions/{id}/save` | `400` naming the off-list UIDs; nothing written; session stays open | refused with them |
 
-## Off-list tag entry (new API shape, FR-009)
+Order of checks for a bucket registration: input checks (non-blank, ≤ 100) → off-list (`400`) → in another bucket
+without `moveConfirmed` (`409`) → write.
 
-| Field | Source |
-|---|---|
-| `uid` | `tag.uid` |
-| `bucketNumber` | `tag.bucket.number`, or null |
-| `recordCount` | number of Records of the tag |
-| `lastRecordAt` | latest `record.creation_date` of the tag, or null |
-| `createdAt` | `tag.creation_date` |
+## One-off purge (R7, R8)
 
-Sorted by `lastRecordAt` descending (never-read tags last), then `uid`.
+Runs at startup, in one transaction, only when `data_upgrade` has no row `010-off-list-tag-purge`:
+
+1. `offListTagIds` = ids of tags whose `uid` is off-list.
+2. Delete `record_conformity_change` whose record's tag is in `offListTagIds`.
+3. Delete `record` whose tag is in `offListTagIds`.
+4. Delete `tag` in `offListTagIds` (their bucket link goes with them).
+5. Delete `registration_read` whose `uid` is off-list.
+6. Insert `data_upgrade('010-off-list-tag-purge', now)`; log the four counts.
+
+Steps 2–4 in chunks of 1,000 ids. Any failure rolls everything back and stops startup.
 
 ## Configuration
 
 | Property | Default | Profile override |
 |---|---|---|
-| `app.tags.reference-list` | `classpath:tags/rfid_tag_list.csv` (`application.yml`) | none: tests use the shipped list (research R7) |
+| `app.tags.reference-list` | `classpath:tags/rfid_tag_list.csv` (`application.yml`) | none: tests use the shipped list (R10) |
+
+No new property: the purge is governed by its marker, not by configuration (R8).

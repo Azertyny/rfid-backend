@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.UUID;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.transaction.annotation.Transactional;
@@ -24,4 +25,12 @@ public interface RegistrationReadRepository extends JpaRepository<RegistrationRe
 
     @Transactional
     void deleteBySession(RegistrationSessionEntity session);
+
+    @Query("select distinct r.uid from RegistrationReadEntity r")
+    List<String> findDistinctUids();
+
+    // Bulk delete for the one-off purge of off-list tags (spec 010 révision, OffListTagPurge).
+    @Modifying
+    @Query("delete from RegistrationReadEntity r where r.uid in :uids")
+    int deleteByUidIn(@Param("uids") Collection<String> uids);
 }

@@ -41,6 +41,7 @@ import com.rfidback.repository.ReaderRepository;
 import com.rfidback.repository.RecordRepository;
 import com.rfidback.repository.TagRepository;
 import com.rfidback.repository.UserRepository;
+import com.rfidback.support.ReferenceTagUids;
 
 /**
  * HTTP-level checks of GET /api/records/stats on a real database (spec 007, SC-001). Other test classes create records
@@ -98,9 +99,9 @@ class RecordStatsApiTest {
         otherReader = readerRepository.save(ReaderEntity.builder().name("Reader stats test 2").build());
         diallo = pickerRepository.save(PickerEntity.builder().firstname("Amadou").lastname("Diallo").build());
         moreau = pickerRepository.save(PickerEntity.builder().firstname("Valérie").lastname("Moreau").build());
-        dialloTag = tagInBucket("STATS-DIALLO", 97001, diallo);
-        moreauTag = tagInBucket("STATS-MOREAU", 97002, moreau);
-        looseTag = tagRepository.save(TagEntity.builder().uid("STATS-LOOSE").build());
+        dialloTag = tagInBucket(ReferenceTagUids.nextInList(), 97001, diallo);
+        moreauTag = tagInBucket(ReferenceTagUids.nextInList(), 97002, moreau);
+        looseTag = tagRepository.save(TagEntity.builder().uid(ReferenceTagUids.nextInList()).build());
     }
 
     // --- totals (SC-001, FR-009) ---
@@ -205,7 +206,7 @@ class RecordStatsApiTest {
         mockMvc.perform(post("/api/tags/scan")
                 .header("x-api-token", scanner.getApitoken())
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"uid\":\"STATS-DIALLO\",\"isCompliant\":true}"))
+                .content("{\"uid\":\"%s\",\"isCompliant\":true}".formatted(dialloTag.getUid())))
                 .andExpect(status().is2xxSuccessful());
         RecordEntity scan = recordRepository.findTop10ByReader_NameOrderByCreationDateDesc("Reader stats scan").get(0);
         setCreationDate(scan, "2031-05-01T08:00:00Z");

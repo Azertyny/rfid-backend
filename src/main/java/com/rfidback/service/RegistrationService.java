@@ -61,6 +61,8 @@ public class RegistrationService {
 
     static final String READ_KEPT = "Registration read";
     static final String READ_IGNORED = "Registration read ignored: no session started";
+    /** Spec 010 révision: a read of a tag not in the reference list never enters a session. */
+    static final String READ_OFF_LIST = "Registration read ignored: tag not in reference list";
     static final String READS_KEPT = "Registration reads kept";
     static final String READS_IGNORED = "Registration reads ignored: no session started";
     /** Spec 011: a batch may repeat tags, but not beyond this many elements (research R4). */
@@ -139,12 +141,18 @@ public class RegistrationService {
         }
     }
 
-    /** A scan from an ENREGISTREMENT reader: kept once per tag in its open session, never a Record nor a Tag. */
+    /**
+     * A scan from an ENREGISTREMENT reader: kept once per tag in its open session, never a Record nor a Tag. A tag not
+     * in the reference list is ignored before the session is even looked up (spec 010 révision, FR-003).
+     */
     public ScanTagResponse recordRead(ReaderEntity reader, String rawUid) {
         OffsetDateTime now = now();
         String uid = rawUid == null ? "" : rawUid.trim();
         if (!StringUtils.hasText(uid)) {
             return scanResponse(uid, now, READ_IGNORED);
+        }
+        if (referenceTagList.isOffList(uid)) {
+            return scanResponse(uid, now, READ_OFF_LIST);
         }
 
         Optional<RegistrationSessionEntity> found = sessionRepository.findByReader(reader);
@@ -170,8 +178,10 @@ public class RegistrationService {
     }
 
     /**
-     * A batch from an ENREGISTREMENT reader (spec 011): every distinct uid joins its open session, all or none. Not
-     * transactional itself, so that a failed attempt can be rolled back and run again in a fresh transaction.
+     * A batch from an ENREGISTREMENT reader (spec 011): every distinct uid in the reference list joins its open
+     * session, all or none; the others are validated like any uid, counted as received, and dropped (spec 010
+     * révision, FR-003). Not transactional itself, so that a failed attempt can be rolled back and run again in a
+     * fresh transaction.
      */
     public RegistrationReadsResponse recordReads(ReaderEntity reader, List<String> rawUids) {
         if (reader.getMode() != ReaderMode.ENREGISTREMENT) {
@@ -201,8 +211,9 @@ public class RegistrationService {
                         "Tag uid longer than %d characters: %s".formatted(MAX_UID_LENGTH, uid));
             }
         }
-        List<String> uids = List.copyOf(distinct);
-        return retryOnce(() -> transactionTemplate.execute(status -> storeReads(reader, uids)));
+        List<String> uids = distinct.stream().filter(uid -> !referenceTagList.isOffList(uid)).toList();
+        int receivedCount = distinct.size();
+        return retryOnce(() -> transactionTemplate.execute(status -> storeReads(reader, uids, receivedCount)));
     }
 
     // Two failures can abort a batch: the constraint race with a tag-by-tag read of the same tag (recordRead takes no
@@ -219,19 +230,21 @@ public class RegistrationService {
         }
     }
 
-    private RegistrationReadsResponse storeReads(ReaderEntity reader, List<String> uids) {
+    private RegistrationReadsResponse storeReads(ReaderEntity reader, List<String> uids, int receivedCount) {
         OffsetDateTime now = now();
         Optional<RegistrationSessionEntity> found = sessionRepository.findLockedByReader(reader);
         if (found.isEmpty()) {
-            return readsResponse(false, uids.size(), 0, now, READS_IGNORED);
+            return readsResponse(false, receivedCount, 0, now, READS_IGNORED);
         }
         RegistrationSessionEntity session = found.get();
         if (isExpired(session)) {
             deleteSession(session);
-            return readsResponse(false, uids.size(), 0, now, READS_IGNORED);
+            return readsResponse(false, receivedCount, 0, now, READS_IGNORED);
         }
 
-        Set<String> known = new HashSet<>(readRepository.findUidsBySessionAndUidIn(session, uids));
+        // Empty when every uid of the batch was off-list: the session's activity is still refreshed.
+        Set<String> known = uids.isEmpty() ? Set.of()
+                : new HashSet<>(readRepository.findUidsBySessionAndUidIn(session, uids));
         List<RegistrationReadEntity> newReads = new ArrayList<>();
         for (int i = 0; i < uids.size(); i++) {
             if (!known.contains(uids.get(i))) {
@@ -242,7 +255,7 @@ public class RegistrationService {
         }
         readRepository.saveAllAndFlush(newReads);
         session.setLastActivityAt(now);
-        return readsResponse(true, uids.size(), newReads.size(), now, READS_KEPT);
+        return readsResponse(true, receivedCount, newReads.size(), now, READS_KEPT);
     }
 
     @Transactional(noRollbackFor = RegistrationSessionNotFoundException.class)
@@ -261,7 +274,7 @@ public class RegistrationService {
         deleteSession(loadOwnedSession(sessionId));
     }
 
-    /** Registers the session's reads on the bucket, then closes it. On 409 the session stays open. */
+    /** Registers the session's reads on the bucket, then closes it. On 400 or 409 the session stays open. */
     @Transactional(noRollbackFor = RegistrationSessionNotFoundException.class)
     public RegisterTagsResponse save(UUID sessionId, SaveRegistrationSession request) {
         RegistrationSessionEntity session = loadOwnedSession(sessionId);
@@ -276,7 +289,7 @@ public class RegistrationService {
             throw TagService.tooManyTags();
         }
         RegisterTagsResponse response = tagService.registerTagsForBucket(request.getBucketNumber(), uids,
-                Boolean.TRUE.equals(request.getMoveConfirmed()), Boolean.TRUE.equals(request.getOffListConfirmed()));
+                Boolean.TRUE.equals(request.getMoveConfirmed()));
         deleteSession(session);
         return response;
     }
@@ -331,8 +344,7 @@ public class RegistrationService {
         model.setStartedBy(session.getStartedBy().getUsername());
         model.setStartedAt(session.getStartedAt());
         model.setReads(reads.stream().map(read -> {
-            RegistrationRead readModel = new RegistrationRead(read.getUid(), read.getFirstReadAt(),
-                    referenceTagList.isOffList(read.getUid()));
+            RegistrationRead readModel = new RegistrationRead(read.getUid(), read.getFirstReadAt());
             readModel.setBucketNumber(bucketByUid.get(read.getUid()));
             return readModel;
         }).toList());

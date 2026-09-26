@@ -2,6 +2,7 @@ package com.rfidback.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.not;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
@@ -118,34 +119,15 @@ class RecordApiTest {
     }
 
     @Test
-    void listLatest_flagsOffListTags_andOffListScanIsRecordedAsUsual() throws Exception {
-        String inList = ReferenceTagUids.nextInList();
-        String offList = ReferenceTagUids.offList();
-
-        scan(inList, true).andExpect(status().isOk());
-        // FR-006: same answer as for an in-list tag, with the verdict the reader sent.
-        scan(offList, false)
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.uid").value(offList))
-                .andExpect(jsonPath("$.isCompliant").value(false))
-                .andExpect(jsonPath("$.processedAt").exists());
-
-        mockMvc.perform(get("/api/records/readers/{readerId}", READER_NAME).with(asOperator()))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.records[?(@.tagUid == '%s')].tagOffList".formatted(inList)).value(false))
-                .andExpect(jsonPath("$.records[?(@.tagUid == '%s')].tagOffList".formatted(offList)).value(true))
-                .andExpect(jsonPath("$.records[?(@.tagUid == '%s')].isCompliant".formatted(offList)).value(false));
-    }
-
-    @Test
-    void listLatest_uidInTheFormTheReadersSend_isNotFlagged() throws Exception {
+    void scan_uidInTheFormTheReadersSend_isRecorded() throws Exception {
         String asReaderSends = ReferenceTagUids.nextInListAsReaderSends();
 
         scan(asReaderSends, true).andExpect(status().isOk());
 
         mockMvc.perform(get("/api/records/readers/{readerId}", READER_NAME).with(asOperator()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.records[?(@.tagUid == '%s')].tagOffList".formatted(asReaderSends)).value(false));
+                .andExpect(jsonPath("$.records[?(@.tagUid == '%s')]".formatted(asReaderSends), hasSize(1)))
+                .andExpect(jsonPath("$.records[0].tagOffList").doesNotExist());
     }
 
     @Test
@@ -215,12 +197,13 @@ class RecordApiTest {
 
     @Test
     void duplicateScanAfterChange_doesNotLowerRecord() throws Exception {
-        scan("L-1", true).andExpect(status().isOk());
+        String uid = ReferenceTagUids.nextInList();
+        scan(uid, true).andExpect(status().isOk());
         RecordEntity record = latestRecord();
         patchConformity(record, false, asOperator()).andExpect(status().isNoContent());
         patchConformity(record, true, asOperator()).andExpect(status().isNoContent());
 
-        scan("L-1", false)
+        scan(uid, false)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.message").value("Duplicate read ignored"))
                 .andExpect(jsonPath("$.isCompliant").value(true));
@@ -232,10 +215,11 @@ class RecordApiTest {
 
     @Test
     void duplicateScanWithoutChange_stillLowersRecord() throws Exception {
-        scan("L-2", true).andExpect(status().isOk());
+        String uid = ReferenceTagUids.nextInList();
+        scan(uid, true).andExpect(status().isOk());
         RecordEntity record = latestRecord();
 
-        scan("L-2", false)
+        scan(uid, false)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.isCompliant").value(false));
 

@@ -57,7 +57,6 @@ public class ApiExceptionHandler {
         TagsInOtherBuckets body = new TagsInOtherBuckets();
         body.setMessage(exception.getMessage());
         body.setTags(exception.getTags());
-        body.setOffListTags(exception.getOffListTags());
         return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
     }
 
