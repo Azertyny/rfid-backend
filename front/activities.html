@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Activités - Admin</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        body { background-color: #f0f2f5; font-family: 'Segoe UI', sans-serif; }
+        .table-hover tbody tr:hover { background-color: #f1f1f1; }
+        .grid-table th.activity-col { writing-mode: horizontal-tb; white-space: nowrap; text-align: center; }
+        .grid-table td.check-cell { text-align: center; }
+        .grid-table .disabled-activity { color: #adb5bd; }
+    </style>
+</head>
+<body class="d-flex flex-column h-100">
+
+    <!-- MENU DE NAVIGATION HARMONISÉ -->
+    <nav class="navbar navbar-expand navbar-dark bg-dark shadow-sm">
+        <div class="container-fluid max-w-7xl mx-auto px-4">
+            <a class="navbar-brand fw-bold" href="index.html">
+                <i class="fas fa-wifi me-2"></i>RFID Admin
+            </a>
+            <div class="navbar-nav ms-auto gap-2">
+                <a href="index.html" class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-chart-line me-1"></i>Dashboard
+                </a>
+                <a href="pickers.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-users me-1"></i>Cueilleurs
+                </a>
+                <a href="readers.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-satellite-dish me-1"></i>Lecteurs
+                </a>
+                <a href="activities.html" data-admin-only class="btn btn-sm btn-primary">
+                    <i class="fas fa-seedling me-1"></i>Activités
+                </a>
+                <a href="tags.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-tags me-1"></i>Tags
+                </a>
+                <a href="buckets.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-fill me-1"></i>Seaux
+                </a>
+                <a href="users.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-user-shield me-1"></i>Utilisateurs
+                </a>
+                <button class="btn btn-sm btn-outline-light border-0" onclick="logout()">
+                    <i class="fas fa-sign-out-alt me-1"></i>Déconnexion
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid max-w-7xl mx-auto py-4">
+
+        <!-- En-tête -->
+        <div class="mb-4">
+            <h3 class="fw-bold text-primary mb-0">Activités des lignes</h3>
+            <small class="text-muted">Les produits que chaque ligne peut traiter ; l'opérateur choisit l'activité en cours au kiosque de sa ligne.</small>
+        </div>
+
+        <div id="alertArea"></div>
+
+        <div class="row g-4">
+            <!-- Catalogue -->
+            <div class="col-lg-5">
+                <div class="card shadow-sm border-0">
+                    <div class="card-header bg-white fw-bold">Activités</div>
+                    <div class="card-body">
+                        <form id="createForm" class="d-flex gap-2 mb-3" onsubmit="createActivity(event)">
+                            <input type="text" class="form-control" id="newName" maxlength="100" required placeholder="Ex : Fraise gariguette">
+                            <button type="submit" class="btn btn-success text-nowrap">
+                                <i class="fas fa-plus me-1"></i>Ajouter
+                            </button>
+                        </form>
+                        <table class="table table-hover align-middle mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Nom</th>
+                                    <th style="width: 15%">État</th>
+                                    <th style="width: 40%">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="activitiesTable">
+                                <tr><td colspan="3" class="text-center py-4 text-muted">Chargement...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Grille lignes × activités -->
+            <div class="col-lg-7">
+                <div class="card shadow-sm border-0">
+                    <div class="card-header bg-white fw-bold">Activités par ligne</div>
+                    <div class="card-body p-0 table-responsive">
+                        <table class="table grid-table align-middle mb-0">
+                            <thead class="table-light" id="gridHead"></thead>
+                            <tbody id="gridBody">
+                                <tr><td class="text-center py-4 text-muted">Chargement...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="card-footer bg-white small text-muted">
+                        Seules les lignes en mode production apparaissent. Une activité désactivée reste cochée mais ne peut pas être choisie.
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL DE CONFIRMATION (409 LinesLosingActivity) -->
+    <div class="modal fade" id="confirmModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-warning">
+                    <h5 class="modal-title"><i class="fas fa-exclamation-triangle me-2"></i>Confirmer</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p>Les lignes suivantes n'auront plus d'activité en cours :</p>
+                    <ul id="confirmLines" class="fw-bold"></ul>
+                    <p class="small text-muted mb-0">Leurs prochaines lectures seront « Sans activité » jusqu'à ce que l'opérateur en choisisse une.</p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn btn-warning" id="confirmButton">Confirmer</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="config.js"></script>
+    <script src="auth.js"></script>
+    <script>
+        let confirmModal;
+        let activities = [];
+        let lines = [];
+        // Ticks changed but not saved yet, per line id: a refresh after another action must not lose them.
+        const unsavedTicks = new Map();
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            confirmModal = new bootstrap.Modal(document.getElementById('confirmModal'));
+            await requireRole('ADMINISTRATEUR');
+            refresh();
+        });
+
+        async function refresh() {
+            try {
+                const [activitiesResponse, readersResponse] = await Promise.all([
+                    apiFetch(`/activities`), apiFetch(`/readers`)
+                ]);
+                if (!activitiesResponse.ok || !readersResponse.ok) {
+                    showAlert('danger', "Impossible de charger les activités ou les lecteurs.");
+                    return;
+                }
+                activities = (await activitiesResponse.json()).activities || [];
+                lines = ((await readersResponse.json()).readers || []).filter(r => r.mode === 'PRODUCTION');
+                renderActivities();
+                renderGrid();
+            } catch (e) {
+                console.error(e);
+                showAlert('danger', "Erreur réseau");
+            }
+        }
+
+        // --- CATALOGUE ---
+
+        function renderActivities() {
+            const tbody = document.getElementById('activitiesTable');
+            if (activities.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted py-4">Aucune activité</td></tr>';
+                return;
+            }
+            tbody.innerHTML = activities.map(a => `
+                <tr>
+                    <td>
+                        <span id="name-${a.id}" class="fw-bold">${escapeHtml(a.name)}</span>
+                        <input type="text" id="edit-${a.id}" class="form-control form-control-sm d-none" maxlength="100" value="${escapeHtml(a.name)}">
+                    </td>
+                    <td>${a.active
+                        ? '<span class="badge bg-success">Active</span>'
+                        : '<span class="badge bg-secondary">Désactivée</span>'}</td>
+                    <td class="text-nowrap">
+                        <button class="btn btn-sm btn-outline-primary" id="rename-${a.id}" onclick="startRename('${a.id}')">Renommer</button>
+                        <button class="btn btn-sm btn-primary d-none" id="save-${a.id}" onclick="saveRename('${a.id}')">OK</button>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="setActive('${a.id}', ${!a.active})">
+                            ${a.active ? 'Désactiver' : 'Réactiver'}
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger" onclick="deleteActivity('${a.id}')" title="Supprimer">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </td>
+                </tr>`).join('');
+        }
+
+        async function createActivity(event) {
+            event.preventDefault();
+            const name = document.getElementById('newName').value.trim();
+            if (!name) return;
+            const response = await sendJson(`/activities`, 'POST', { name });
+            if (response.ok) {
+                document.getElementById('createForm').reset();
+                clearAlert();
+                refresh();
+            } else if (response.status === 409) {
+                showAlert('warning', "Ce nom existe déjà (sans tenir compte des majuscules).");
+            } else {
+                showAlert('danger', `Nom invalide : 1 à 100 caractères (code ${response.status}).`);
+            }
+        }
+
+        function startRename(id) {
+            document.getElementById(`name-${id}`).classList.add('d-none');
+            document.getElementById(`rename-${id}`).classList.add('d-none');
+            document.getElementById(`edit-${id}`).classList.remove('d-none');
+            document.getElementById(`save-${id}`).classList.remove('d-none');
+            document.getElementById(`edit-${id}`).focus();
+        }
+
+        async function saveRename(id) {
+            const name = document.getElementById(`edit-${id}`).value.trim();
+            if (!name) return;
+            const response = await sendJson(`/activities/${id}`, 'PATCH', { name });
+            if (response.ok) {
+                clearAlert();
+            } else if (response.status === 409) {
+                showAlert('warning', "Ce nom existe déjà (sans tenir compte des majuscules).");
+            } else {
+                showAlert('danger', `Renommage impossible (code ${response.status}).`);
+            }
+            refresh();
+        }
+
+        // Désactiver une activité en cours sur des lignes : le serveur répond 409 avec ces lignes, on confirme.
+        async function setActive(id, active) {
+            await withConfirmation(confirmed => sendJson(`/activities/${id}`, 'PATCH', { active, confirmed }));
+        }
+
+        async function deleteActivity(id) {
+            const response = await apiFetch(`/activities/${id}`, { method: 'DELETE' });
+            if (response.ok) {
+                clearAlert();
+            } else if (response.status === 409) {
+                showAlert('warning', "Activité déjà utilisée : désactivez-la plutôt que de la supprimer.");
+            } else {
+                showAlert('danger', `Suppression impossible (code ${response.status}).`);
+            }
+            refresh();
+        }
+
+        // --- GRILLE LIGNES × ACTIVITÉS ---
+
+        function renderGrid() {
+            const head = document.getElementById('gridHead');
+            const body = document.getElementById('gridBody');
+            if (lines.length === 0 || activities.length === 0) {
+                head.innerHTML = '';
+                body.innerHTML = `<tr><td class="text-center text-muted py-4">${lines.length === 0
+                    ? 'Aucune ligne en mode production' : 'Créez d\'abord une activité'}</td></tr>`;
+                return;
+            }
+            head.innerHTML = `<tr><th>Ligne</th>${activities.map(a =>
+                `<th class="activity-col ${a.active ? '' : 'disabled-activity'}">${escapeHtml(a.name)}${a.active ? '' : '<br><small>(désactivée)</small>'}</th>`).join('')}<th></th></tr>`;
+            body.innerHTML = lines.map(line => `
+                <tr>
+                    <td class="fw-bold text-primary">${escapeHtml(line.uid)}${line.active === false ? ' <small class="text-muted">(désactivé)</small>' : ''}</td>
+                    ${activities.map(a => `
+                        <td class="check-cell">
+                            <input class="form-check-input" type="checkbox" data-line="${line.id}" value="${a.id}"
+                                onchange="markUnsaved('${line.id}')" ${isTicked(line.id, a) ? 'checked' : ''}>
+                        </td>`).join('')}
+                    <td class="text-end">
+                        <button class="btn btn-sm ${unsavedTicks.has(line.id) ? 'btn-primary' : 'btn-outline-primary'}"
+                            id="save-line-${line.id}" onclick="saveLine('${line.id}')">Enregistrer</button>
+                    </td>
+                </tr>`).join('');
+        }
+
+        function isTicked(lineId, activity) {
+            return unsavedTicks.has(lineId)
+                ? unsavedTicks.get(lineId).has(activity.id)
+                : activity.readerIds.includes(lineId);
+        }
+
+        function checkedActivityIds(lineId) {
+            return [...document.querySelectorAll(`input[data-line="${lineId}"]:checked`)].map(c => c.value);
+        }
+
+        function markUnsaved(lineId) {
+            unsavedTicks.set(lineId, new Set(checkedActivityIds(lineId)));
+            const button = document.getElementById(`save-line-${lineId}`);
+            button.classList.replace('btn-outline-primary', 'btn-primary');
+        }
+
+        async function saveLine(lineId) {
+            const activityIds = checkedActivityIds(lineId);
+            await withConfirmation(confirmed =>
+                sendJson(`/readers/${lineId}/activities`, 'PUT', { activityIds, confirmed }),
+                () => unsavedTicks.delete(lineId));
+        }
+
+        // --- CONFIRMATION (spec 012, FR-007) ---
+
+        // onSaved runs once the change is accepted, before the page is refreshed.
+        async function withConfirmation(send, onSaved = () => {}) {
+            try {
+                const response = await send(false);
+                if (response.ok) {
+                    onSaved();
+                    clearAlert();
+                    refresh();
+                    return;
+                }
+                const body = await response.json().catch(() => ({}));
+                if (response.status === 409 && Array.isArray(body.readerUids)) {
+                    document.getElementById('confirmLines').innerHTML =
+                        body.readerUids.map(uid => `<li>${escapeHtml(uid)}</li>`).join('');
+                    document.getElementById('confirmButton').onclick = async () => {
+                        confirmModal.hide();
+                        const confirmedResponse = await send(true);
+                        if (confirmedResponse.ok) {
+                            onSaved();
+                            clearAlert();
+                        } else {
+                            showAlert('danger', `Modification impossible (code ${confirmedResponse.status}).`);
+                        }
+                        refresh();
+                    };
+                    confirmModal.show();
+                    return;
+                }
+                showAlert('danger', body.detail || `Modification impossible (code ${response.status}).`);
+                refresh();
+            } catch (e) {
+                console.error(e);
+                showAlert('danger', "Erreur réseau");
+            }
+        }
+
+        // --- UTILITAIRES ---
+
+        function sendJson(path, method, payload) {
+            return apiFetch(path, {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+        }
+
+        function showAlert(type, message) {
+            document.getElementById('alertArea').innerHTML =
+                `<div class="alert alert-${type} alert-dismissible fade show" role="alert">${escapeHtml(message)}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`;
+        }
+
+        function clearAlert() {
+            document.getElementById('alertArea').innerHTML = '';
+        }
+
+        function escapeHtml(text) {
+            return String(text).replace(/[&<>"']/g, c =>
+                ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
+    </script>
+</body>
+</html>

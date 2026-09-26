@@ -6,6 +6,7 @@ import static org.hamcrest.Matchers.not;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -25,10 +26,12 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.rfidback.entity.ActivityEntity;
 import com.rfidback.entity.ReaderEntity;
 import com.rfidback.entity.RecordConformityChangeEntity;
 import com.rfidback.entity.RecordEntity;
 import com.rfidback.entity.TagEntity;
+import com.rfidback.repository.ActivityRepository;
 import com.rfidback.repository.ReaderRepository;
 import com.rfidback.repository.RecordConformityChangeRepository;
 import com.rfidback.repository.RecordRepository;
@@ -49,6 +52,9 @@ class KioskReaderTokenSecurityTest {
 
     @Autowired
     private ReaderRepository readerRepository;
+
+    @Autowired
+    private ActivityRepository activityRepository;
 
     @Autowired
     private TagRepository tagRepository;
@@ -136,6 +142,47 @@ class KioskReaderTokenSecurityTest {
     void operatorSession_stillWorks_withoutToken() throws Exception {
         mockMvc.perform(get("/api/records/readers/{readerId}", "Kiosk L2").with(user("op").roles("OPERATEUR")))
                 .andExpect(status().isOk());
+    }
+
+    // --- the line's current activity (spec 012, FR-009) ---
+
+    @Test
+    void lineActivity_ownLine_returns200() throws Exception {
+        ActivityEntity fraise = activityRepository.save(ActivityEntity.builder().name("Kiosk fraise").build());
+        fraise.getLines().add(lineOne);
+
+        mockMvc.perform(get("/api/lines/{readerUid}/current-activity", "Kiosk L1")
+                        .header("x-api-token", lineOne.getApitoken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.currentActivity").isEmpty());
+        mockMvc.perform(put("/api/lines/{readerUid}/current-activity", "Kiosk L1")
+                        .header("x-api-token", lineOne.getApitoken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"activityId\":\"" + fraise.getId() + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.currentActivity.name").value("Kiosk fraise"));
+    }
+
+    @Test
+    void lineActivity_otherLine_returns403() throws Exception {
+        mockMvc.perform(get("/api/lines/{readerUid}/current-activity", "Kiosk L2")
+                        .header("x-api-token", lineOne.getApitoken()))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(put("/api/lines/{readerUid}/current-activity", "Kiosk L2")
+                        .header("x-api-token", lineOne.getApitoken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"activityId\":null}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void lineActivity_disabledReader_returns401() throws Exception {
+        lineOne.setActive(false);
+        readerRepository.saveAndFlush(lineOne);
+
+        mockMvc.perform(get("/api/lines/{readerUid}/current-activity", "Kiosk L1")
+                        .header("x-api-token", lineOne.getApitoken()))
+                .andExpect(status().isUnauthorized());
     }
 
     private ResultActions patchAsKiosk(UUID recordId, boolean isCompliant) throws Exception {

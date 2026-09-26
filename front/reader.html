@@ -70,6 +70,29 @@
         .defect .main-text { color: #000; }
         .defect .sub-text, .defect .timestamp { color: #333; }
 
+        /* Activité de la ligne (spec 012) */
+        .activity-col { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+        .activity-row { display: flex; align-items: center; gap: 20px; }
+        #activity-name { font-size: 2rem; font-weight: 700; }
+        #activity-name.none { color: #FFB300; }
+        #change-activity { background: #1f6feb; color: #fff; border: none; border-radius: 10px; font-size: 1.4rem; font-weight: 700; padding: 14px 28px; cursor: pointer; }
+        #change-activity:active { transform: scale(0.95); }
+        .system-status { font-size: 0.9rem; }
+        #activity-banner { display: none; background: #FFB300; color: #111; font-size: 1.6rem; font-weight: 700; padding: 14px 40px; text-align: center; }
+        #activity-banner small { display: block; font-size: 1.1rem; font-weight: 600; }
+        #activity-chooser { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.92); z-index: 50; flex-direction: column; align-items: center; justify-content: center; }
+        #activity-chooser h2 { font-size: 2rem; color: #aaa; text-transform: uppercase; letter-spacing: 2px; margin: 0 0 30px; }
+        #activity-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; width: 80%; max-width: 1100px; }
+        .activity-option { background: #1a1a1a; border: 3px solid #333; border-radius: 12px; padding: 36px 20px; font-size: 1.8rem; font-weight: 700; color: #fff; text-align: center; cursor: pointer; }
+        .activity-option.current { border-color: #1f6feb; }
+        .activity-option.none { color: #FFB300; }
+        .activity-option:active { transform: scale(0.95); background: #333; }
+        #activity-cancel { margin-top: 30px; background: none; border: 2px solid #555; color: #aaa; border-radius: 10px; font-size: 1.4rem; padding: 14px 40px; cursor: pointer; }
+        #activity-error { color: #ff4d4d; font-size: 1.3rem; min-height: 1.6rem; margin-top: 20px; }
+        .record-activity { font-size: 1.1rem; color: #ddd; margin-top: 12px; text-align: center; padding: 0 10px; }
+        .record-activity.none { color: #777; font-style: italic; }
+        .defect .record-activity { color: #333; }
+
         /* Indicateurs */
         #status-indicator { position: fixed; bottom: 10px; right: 10px; font-size: 0.8rem; opacity: 0.5; }
         .error-state { color: red !important; opacity: 1 !important; }
@@ -91,9 +114,18 @@
                 <span class="value" id="reader-uid-display">--</span>
             </div>
             
-            <div style="text-align:center;">
-                <span id="system-dot" style="display:inline-block; width:15px; height:15px; background:gray; border-radius:50%;"></span>
-                <span id="system-text" style="margin-left:5px; opacity:0.7;">CONNEXION...</span>
+            <div class="activity-col">
+                <div class="activity-row" id="activity-zone">
+                    <div class="header-col">
+                        <span class="label">Activité</span>
+                        <span class="value none" id="activity-name">--</span>
+                    </div>
+                    <button id="change-activity" onclick="openActivityChooser()">Changer</button>
+                </div>
+                <div class="system-status">
+                    <span id="system-dot" style="display:inline-block; width:15px; height:15px; background:gray; border-radius:50%;"></span>
+                    <span id="system-text" style="margin-left:5px; opacity:0.7;">CONNEXION...</span>
+                </div>
             </div>
 
             <div class="header-col" style="text-align:right;">
@@ -101,6 +133,12 @@
                 <span class="value" id="clock" style="font-family:'Courier New';">--:--:--</span>
             </div>
         </header>
+
+        <!-- Bandeau tant qu'aucune activité n'est choisie (spec 012, FR-009a) : ne recouvre rien, le convoyeur rétrécit. -->
+        <div id="activity-banner">
+            <span id="activity-banner-text">Aucune activité en cours</span>
+            <small id="activity-banner-detail"></small>
+        </div>
 
         <div id="conveyor-belt">
             <div class="rail-guide"></div>
@@ -111,6 +149,13 @@
         </div>
     </div>
 
+    <div id="activity-chooser">
+        <h2>Activité en cours</h2>
+        <div id="activity-options"></div>
+        <div id="activity-error"></div>
+        <button id="activity-cancel" onclick="closeActivityChooser()">Annuler</button>
+    </div>
+
     <div id="status-indicator">Initialisation...</div>
 
     <script>
@@ -119,6 +164,9 @@
             uid: null
         };
         let currentRecordsHash = "";
+        let lineActivity = null;
+        let activityInterval = null;
+        const ACTIVITY_POLLING_INTERVAL = 5000;
 
         // --- PHASE 1 : SETUP ---
         
@@ -188,6 +236,11 @@
             fetchRecords();
             // Polling régulier
             intervals.push(setInterval(fetchRecords, CONFIG.POLLING_INTERVAL));
+
+            // Activité de la ligne, plus lente que les lectures (spec 012, research R10)
+            fetchLineActivity();
+            activityInterval = setInterval(fetchLineActivity, ACTIVITY_POLLING_INTERVAL);
+            intervals.push(activityInterval);
         }
 
         function stopApp() {
@@ -244,10 +297,15 @@
                 // Affichage propre du pickerId s'il existe
                 const subtitle = record.pickerId ? `Cueilleur : ...${record.pickerId.slice(-4)}` : "Non assigné";
 
+                const activity = record.activityName
+                    ? `<div class="record-activity">${escapeHtml(record.activityName)}</div>`
+                    : '<div class="record-activity none">Sans activité</div>';
+
                 el.innerHTML = `
                     <div class="box-card">
                         <div class="status-icon">${record.isCompliant ? '✅' : '⚠️'}</div>
                         <div class="timestamp">${timeStr}</div>
+                        ${activity}
                     </div>
                 `;
 
@@ -277,6 +335,120 @@
                 alert("Erreur mise à jour");
                 // Rollback visuel simple : le prochain fetchRecords corrigera l'état
             }
+        }
+
+        // --- ACTIVITÉ DE LA LIGNE (spec 012) ---
+
+        function lineActivityPath() {
+            return `/lines/${encodeURIComponent(CURRENT_READER.uid)}/current-activity`;
+        }
+
+        async function fetchLineActivity() {
+            if (!CURRENT_READER.uid || isKioskUnavailable()) return;
+            try {
+                const response = await apiFetch(lineActivityPath(), { silent: true });
+                if (isKioskUnavailable()) {
+                    stopApp();
+                    return;
+                }
+                // Lecteur en mode enregistrement ouvert par un utilisateur connecté : pas d'activité (analyse U1).
+                if (response.status === 400) {
+                    hideActivity();
+                    return;
+                }
+                if (!response.ok) throw new Error(`API: ${response.status}`);
+                renderLineActivity(await response.json());
+            } catch (error) {
+                console.error(error);
+                updateSystemStatus(false, error.message);
+            }
+        }
+
+        function hideActivity() {
+            clearInterval(activityInterval);
+            lineActivity = null;
+            document.getElementById('activity-zone').style.display = 'none';
+            document.getElementById('activity-banner').style.display = 'none';
+        }
+
+        function renderLineActivity(data) {
+            lineActivity = data;
+            const name = document.getElementById('activity-name');
+            const button = document.getElementById('change-activity');
+            const banner = document.getElementById('activity-banner');
+            const hasChoices = data.availableActivities.length > 0;
+
+            if (data.currentActivity) {
+                name.innerText = data.currentActivity.name;
+                name.classList.remove('none');
+                banner.style.display = 'none';
+            } else {
+                name.innerText = 'Aucune';
+                name.classList.add('none');
+                const count = data.recordsWithoutActivityToday;
+                document.getElementById('activity-banner-text').innerText =
+                    `Aucune activité en cours — ${count} lecture${count > 1 ? 's' : ''} sans activité depuis minuit`;
+                document.getElementById('activity-banner-detail').innerText = hasChoices
+                    ? "Touchez « Changer » pour choisir l'activité de la ligne."
+                    : "Aucune activité n'est associée à cette ligne : contactez l'Administrateur.";
+                banner.style.display = 'block';
+            }
+            button.style.display = hasChoices || data.currentActivity ? 'block' : 'none';
+        }
+
+        function openActivityChooser() {
+            if (!lineActivity) return;
+            const currentId = lineActivity.currentActivity ? lineActivity.currentActivity.id : null;
+            const options = document.getElementById('activity-options');
+            options.innerHTML = '';
+            lineActivity.availableActivities.forEach(activity => {
+                options.appendChild(activityOption(activity.name, activity.id, activity.id === currentId));
+            });
+            options.appendChild(activityOption('Aucune activité', null, currentId === null, 'none'));
+            document.getElementById('activity-error').innerText = '';
+            document.getElementById('activity-chooser').style.display = 'flex';
+        }
+
+        function activityOption(label, activityId, current, extraClass = '') {
+            const option = document.createElement('div');
+            option.className = `activity-option ${current ? 'current' : ''} ${extraClass}`;
+            option.innerText = label;
+            option.onclick = () => chooseActivity(activityId);
+            return option;
+        }
+
+        function closeActivityChooser() {
+            document.getElementById('activity-chooser').style.display = 'none';
+        }
+
+        async function chooseActivity(activityId) {
+            try {
+                const response = await apiFetch(lineActivityPath(), {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ activityId }),
+                    silent: true
+                });
+                if (isKioskUnavailable()) return;
+                if (!response.ok) {
+                    // Activité désactivée ou retirée entre-temps : on recharge la liste.
+                    await fetchLineActivity();
+                    openActivityChooser();
+                    document.getElementById('activity-error').innerText =
+                        "Cette activité n'est plus disponible. Choisissez-en une autre.";
+                    return;
+                }
+                renderLineActivity(await response.json());
+                closeActivityChooser();
+            } catch (error) {
+                console.error(error);
+                document.getElementById('activity-error').innerText = "Erreur de liaison, réessayez.";
+            }
+        }
+
+        function escapeHtml(text) {
+            return String(text).replace(/[&<>"']/g, c =>
+                ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
         }
 
         function updateSystemStatus(isOk, msg = "") {
