@@ -59,9 +59,10 @@ Standard layered structure under `src/main/java/com/rfidback/`:
 ### Security: two kinds of callers, three filter chains
 
 `SecurityConfig` defines three `SecurityFilterChain`s:
-- **Reader devices** (`@Order(1)`, only `POST /api/tags/scan`): stateless, `x-api-token` header checked by
-  `ReaderApiTokenAuthenticationFilter`. Controllers acting for a reader take it from `SecurityContextHolder` as a
-  `ReaderAuthentication` (see `TagController.scanTag`). This filter is a `@Component` whose automatic servlet
+- **Reader devices** (`@Order(1)`, only `POST /api/tags/scan` and `POST /api/tags/registration-reads`): stateless,
+  `x-api-token` header checked by `ReaderApiTokenAuthenticationFilter`. The second route is for ENREGISTREMENT readers
+  only (`403` otherwise): a batch of up to 100 tags into the open registration session (spec 011). Controllers acting
+  for a reader take it from `SecurityContextHolder` as a `ReaderAuthentication` (`controller/AuthenticatedReader`). This filter is a `@Component` whose automatic servlet
   registration is disabled on purpose, so it only runs inside the reader chains.
 - **Line kiosk** (`@Order(2)`, any other `/api/**` request carrying `x-api-token`): `reader.html` on a line's touch
   screen, with that reader's token (given by the kiosk launcher in the URL fragment, `front/auth.js`). Stateless, no

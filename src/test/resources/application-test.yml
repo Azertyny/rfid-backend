@@ -9,7 +9,8 @@ app:
 
 spring:
   datasource:
-    url: jdbc:h2:mem:rfidback-test;DB_CLOSE_DELAY=-1
+    # 10 s lock wait: the concurrent registration batches of spec 011 must not time out on a slow CI.
+    url: jdbc:h2:mem:rfidback-test;DB_CLOSE_DELAY=-1;LOCK_TIMEOUT=10000
     driver-class-name: org.h2.Driver
     username: sa
     password: ""

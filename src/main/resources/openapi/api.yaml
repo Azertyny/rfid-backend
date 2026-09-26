@@ -10,7 +10,7 @@ servers:
   - url: https://vegelink.apolog.fr/api
     description: Serveur de production
 
-# Default: a logged-in user session. /tags/scan uses the reader token, /auth/login is public.
+# Default: a logged-in user session. /tags/scan and /tags/registration-reads use the reader token, /auth/login is public.
 security:
   - SessionCookie: []
 
@@ -420,6 +420,43 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/TagsInOtherBuckets"
+
+  /tags/registration-reads:
+    post:
+      summary: Send the tags read by a registration reader in one call
+      description: >
+        Called by a reader in ENREGISTREMENT mode with the list of tags it has read. Each distinct, non-blank uid
+        becomes a read of the reader's open registration session, as if sent one by one to /tags/scan; all of them
+        or none are kept. No tag, bucket or record is created. Surrounding spaces are removed and blank elements
+        ignored. Without an open session (or with an expired one) nothing is kept and the answer is still 200.
+        A reader in PRODUCTION mode is refused with 403. More than 100 distinct uids, none at all, or a uid longer
+        than 50 characters is refused with 400. The body is validated before the reader's mode is checked.
+      operationId: recordRegistrationReads
+      tags: [Registration]
+      security:
+        - ReaderApiToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegistrationReadsRequest"
+      responses:
+        "200":
+          description: Batch processed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegistrationReadsResponse"
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: The reader is not in ENREGISTREMENT mode
+        "409":
+          description: >
+            Concurrent reads of the same tags, or the reader's session stayed locked too long; nothing was kept,
+            the reader may send the batch again
+        "500": { $ref: "#/components/responses/InternalError" }
 
   # -----------------------------------------------------------------------------------------------
   # Record section
@@ -1278,6 +1315,51 @@ components:
       required:
         - bucketNumber
 
+    RegistrationReadsRequest:
+      type: object
+      properties:
+        uids:
+          type: array
+          description: >
+            Tags read by the reader. Repeats and blank elements are allowed; at most 100 distinct non-blank uids.
+          minItems: 1
+          maxItems: 1000
+          items:
+            type: string
+            example: E2806915000040287477C993
+      required:
+        - uids
+
+    RegistrationReadsResponse:
+      type: object
+      properties:
+        sessionOpen:
+          type: boolean
+          description: False when no registration session was open on the reader; nothing was kept then.
+          example: true
+        receivedCount:
+          type: integer
+          description: Distinct non-blank uids in the request.
+          example: 12
+        addedCount:
+          type: integer
+          description: Uids newly added to the session (already present ones are not counted). 0 without a session.
+          example: 12
+        processedAt:
+          type: string
+          format: date-time
+          example: "2026-09-26T09:30:00Z"
+        message:
+          type: string
+          description: '"Registration reads kept", or "Registration reads ignored: no session started".'
+          example: Registration reads kept
+      required:
+        - sessionOpen
+        - receivedCount
+        - addedCount
+        - processedAt
+        - message
+
     RecordSummary:
       type: object
       properties:
@@ -1634,5 +1716,6 @@ components:
       in: header
       name: x-api-token
       description: >
-        API token of a reader. Authenticates the reader device on POST /tags/scan and the line kiosk on
+        API token of a reader. Authenticates the reader device on POST /tags/scan and POST /tags/registration-reads
+        (ENREGISTREMENT readers only), and the line kiosk on
         GET /records/readers/{its uid} and PATCH /records/{id}/conformity for its own records.

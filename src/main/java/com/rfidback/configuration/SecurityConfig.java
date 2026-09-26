@@ -38,6 +38,7 @@ import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
 import org.springframework.security.web.session.HttpSessionEventPublisher;
 import org.springframework.security.web.util.matcher.AndRequestMatcher;
+import org.springframework.security.web.util.matcher.OrRequestMatcher;
 import org.springframework.security.web.util.matcher.RequestHeaderRequestMatcher;
 import org.springframework.security.web.util.matcher.RequestMatcher;
 
@@ -52,6 +53,7 @@ import jakarta.servlet.DispatcherType;
 public class SecurityConfig {
 
     private static final String READER_SCAN_PATH = "/api/tags/scan";
+    private static final String READER_REGISTRATION_READS_PATH = "/api/tags/registration-reads";
     private static final String READER_TOKEN_HEADER = "x-api-token";
     private static final String ADMINISTRATEUR = Role.ADMINISTRATEUR.name();
     private static final String OPERATEUR = Role.OPERATEUR.name();
@@ -60,20 +62,22 @@ public class SecurityConfig {
     private boolean allowH2Console;
 
     // Readers and human users are authenticated differently. Readers send a stateless API token: reader devices on
-    // /api/tags/scan, and the line kiosk (reader.html on the line's touch screen) on its own reader's records.
-    // Users hold a server-side session protected by CSRF. Each gets its own chain.
+    // /api/tags/scan and /api/tags/registration-reads (spec 011), and the line kiosk (reader.html on the line's touch
+    // screen) on its own reader's records. Users hold a server-side session protected by CSRF. Each gets its own chain.
     @Bean
     @Order(1)
     public SecurityFilterChain readerSecurityFilterChain(HttpSecurity http,
             ReaderApiTokenAuthenticationFilter readerApiTokenAuthenticationFilter) throws Exception {
         http
-                .securityMatcher(path(null, READER_SCAN_PATH))
+                .securityMatcher(new OrRequestMatcher(path(null, READER_SCAN_PATH),
+                        path(null, READER_REGISTRATION_READS_PATH)))
                 .cors(withDefaults())
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .addFilterBefore(readerApiTokenAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(path(HttpMethod.OPTIONS, READER_SCAN_PATH)).permitAll()
+                        .requestMatchers(path(HttpMethod.OPTIONS, READER_REGISTRATION_READS_PATH)).permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(exceptions -> exceptions
                         .authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))

@@ -18,7 +18,8 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 
 // Authenticates every request it sees by the reader's x-api-token. Where it runs is decided by the securityMatcher of
-// the reader chains in SecurityConfig: reader scans, and the line kiosk's own records (spec 008, research R11).
+// the reader chains in SecurityConfig: reader scans and registration batches (spec 011), and the line kiosk's own
+// records (spec 008, research R11).
 @Component
 @RequiredArgsConstructor
 public class ReaderApiTokenAuthenticationFilter extends OncePerRequestFilter {
