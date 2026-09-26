@@ -19,6 +19,9 @@ app:
   scan:
     # A scan of the same tag by the same reader within this time after its latest record creates no new record (spec 004, FR-008). 0s disables it.
     duplicate-window: 10s
+  tags:
+    # Tags expected on buckets; any other uid is flagged "hors liste" (spec 010). Changed only by a new version.
+    reference-list: classpath:tags/rfid_tag_list.csv
   station:
     # Days and hours of the dashboard statistics are computed in this zone (spec 007, FR-007).
     time-zone: ${APP_STATION_TIME_ZONE:Europe/Paris}

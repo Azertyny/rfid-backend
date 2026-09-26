@@ -80,6 +80,7 @@ class AccessMatrixSecurityTest {
                 new Route(HttpMethod.PATCH, "/api/readers/" + ID, "{\"active\":true}", ADMIN_ONLY),
                 new Route(HttpMethod.POST, "/api/readers/" + ID + "/token", null, ADMIN_ONLY),
                 new Route(HttpMethod.POST, "/api/tags/buckets/9999", "{\"uids\":[\"MATRIX-TAG\"]}", ADMIN_ONLY),
+                new Route(HttpMethod.GET, "/api/tags/off-list", null, ADMIN_ONLY),
                 new Route(HttpMethod.POST, "/api/tags/registration-sessions", "{\"readerId\":\"" + ID + "\"}",
                         ADMIN_ONLY),
                 new Route(HttpMethod.GET, "/api/tags/registration-sessions/" + ID, null, ADMIN_ONLY),

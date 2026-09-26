@@ -31,7 +31,7 @@ import com.rfidback.entity.PickerEntity;
 import com.rfidback.entity.ReaderEntity;
 import com.rfidback.entity.RecordEntity;
 import com.rfidback.entity.TagEntity;
-import com.rfidback.exception.TagsInOtherBucketsException;
+import com.rfidback.exception.RegistrationNotConfirmedException;
 import com.rfidback.generated.model.RegisterTagsResponse;
 import com.rfidback.generated.model.ScanTagRequest;
 import com.rfidback.generated.model.ScanTagResponse;
@@ -48,6 +48,7 @@ class TagServiceTest {
     private RecordRepository recordRepository;
     private BucketRepository bucketRepository;
     private RecordConformityChangeRepository recordConformityChangeRepository;
+    private ReferenceTagList referenceTagList;
     private Clock clock;
     private TagService tagService;
 
@@ -57,9 +58,11 @@ class TagServiceTest {
         recordRepository = Mockito.mock(RecordRepository.class);
         bucketRepository = Mockito.mock(BucketRepository.class);
         recordConformityChangeRepository = Mockito.mock(RecordConformityChangeRepository.class);
+        // A mock answers isOffList = false: every uid is in the list unless a test says otherwise.
+        referenceTagList = Mockito.mock(ReferenceTagList.class);
         clock = Clock.fixed(Instant.parse("2024-01-15T09:30:00Z"), ZoneOffset.UTC);
         tagService = new TagService(tagRepository, recordRepository, bucketRepository,
-                recordConformityChangeRepository, clock, DUPLICATE_WINDOW);
+                recordConformityChangeRepository, referenceTagList, clock, DUPLICATE_WINDOW);
     }
 
     @Test
@@ -260,7 +263,7 @@ class TagServiceTest {
     @Test
     void registerScan_zeroWindow_skipsDuplicateLookup() {
         TagService withoutDeduplication = new TagService(tagRepository, recordRepository, bucketRepository,
-                recordConformityChangeRepository, clock, Duration.ZERO);
+                recordConformityChangeRepository, referenceTagList, clock, Duration.ZERO);
         ReaderEntity reader = scanReader();
         existingTag();
         stubNewRecordSave();
@@ -293,7 +296,7 @@ class TagServiceTest {
         when(tagRepository.findAllByUidIn(anyCollection())).thenReturn(List.of());
         when(tagRepository.countByBucket(bucket)).thenReturn(2L);
 
-        RegisterTagsResponse response = tagService.registerTagsForBucket(12, List.of("T2"), false);
+        RegisterTagsResponse response = tagService.registerTagsForBucket(12, List.of("T2"), false, false);
 
         assertEquals(12, response.getBucketNumber());
         assertEquals(1, response.getRegisteredCount());
@@ -311,7 +314,7 @@ class TagServiceTest {
         when(bucketRepository.save(any(BucketEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(tagRepository.findAllByUidIn(anyCollection())).thenReturn(List.of());
 
-        tagService.registerTagsForBucket(12, List.of("T1"), false);
+        tagService.registerTagsForBucket(12, List.of("T1"), false, false);
 
         ArgumentCaptor<BucketEntity> captor = ArgumentCaptor.forClass(BucketEntity.class);
         verify(bucketRepository).save(captor.capture());
@@ -324,7 +327,8 @@ class TagServiceTest {
         existingBucket(12);
         when(tagRepository.findAllByUidIn(anyCollection())).thenReturn(List.of());
 
-        RegisterTagsResponse response = tagService.registerTagsForBucket(12, List.of(" A ", "A", "", "B"), false);
+        RegisterTagsResponse response = tagService.registerTagsForBucket(12, List.of(" A ", "A", "", "B"), false,
+                false);
 
         assertEquals(2, response.getRegisteredCount());
         assertThat(savedTags()).extracting(TagEntity::getUid).containsExactly("A", "B");
@@ -335,7 +339,7 @@ class TagServiceTest {
         List<String> uids = java.util.stream.IntStream.range(0, 101).mapToObj(i -> "T" + i).toList();
 
         ResponseStatusException exception = assertThrows(ResponseStatusException.class,
-                () -> tagService.registerTagsForBucket(12, uids, false));
+                () -> tagService.registerTagsForBucket(12, uids, false, false));
 
         assertEquals(HttpStatus.BAD_REQUEST, exception.getStatusCode());
         verify(tagRepository, never()).saveAll(anyIterable());
@@ -345,7 +349,7 @@ class TagServiceTest {
     @Test
     void registerTagsForBucket_allBlankUids_throws400AndWritesNothing() {
         ResponseStatusException exception = assertThrows(ResponseStatusException.class,
-                () -> tagService.registerTagsForBucket(12, List.of(" ", ""), false));
+                () -> tagService.registerTagsForBucket(12, List.of(" ", ""), false, false));
 
         assertEquals(HttpStatus.BAD_REQUEST, exception.getStatusCode());
         verify(tagRepository, never()).saveAll(anyIterable());
@@ -358,13 +362,14 @@ class TagServiceTest {
         TagEntity tag = TagEntity.builder().uid("T1").bucket(otherBucket).build();
         when(tagRepository.findAllByUidIn(anyCollection())).thenReturn(List.of(tag));
 
-        TagsInOtherBucketsException exception = assertThrows(TagsInOtherBucketsException.class,
-                () -> tagService.registerTagsForBucket(12, List.of("T1", "T2"), false));
+        RegistrationNotConfirmedException exception = assertThrows(RegistrationNotConfirmedException.class,
+                () -> tagService.registerTagsForBucket(12, List.of("T1", "T2"), false, false));
 
         assertThat(exception.getTags()).singleElement().satisfies(conflict -> {
             assertEquals("T1", conflict.getUid());
             assertEquals(7, conflict.getBucketNumber());
         });
+        assertThat(exception.getOffListTags()).isEmpty();
         assertEquals(otherBucket, tag.getBucket());
         verify(tagRepository, never()).saveAll(anyIterable());
         verify(bucketRepository, never()).save(any());
@@ -377,7 +382,7 @@ class TagServiceTest {
         TagEntity tag = TagEntity.builder().uid("T1").bucket(otherBucket).build();
         when(tagRepository.findAllByUidIn(anyCollection())).thenReturn(List.of(tag));
 
-        tagService.registerTagsForBucket(12, List.of("T1"), true);
+        tagService.registerTagsForBucket(12, List.of("T1"), true, false);
 
         assertEquals(bucket, tag.getBucket());
         assertThat(savedTags()).containsExactly(tag);
@@ -389,9 +394,72 @@ class TagServiceTest {
         TagEntity tag = TagEntity.builder().uid("T1").bucket(bucket).build();
         when(tagRepository.findAllByUidIn(anyCollection())).thenReturn(List.of(tag));
 
-        RegisterTagsResponse response = tagService.registerTagsForBucket(12, List.of("T1"), false);
+        RegisterTagsResponse response = tagService.registerTagsForBucket(12, List.of("T1"), false, false);
 
         assertEquals(1, response.getRegisteredCount());
         assertThat(savedTags()).containsExactly(tag);
+    }
+
+    // --- registerTagsForBucket: reference list (spec 010, FR-004) ---
+
+    @Test
+    void registerTagsForBucket_offListTag_withoutConfirmation_throwsConflictAndWritesNothing() {
+        when(tagRepository.findAllByUidIn(anyCollection())).thenReturn(List.of());
+        when(referenceTagList.isOffList("OFF")).thenReturn(true);
+
+        RegistrationNotConfirmedException exception = assertThrows(RegistrationNotConfirmedException.class,
+                () -> tagService.registerTagsForBucket(12, List.of("IN", "OFF"), false, false));
+
+        assertThat(exception.getOffListTags()).containsExactly("OFF");
+        assertThat(exception.getTags()).isEmpty();
+        verify(tagRepository, never()).saveAll(anyIterable());
+        verify(bucketRepository, never()).save(any());
+    }
+
+    @Test
+    void registerTagsForBucket_offListTag_withConfirmation_registersIt() {
+        BucketEntity bucket = existingBucket(12);
+        when(tagRepository.findAllByUidIn(anyCollection())).thenReturn(List.of());
+        when(referenceTagList.isOffList("OFF")).thenReturn(true);
+
+        tagService.registerTagsForBucket(12, List.of("IN", "OFF"), false, true);
+
+        assertThat(savedTags()).extracting(TagEntity::getUid).containsExactly("IN", "OFF");
+        assertThat(savedTags()).allSatisfy(tag -> assertEquals(bucket, tag.getBucket()));
+    }
+
+    @Test
+    void registerTagsForBucket_moveAndOffList_eachConfirmationCoversOnlyItsKind() {
+        BucketEntity otherBucket = BucketEntity.builder().id(UUID.randomUUID()).number(7).build();
+        TagEntity moved = TagEntity.builder().uid("MOVED").bucket(otherBucket).build();
+        when(tagRepository.findAllByUidIn(anyCollection())).thenReturn(List.of(moved));
+        when(referenceTagList.isOffList("OFF")).thenReturn(true);
+        List<String> uids = List.of("MOVED", "OFF");
+
+        RegistrationNotConfirmedException onlyMove = assertThrows(RegistrationNotConfirmedException.class,
+                () -> tagService.registerTagsForBucket(12, uids, true, false));
+        RegistrationNotConfirmedException onlyOffList = assertThrows(RegistrationNotConfirmedException.class,
+                () -> tagService.registerTagsForBucket(12, uids, false, true));
+
+        for (RegistrationNotConfirmedException exception : List.of(onlyMove, onlyOffList)) {
+            assertThat(exception.getTags()).extracting(conflict -> conflict.getUid()).containsExactly("MOVED");
+            assertThat(exception.getOffListTags()).containsExactly("OFF");
+        }
+        verify(tagRepository, never()).saveAll(anyIterable());
+        assertEquals(otherBucket, moved.getBucket());
+    }
+
+    @Test
+    void registerTagsForBucket_moveAndOffList_bothConfirmed_registersAll() {
+        BucketEntity bucket = existingBucket(12);
+        BucketEntity otherBucket = BucketEntity.builder().id(UUID.randomUUID()).number(7).build();
+        TagEntity moved = TagEntity.builder().uid("MOVED").bucket(otherBucket).build();
+        when(tagRepository.findAllByUidIn(anyCollection())).thenReturn(List.of(moved));
+        when(referenceTagList.isOffList("OFF")).thenReturn(true);
+
+        tagService.registerTagsForBucket(12, List.of("MOVED", "OFF"), true, true);
+
+        assertEquals(bucket, moved.getBucket());
+        assertThat(savedTags()).extracting(TagEntity::getUid).containsExactly("MOVED", "OFF");
     }
 }

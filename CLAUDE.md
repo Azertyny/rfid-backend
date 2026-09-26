@@ -86,7 +86,9 @@ changes happen by editing entities and letting Hibernate update the schema at bo
 constraint: the one such change so far (`author_id` nullable, spec 008 kiosk) is run at startup by
 `configuration/ConformityAuthorSchemaUpgrade`.
 `APP_STATION_TIME_ZONE` (default `Europe/Paris`) is the zone of the dashboard's days and hours (`GET /api/records/stats`,
-spec 007); startup fails for a zone whose offset is not a whole number of hours. Config is split across
+spec 007); startup fails for a zone whose offset is not a whole number of hours. The reference tag list (spec 010) is
+`src/main/resources/tags/rfid_tag_list.csv`, loaded at startup by `service/ReferenceTagList` (startup fails on a missing,
+empty or malformed file); tags not in it are flagged "hors liste", and changing it means shipping a new version. Config is split across
 `application.yml` (activates the `dev` profile) plus `application-dev.yml` / `application-prod.yml`.
 
 ### Deployment

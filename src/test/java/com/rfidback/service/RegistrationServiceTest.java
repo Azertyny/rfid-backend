@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
@@ -44,7 +45,7 @@ import com.rfidback.entity.UserEntity;
 import com.rfidback.exception.ReaderBusyException;
 import com.rfidback.exception.ReaderNotFoundException;
 import com.rfidback.exception.RegistrationSessionNotFoundException;
-import com.rfidback.exception.TagsInOtherBucketsException;
+import com.rfidback.exception.RegistrationNotConfirmedException;
 import com.rfidback.generated.model.RegisterTagsResponse;
 import com.rfidback.generated.model.RegistrationSession;
 import com.rfidback.generated.model.SaveRegistrationSession;
@@ -67,6 +68,7 @@ class RegistrationServiceTest {
     private UserRepository userRepository;
     private TagRepository tagRepository;
     private TagService tagService;
+    private ReferenceTagList referenceTagList;
     private RegistrationService registrationService;
 
     private UserEntity alice;
@@ -81,9 +83,10 @@ class RegistrationServiceTest {
         userRepository = Mockito.mock(UserRepository.class);
         tagRepository = Mockito.mock(TagRepository.class);
         tagService = Mockito.mock(TagService.class);
+        referenceTagList = Mockito.mock(ReferenceTagList.class);
         Clock clock = Clock.fixed(Instant.parse("2026-09-24T10:00:00Z"), ZoneOffset.UTC);
         registrationService = new RegistrationService(sessionRepository, readRepository, readerRepository,
-                userRepository, tagRepository, tagService, clock, TIMEOUT);
+                userRepository, tagRepository, tagService, referenceTagList, clock, TIMEOUT);
 
         alice = user("alice");
         bob = user("bob");
@@ -343,6 +346,19 @@ class RegistrationServiceTest {
         assertEquals(null, session.getReads().get(1).getBucketNumber());
     }
 
+    @Test
+    void get_flagsOffListReads() {
+        RegistrationSessionEntity open = session(alice, NOW.minusSeconds(10));
+        when(sessionRepository.findById(open.getId())).thenReturn(Optional.of(open));
+        when(readRepository.findAllBySessionOrderByFirstReadAtAsc(open))
+                .thenReturn(List.of(read(open, "IN"), read(open, "OFF")));
+        when(referenceTagList.isOffList("OFF")).thenReturn(true);
+
+        RegistrationSession session = registrationService.get(open.getId());
+
+        assertThat(session.getReads()).extracting(r -> r.getOffList()).containsExactly(false, true);
+    }
+
     // --- cancel, save, closeForReader ---
 
     @Test
@@ -363,7 +379,7 @@ class RegistrationServiceTest {
         when(readRepository.findAllBySessionOrderByFirstReadAtAsc(open))
                 .thenReturn(List.of(read(open, "T1"), read(open, "T2")));
         RegisterTagsResponse expected = new RegisterTagsResponse(12, 2, 2);
-        when(tagService.registerTagsForBucket(12, List.of("T1", "T2"), true)).thenReturn(expected);
+        when(tagService.registerTagsForBucket(12, List.of("T1", "T2"), true, false)).thenReturn(expected);
 
         RegisterTagsResponse response = registrationService.save(open.getId(),
                 new SaveRegistrationSession(12).moveConfirmed(true));
@@ -380,7 +396,7 @@ class RegistrationServiceTest {
 
         assertStatus(HttpStatus.BAD_REQUEST,
                 () -> registrationService.save(open.getId(), new SaveRegistrationSession(12)));
-        verify(tagService, never()).registerTagsForBucket(anyInt(), anyList(), eq(false));
+        verify(tagService, never()).registerTagsForBucket(anyInt(), anyList(), anyBoolean(), anyBoolean());
         verify(sessionRepository, never()).delete(any());
     }
 
@@ -389,10 +405,37 @@ class RegistrationServiceTest {
         RegistrationSessionEntity open = session(alice, NOW.minusMinutes(1));
         when(sessionRepository.findById(open.getId())).thenReturn(Optional.of(open));
         when(readRepository.findAllBySessionOrderByFirstReadAtAsc(open)).thenReturn(List.of(read(open, "T1")));
-        when(tagService.registerTagsForBucket(12, List.of("T1"), false))
-                .thenThrow(new TagsInOtherBucketsException(List.of(new TagInOtherBucket("T1", 7))));
+        when(tagService.registerTagsForBucket(12, List.of("T1"), false, false))
+                .thenThrow(new RegistrationNotConfirmedException(List.of(new TagInOtherBucket("T1", 7)), List.of()));
 
-        assertThrows(TagsInOtherBucketsException.class,
+        assertThrows(RegistrationNotConfirmedException.class,
+                () -> registrationService.save(open.getId(), new SaveRegistrationSession(12)));
+        verify(sessionRepository, never()).delete(any());
+    }
+
+    @Test
+    void save_passesOffListConfirmationToTagService() {
+        RegistrationSessionEntity open = session(alice, NOW.minusMinutes(1));
+        when(sessionRepository.findById(open.getId())).thenReturn(Optional.of(open));
+        when(readRepository.findAllBySessionOrderByFirstReadAtAsc(open)).thenReturn(List.of(read(open, "OFF")));
+        when(tagService.registerTagsForBucket(12, List.of("OFF"), false, true))
+                .thenReturn(new RegisterTagsResponse(12, 1, 1));
+
+        registrationService.save(open.getId(), new SaveRegistrationSession(12).offListConfirmed(true));
+
+        verify(tagService).registerTagsForBucket(12, List.of("OFF"), false, true);
+        verify(sessionRepository).delete(open);
+    }
+
+    @Test
+    void save_offListNotConfirmed_keepsSession() {
+        RegistrationSessionEntity open = session(alice, NOW.minusMinutes(1));
+        when(sessionRepository.findById(open.getId())).thenReturn(Optional.of(open));
+        when(readRepository.findAllBySessionOrderByFirstReadAtAsc(open)).thenReturn(List.of(read(open, "OFF")));
+        when(tagService.registerTagsForBucket(12, List.of("OFF"), false, false))
+                .thenThrow(new RegistrationNotConfirmedException(List.of(), List.of("OFF")));
+
+        assertThrows(RegistrationNotConfirmedException.class,
                 () -> registrationService.save(open.getId(), new SaveRegistrationSession(12)));
         verify(sessionRepository, never()).delete(any());
     }
@@ -405,7 +448,7 @@ class RegistrationServiceTest {
 
         assertStatus(HttpStatus.BAD_REQUEST,
                 () -> registrationService.save(open.getId(), new SaveRegistrationSession(12)));
-        verify(tagService, never()).registerTagsForBucket(anyInt(), anyList(), eq(false));
+        verify(tagService, never()).registerTagsForBucket(anyInt(), anyList(), anyBoolean(), anyBoolean());
         verify(sessionRepository, never()).delete(any());
     }
 
@@ -414,7 +457,7 @@ class RegistrationServiceTest {
         RegistrationSessionEntity open = session(alice, NOW.minusMinutes(1));
         when(sessionRepository.findById(open.getId())).thenReturn(Optional.of(open));
         when(readRepository.findAllBySessionOrderByFirstReadAtAsc(open)).thenReturn(reads(open, 100));
-        when(tagService.registerTagsForBucket(eq(12), anyList(), eq(false)))
+        when(tagService.registerTagsForBucket(eq(12), anyList(), eq(false), eq(false)))
                 .thenReturn(new RegisterTagsResponse(12, 100, 100));
 
         RegisterTagsResponse response = registrationService.save(open.getId(), new SaveRegistrationSession(12));

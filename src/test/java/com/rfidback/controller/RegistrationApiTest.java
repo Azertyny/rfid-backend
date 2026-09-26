@@ -42,8 +42,12 @@ import com.rfidback.repository.RegistrationReadRepository;
 import com.rfidback.repository.RegistrationSessionRepository;
 import com.rfidback.repository.TagRepository;
 import com.rfidback.repository.UserRepository;
+import com.rfidback.support.ReferenceTagUids;
 
-/** HTTP-level checks of the tag-registration sessions, including scans sent with a real reader token (spec 003). */
+/**
+ * HTTP-level checks of the tag-registration sessions, including scans sent with a real reader token (spec 003) and
+ * the off-list flag and confirmation (spec 010).
+ */
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
@@ -200,6 +204,45 @@ class RegistrationApiTest {
     }
 
     @Test
+    void offListRead_isFlaggedAndNeedsConfirmationToSave() throws Exception {
+        UserEntity admin = admin();
+        ReaderEntity reader = registrationReader();
+        String inList = uniqueUid();
+        String offList = ReferenceTagUids.offList();
+        long recordsBefore = recordRepository.count();
+        String sessionId = startedSessionId(admin, reader);
+
+        // FR-005: the reader gets the usual answer, and nothing but the session read is stored.
+        scan(reader, inList).andExpect(status().isOk());
+        scan(reader, offList)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.isCompliant").value(true))
+                .andExpect(jsonPath("$.message").value("Registration read"));
+        assertThat(tagRepository.findByUid(offList)).isEmpty();
+        assertThat(recordRepository.count()).isEqualTo(recordsBefore);
+
+        mockMvc.perform(get(SESSIONS + "/" + sessionId).with(as(admin)))
+                .andExpect(jsonPath("$.reads[0].uid").value(inList))
+                .andExpect(jsonPath("$.reads[0].offList").value(false))
+                .andExpect(jsonPath("$.reads[1].uid").value(offList))
+                .andExpect(jsonPath("$.reads[1].offList").value(true));
+
+        int bucketNumber = randomBucketNumber();
+        save(admin, sessionId, Map.of("bucketNumber", bucketNumber))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.offListTags[0]").value(offList))
+                .andExpect(jsonPath("$.tags", hasSize(0)));
+        mockMvc.perform(get(SESSIONS + "/" + sessionId).with(as(admin))).andExpect(status().isOk());
+        assertThat(bucketRepository.findByNumber(bucketNumber)).isEmpty();
+
+        save(admin, sessionId, Map.of("bucketNumber", bucketNumber, "offListConfirmed", true))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.registeredCount").value(2));
+        assertThat(tagRepository.findByUid(offList).orElseThrow().getBucket().getNumber()).isEqualTo(bucketNumber);
+        mockMvc.perform(get(SESSIONS + "/" + sessionId).with(as(admin))).andExpect(status().isNotFound());
+    }
+
+    @Test
     void save_withoutReads_returns400() throws Exception {
         UserEntity admin = admin();
         String sessionId = startedSessionId(admin, registrationReader());
@@ -310,8 +353,9 @@ class RegistrationApiTest {
         return prefix + " " + UUID.randomUUID().toString().substring(0, 8);
     }
 
+    // In the reference list, so only the tests about the list meet its confirmation (spec 010).
     private static String uniqueUid() {
-        return "TAG-" + UUID.randomUUID();
+        return ReferenceTagUids.nextInList();
     }
 
     private static int randomBucketNumber() {
