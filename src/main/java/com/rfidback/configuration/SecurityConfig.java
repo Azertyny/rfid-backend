@@ -55,6 +55,7 @@ public class SecurityConfig {
     private static final String READER_SCAN_PATH = "/api/tags/scan";
     private static final String READER_REGISTRATION_READS_PATH = "/api/tags/registration-reads";
     private static final String READER_TOKEN_HEADER = "x-api-token";
+    private static final String LINE_ACTIVITY_PATH = "/api/lines/*/current-activity";
     private static final String ADMINISTRATEUR = Role.ADMINISTRATEUR.name();
     private static final String OPERATEUR = Role.OPERATEUR.name();
 
@@ -87,8 +88,9 @@ public class SecurityConfig {
     }
 
     // Any other /api/** request carrying x-api-token is the line kiosk (spec 008, FR-005a, research R11). It only
-    // opens the two routes of reader.html; RecordService limits them to the token's own reader. No session, no CSRF:
-    // a third-party page cannot make a browser send a custom header.
+    // opens the routes of reader.html: its reader's records and conformity, and its line's current activity (spec
+    // 012); RecordService and LineActivityService limit them to the token's own reader. No session, no CSRF: a
+    // third-party page cannot make a browser send a custom header.
     @Bean
     @Order(2)
     public SecurityFilterChain kioskSecurityFilterChain(HttpSecurity http,
@@ -105,6 +107,8 @@ public class SecurityConfig {
                         .requestMatchers(path(HttpMethod.OPTIONS, "/**")).permitAll()
                         .requestMatchers(path(HttpMethod.GET, "/api/records/readers/*")).authenticated()
                         .requestMatchers(path(HttpMethod.PATCH, "/api/records/*/conformity")).authenticated()
+                        .requestMatchers(path(HttpMethod.GET, LINE_ACTIVITY_PATH)).authenticated()
+                        .requestMatchers(path(HttpMethod.PUT, LINE_ACTIVITY_PATH)).authenticated()
                         .anyRequest().denyAll())
                 .exceptionHandling(exceptions -> exceptions
                         .authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
@@ -161,6 +165,9 @@ public class SecurityConfig {
                             .requestMatchers(path(null, "/api/buckets/**")).hasRole(ADMINISTRATEUR)
                             .requestMatchers(path(HttpMethod.GET, "/api/records/*/conformity-history"))
                             .hasRole(ADMINISTRATEUR) // spec 005, FR-007
+                            .requestMatchers(path(HttpMethod.GET, "/api/activities")).hasAnyRole(ADMINISTRATEUR, OPERATEUR)
+                            .requestMatchers(path(null, "/api/activities/**")).hasRole(ADMINISTRATEUR)
+                            .requestMatchers(path(null, LINE_ACTIVITY_PATH)).hasAnyRole(ADMINISTRATEUR, OPERATEUR)
                             .requestMatchers(path(null, "/api/records/**")).hasAnyRole(ADMINISTRATEUR, OPERATEUR)
                             .requestMatchers(path(null, "/api/auth/**")).authenticated()
                             .anyRequest().denyAll();

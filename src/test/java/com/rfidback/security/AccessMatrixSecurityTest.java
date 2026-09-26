@@ -79,6 +79,15 @@ class AccessMatrixSecurityTest {
                         "{\"uid\":\"Matrix reader " + UUID.randomUUID() + "\"}", ADMIN_ONLY),
                 new Route(HttpMethod.PATCH, "/api/readers/" + ID, "{\"active\":true}", ADMIN_ONLY),
                 new Route(HttpMethod.POST, "/api/readers/" + ID + "/token", null, ADMIN_ONLY),
+                new Route(HttpMethod.PUT, "/api/readers/" + ID + "/activities", "{\"activityIds\":[]}", ADMIN_ONLY),
+                new Route(HttpMethod.GET, "/api/activities", null, LOGGED_IN),
+                new Route(HttpMethod.POST, "/api/activities",
+                        "{\"name\":\"Matrix activity " + UUID.randomUUID() + "\"}", ADMIN_ONLY),
+                new Route(HttpMethod.PATCH, "/api/activities/" + ID, "{\"active\":true}", ADMIN_ONLY),
+                new Route(HttpMethod.DELETE, "/api/activities/" + ID, null, ADMIN_ONLY),
+                new Route(HttpMethod.GET, "/api/lines/unknown-reader/current-activity", null, LOGGED_IN),
+                new Route(HttpMethod.PUT, "/api/lines/unknown-reader/current-activity", "{\"activityId\":null}",
+                        LOGGED_IN),
                 new Route(HttpMethod.POST, "/api/tags/buckets/9999", "{\"uids\":[\"MATRIX-TAG\"]}", ADMIN_ONLY),
                 new Route(HttpMethod.POST, "/api/tags/registration-sessions", "{\"readerId\":\"" + ID + "\"}",
                         ADMIN_ONLY),
@@ -136,10 +145,11 @@ class AccessMatrixSecurityTest {
         }
     }
 
-    // The two kiosk routes are checked with real records in KioskReaderTokenSecurityTest; health is outside /api/**.
+    // The kiosk routes are checked with real data in KioskReaderTokenSecurityTest; health is outside /api/**.
     static Stream<Route> routesClosedToReaderTokens() {
         return routes().stream().filter(route -> !route.path().startsWith("/api/records/readers/")
                 && !route.path().endsWith("/conformity")
+                && !route.path().startsWith("/api/lines/")
                 && !route.path().equals("/actuator/health"));
     }
 

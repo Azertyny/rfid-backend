@@ -11,9 +11,12 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import lombok.*;
@@ -49,6 +52,15 @@ public class ReaderEntity {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private ReaderMode mode = ReaderMode.PRODUCTION;
+
+    // The line's current activity and when it was chosen. A choice made before today, station time, counts as none
+    // (spec 012, research R1/R3): read it through LineActivityService.effectiveActivity.
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "current_activity_id")
+    private ActivityEntity currentActivity;
+
+    @Column(name = "current_activity_set_at")
+    private OffsetDateTime currentActivitySetAt;
 
     @CreationTimestamp
     @Column(nullable = false, updatable = false)

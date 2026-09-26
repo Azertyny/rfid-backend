@@ -25,7 +25,10 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
+import com.rfidback.entity.ActivityEntity;
 import com.rfidback.entity.ReaderEntity;
+import com.rfidback.entity.UserEntity;
+import com.rfidback.generated.model.ReaderMode;
 import com.rfidback.exception.ReaderAlreadyExistsException;
 import com.rfidback.exception.ReaderNotFoundException;
 import com.rfidback.generated.model.CreateReader;
@@ -36,12 +39,15 @@ import com.rfidback.repository.ReaderRepository;
 class ReaderServiceTest {
 
     private ReaderRepository readerRepository;
+    private LineActivityService lineActivityService;
     private ReaderService readerService;
 
     @BeforeEach
     void setUp() {
         readerRepository = Mockito.mock(ReaderRepository.class);
-        readerService = new ReaderService(readerRepository, Mockito.mock(RegistrationService.class));
+        lineActivityService = Mockito.mock(LineActivityService.class);
+        readerService = new ReaderService(readerRepository, Mockito.mock(RegistrationService.class),
+                lineActivityService);
         // Stand in for JPA: saving assigns an id, the timestamps and (through @PrePersist) the token.
         Answer<ReaderEntity> persist = invocation -> {
             ReaderEntity entity = invocation.getArgument(0);
@@ -112,13 +118,13 @@ class ReaderServiceTest {
                 () -> readerService.updateReader(UUID.randomUUID(), new UpdateReader()));
 
         assertEquals(HttpStatus.BAD_REQUEST, exception.getStatusCode());
-        verify(readerRepository, never()).findById(any());
+        verify(readerRepository, never()).findWithLockById(any());
     }
 
     @Test
     void updateReader_unknownId_throwsNotFound() {
         UUID readerId = UUID.randomUUID();
-        when(readerRepository.findById(readerId)).thenReturn(Optional.empty());
+        when(readerRepository.findWithLockById(readerId)).thenReturn(Optional.empty());
 
         assertThrows(ReaderNotFoundException.class,
                 () -> readerService.updateReader(readerId, new UpdateReader().active(false)));
@@ -127,7 +133,7 @@ class ReaderServiceTest {
     @Test
     void updateReader_setsActive() {
         ReaderEntity active = reader("Poste A", true);
-        when(readerRepository.findById(active.getId())).thenReturn(Optional.of(active));
+        when(readerRepository.findWithLockById(active.getId())).thenReturn(Optional.of(active));
 
         Reader updated = readerService.updateReader(active.getId(), new UpdateReader().active(false));
 
@@ -136,6 +142,30 @@ class ReaderServiceTest {
         assertFalse(captor.getValue().isActive());
         assertFalse(updated.getActive());
         assertNotNull(updated.getApitoken());
+    }
+
+    @Test
+    void updateReader_switchToRegistration_clearsTheCurrentActivity() {
+        ReaderEntity line = reader("Ligne 1", true);
+        line.setCurrentActivity(ActivityEntity.builder().id(UUID.randomUUID()).name("Fraise").build());
+        UserEntity admin = UserEntity.builder().username("admin").build();
+        when(readerRepository.findWithLockById(line.getId())).thenReturn(Optional.of(line));
+        when(lineActivityService.currentUser()).thenReturn(admin);
+
+        readerService.updateReader(line.getId(), new UpdateReader().mode(ReaderMode.ENREGISTREMENT));
+
+        verify(lineActivityService).clear(line, admin);
+    }
+
+    @Test
+    void updateReader_disable_keepsTheCurrentActivity() {
+        ReaderEntity line = reader("Ligne 1", true);
+        line.setCurrentActivity(ActivityEntity.builder().id(UUID.randomUUID()).name("Fraise").build());
+        when(readerRepository.findWithLockById(line.getId())).thenReturn(Optional.of(line));
+
+        readerService.updateReader(line.getId(), new UpdateReader().active(false));
+
+        verify(lineActivityService, never()).clear(any(), any());
     }
 
     @Test

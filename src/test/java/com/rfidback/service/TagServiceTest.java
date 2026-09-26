@@ -26,6 +26,7 @@ import org.mockito.Mockito;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
+import com.rfidback.entity.ActivityEntity;
 import com.rfidback.entity.BucketEntity;
 import com.rfidback.entity.PickerEntity;
 import com.rfidback.entity.ReaderEntity;
@@ -36,6 +37,7 @@ import com.rfidback.generated.model.RegisterTagsResponse;
 import com.rfidback.generated.model.ScanTagRequest;
 import com.rfidback.generated.model.ScanTagResponse;
 import com.rfidback.repository.BucketRepository;
+import com.rfidback.repository.ReaderRepository;
 import com.rfidback.repository.RecordConformityChangeRepository;
 import com.rfidback.repository.RecordRepository;
 import com.rfidback.repository.TagRepository;
@@ -49,6 +51,8 @@ class TagServiceTest {
     private BucketRepository bucketRepository;
     private RecordConformityChangeRepository recordConformityChangeRepository;
     private ReferenceTagList referenceTagList;
+    private ReaderRepository readerRepository;
+    private LineActivityService lineActivityService;
     private Clock clock;
     private TagService tagService;
 
@@ -60,9 +64,13 @@ class TagServiceTest {
         recordConformityChangeRepository = Mockito.mock(RecordConformityChangeRepository.class);
         // A mock answers isOffList = false: every uid is in the list unless a test says otherwise.
         referenceTagList = Mockito.mock(ReferenceTagList.class);
+        // No reader found: the scan carries no activity unless a test says otherwise (spec 012).
+        readerRepository = Mockito.mock(ReaderRepository.class);
+        lineActivityService = Mockito.mock(LineActivityService.class);
         clock = Clock.fixed(Instant.parse("2024-01-15T09:30:00Z"), ZoneOffset.UTC);
         tagService = new TagService(tagRepository, recordRepository, bucketRepository,
-                recordConformityChangeRepository, referenceTagList, clock, DUPLICATE_WINDOW);
+                recordConformityChangeRepository, referenceTagList, readerRepository, lineActivityService, clock,
+                DUPLICATE_WINDOW);
     }
 
     @Test
@@ -149,6 +157,37 @@ class TagServiceTest {
             entity.setCreationDate(OffsetDateTime.parse("2024-01-15T09:30:00Z"));
             return entity;
         });
+    }
+
+    @Test
+    void registerScan_carriesTheLinesEffectiveActivity_readFromTheDatabase() {
+        ReaderEntity authenticated = scanReader();
+        ReaderEntity fresh = ReaderEntity.builder().id(authenticated.getId()).name(authenticated.getName()).build();
+        ActivityEntity fraise = ActivityEntity.builder().id(UUID.randomUUID()).name("Fraise").build();
+        when(readerRepository.findWithCurrentActivityById(authenticated.getId())).thenReturn(Optional.of(fresh));
+        when(lineActivityService.effectiveActivity(fresh)).thenReturn(fraise);
+        when(tagRepository.save(any(TagEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        stubNewRecordSave();
+
+        tagService.registerScan(authenticated, new ScanTagRequest().uid("E2000017221101891400A23G").isCompliant(true));
+
+        ArgumentCaptor<RecordEntity> saved = ArgumentCaptor.forClass(RecordEntity.class);
+        verify(recordRepository).saveAndFlush(saved.capture());
+        assertThat(saved.getValue().getActivity()).isSameAs(fraise);
+    }
+
+    @Test
+    void registerScan_duplicate_leavesTheExistingRecordsActivity() {
+        ReaderEntity reader = scanReader();
+        TagEntity tag = existingTag();
+        RecordEntity existing = recentRecord(reader, tag, true);
+        ActivityEntity fraise = ActivityEntity.builder().id(UUID.randomUUID()).name("Fraise").build();
+        existing.setActivity(fraise);
+
+        tagService.registerScan(reader, new ScanTagRequest().uid(DUPLICATE_UID).isCompliant(true));
+
+        assertThat(existing.getActivity()).isSameAs(fraise);
+        verify(lineActivityService, never()).effectiveActivity(any());
     }
 
     @Test
@@ -263,7 +302,8 @@ class TagServiceTest {
     @Test
     void registerScan_zeroWindow_skipsDuplicateLookup() {
         TagService withoutDeduplication = new TagService(tagRepository, recordRepository, bucketRepository,
-                recordConformityChangeRepository, referenceTagList, clock, Duration.ZERO);
+                recordConformityChangeRepository, referenceTagList, readerRepository, lineActivityService, clock,
+                Duration.ZERO);
         ReaderEntity reader = scanReader();
         existingTag();
         stubNewRecordSave();

@@ -33,6 +33,7 @@ public class ReaderService {
 
     private final ReaderRepository readerRepository;
     private final RegistrationService registrationService;
+    private final LineActivityService lineActivityService;
 
     public Reader createReader(CreateReader createReader) throws Exception {
         String uid = createReader.getUid();
@@ -68,14 +69,17 @@ public class ReaderService {
 
     /**
      * A disabled reader keeps its token and its records, but the token is refused on /tags/scan. A reader that ends
-     * up disabled or in PRODUCTION mode loses its open registration session, which could never get reads again.
+     * up disabled or in PRODUCTION mode loses its open registration session, which could never get reads again. A
+     * reader switched to ENREGISTREMENT loses its current activity but keeps its associations (spec 012, FR-013).
      */
     @Transactional
     public Reader updateReader(UUID readerId, UpdateReader request) {
         if (request.getActive() == null && request.getMode() == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Provide an active state and/or a mode");
         }
-        ReaderEntity readerEntity = loadReader(readerId);
+        // Locked like every change of the line's current activity (spec 012, research R9).
+        ReaderEntity readerEntity = readerRepository.findWithLockById(readerId)
+                .orElseThrow(() -> new ReaderNotFoundException("Reader %s not found".formatted(readerId)));
         if (request.getActive() != null) {
             readerEntity.setActive(request.getActive());
         }
@@ -84,6 +88,9 @@ public class ReaderService {
         }
         if (!readerEntity.isActive() || readerEntity.getMode() != ReaderMode.ENREGISTREMENT) {
             registrationService.closeForReader(readerEntity);
+        }
+        if (readerEntity.getMode() == ReaderMode.ENREGISTREMENT && readerEntity.getCurrentActivity() != null) {
+            lineActivityService.clear(readerEntity, lineActivityService.currentUser());
         }
         return toModel(readerRepository.save(readerEntity), true);
     }

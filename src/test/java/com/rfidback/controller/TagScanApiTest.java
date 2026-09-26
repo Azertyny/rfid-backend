@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -22,8 +23,10 @@ import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.rfidback.entity.ActivityEntity;
 import com.rfidback.entity.ReaderEntity;
 import com.rfidback.entity.RecordEntity;
+import com.rfidback.repository.ActivityRepository;
 import com.rfidback.repository.ReaderRepository;
 import com.rfidback.repository.RecordRepository;
 import com.rfidback.repository.TagRepository;
@@ -50,6 +53,9 @@ class TagScanApiTest {
 
     @Autowired
     private TagRepository tagRepository;
+
+    @Autowired
+    private ActivityRepository activityRepository;
 
     private ReaderEntity reader;
 
@@ -172,6 +178,78 @@ class TagScanApiTest {
         assertThat(tagRepository.findByUid(uid)).isEmpty();
         assertThat(tagRepository.count()).isEqualTo(tagsBefore);
         assertThat(recordRepository.count()).isEqualTo(recordsBefore);
+    }
+
+    // --- the record carries the line's activity at scan time (spec 012, User Story 3) ---
+
+    @Test
+    void scan_carriesTheCurrentActivity_andTheResponseIsUnchanged() throws Exception {
+        ActivityEntity fraise = activity("Scan fraise");
+        makeCurrent(fraise, OffsetDateTime.now());
+
+        scan(reader, ReferenceTagUids.nextInList(), true)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").doesNotExist())
+                .andExpect(jsonPath("$.activityId").doesNotExist());
+
+        assertThat(latestRecord().getActivity().getId()).isEqualTo(fraise.getId());
+    }
+
+    @Test
+    void scan_withoutActivity_createsARecordWithoutActivity() throws Exception {
+        scan(reader, ReferenceTagUids.nextInList(), true).andExpect(status().isOk());
+
+        assertThat(latestRecord().getActivity()).isNull();
+    }
+
+    @Test
+    void scan_withAChoiceFromYesterday_createsARecordWithoutActivity() throws Exception {
+        makeCurrent(activity("Scan fraise"), OffsetDateTime.now().minusDays(1).minusHours(1));
+
+        scan(reader, ReferenceTagUids.nextInList(), true).andExpect(status().isOk());
+
+        assertThat(latestRecord().getActivity()).isNull();
+    }
+
+    @Test
+    void activityChange_newRecordsCarryTheNewOne_earlierOnesKeepTheirs() throws Exception {
+        ActivityEntity fraise = activity("Scan fraise");
+        ActivityEntity framboise = activity("Scan framboise");
+        String uid = ReferenceTagUids.nextInList();
+        makeCurrent(fraise, OffsetDateTime.now());
+        scan(reader, uid, true).andExpect(status().isOk());
+        RecordEntity first = latestRecord();
+
+        makeCurrent(framboise, OffsetDateTime.now());
+        // Within the duplicate window: ignored, and the first record keeps its activity.
+        scan(reader, uid, false).andExpect(jsonPath("$.message").value("Duplicate read ignored"));
+        assertThat(first.getActivity().getId()).isEqualTo(fraise.getId());
+
+        scan(reader, ReferenceTagUids.nextInList(), true).andExpect(status().isOk());
+        assertThat(latestRecord().getActivity().getId()).isEqualTo(framboise.getId());
+
+        // Disabling and dissociating the activity afterwards leaves the records as they were.
+        fraise.setActive(false);
+        fraise.getLines().clear();
+        activityRepository.saveAndFlush(fraise);
+        assertThat(recordRepository.findById(first.getId()).orElseThrow().getActivity().getId())
+                .isEqualTo(fraise.getId());
+    }
+
+    private ActivityEntity activity(String name) {
+        ActivityEntity activity = ActivityEntity.builder().name(name).build();
+        activity.getLines().add(reader);
+        return activityRepository.saveAndFlush(activity);
+    }
+
+    private void makeCurrent(ActivityEntity activity, OffsetDateTime setAt) {
+        reader.setCurrentActivity(activity);
+        reader.setCurrentActivitySetAt(setAt);
+        readerRepository.saveAndFlush(reader);
+    }
+
+    private RecordEntity latestRecord() {
+        return recordRepository.findTop10ByReader_NameOrderByCreationDateDesc(reader.getName()).get(0);
     }
 
     private ResultActions scan(ReaderEntity from, String uid, Boolean isCompliant) throws Exception {

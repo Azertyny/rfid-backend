@@ -5,9 +5,12 @@ import java.time.Clock;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
-// StationProperties: the station time zone of the dashboard statistics (spec 007).
+// StationProperties: the station time zone of the dashboard statistics (spec 007) and of the midnight reset of line
+// activities (spec 012, service/ActivityDailyReset), which needs scheduling.
 @Configuration
+@EnableScheduling
 @EnableConfigurationProperties(StationProperties.class)
 public class ClockConfig {
 
