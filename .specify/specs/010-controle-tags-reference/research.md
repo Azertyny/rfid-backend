@@ -32,13 +32,22 @@ Phase 0 decisions for [plan.md](plan.md). Each entry gives the decision, the rea
   and before that by CI, since `ReferenceTagListTest` loads the shipped file. The 24-hex rule matches every line of the delivered file.
 - **Alternatives**: start anyway and disable the check. Rejected: a silent failure mode.
 
-## R3. Normalising a UID before the check
+## R3. Comparing a UID with the list: last 12 characters
 
-- **Decision**: `contains(uid)` compares `uid.trim().toUpperCase(Locale.ROOT)` against the set. The stored `Tag.uid`
-  is not changed: it stays trimmed only, as today (`TagService.sanitizeUid`, `RegistrationService.recordRead`).
-- **Rationale**: FR-002. Changing how UIDs are stored (upper-casing them) would split or merge existing tags and is
-  out of scope; readers send upper-case EPCs anyway.
-- **Alternatives**: normalise stored UIDs too. Rejected for this feature; noted as a possible follow-up.
+- **Decision** (revised 2026-09-26 after production feedback, spec clarifications): the list is held as the last 12
+  characters of each line, upper-cased, and `contains(uid)` compares the last 12 characters of
+  `uid.trim().toUpperCase(Locale.ROOT)`. A UID shorter than 12 characters is never in the list. Loading refuses a list
+  where two lines end with the same 12 characters. The stored `Tag.uid` is not changed: it stays trimmed only, as
+  before (`TagService.sanitizeUid`, `RegistrationService.recordRead`).
+- **Rationale**: FR-002. The production readers send `E28069150000…` where the file has `E28069152000…` (e.g.
+  `E2806915000040287477C993` for line 1469), so a whole-UID comparison flagged every production scan. Every line of the
+  list starts with the same 12 characters (`E28069152000`) and the last 12 are unique across the 5,008 lines, so they
+  identify a bought tag whatever form the reader uses.
+- **Accepted side effect**: any UID ending with the 12 characters of a bought tag counts as in the list, whatever comes
+  before them (spec edge case).
+- **Alternatives**: accept both the `2000` and `0000` forms of each line (stricter, but tied to one reader behaviour);
+  rewrite the file in the readers' form (the file would no longer match the supplier's); normalise stored UIDs too
+  (would split or merge existing tags; out of scope).
 
 ## R4. "Off-list" is derived, never stored
 
