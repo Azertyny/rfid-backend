@@ -180,13 +180,14 @@
                 const data = await res.json();
                 grid.innerHTML = ""; // Vide le chargement
 
-                // Le YAML dit que data.readers est une liste
-                if (!data.readers || data.readers.length === 0) {
-                    grid.innerHTML = "<div style='color:red'>Aucun lecteur configuré dans l'API</div>";
+                // Lignes seulement : un lecteur en mode enregistrement n'est pas une ligne (spec 013).
+                const lines = (data.readers || []).filter(reader => reader.mode === 'PRODUCTION');
+                if (lines.length === 0) {
+                    grid.innerHTML = "<div style='color:red'>Aucune ligne de production configurée</div>";
                     return;
                 }
 
-                data.readers.forEach(reader => {
+                lines.forEach(reader => {
                     const btn = document.createElement('div');
                     btn.className = 'reader-btn';
                     // reader.uid est l'identifiant lisible du lecteur
