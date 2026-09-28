@@ -291,7 +291,22 @@ Kiosk-token `403`s on the non-kiosk routes come from the kiosk chain's `denyAll(
         readerUids:
           type: array
           items: { type: string }
+        lines:                       # amended 2026-09-28 (research R18)
+          type: array
+          description: Each line concerned and the activity it will have once confirmed (its only remaining one, FR-008b), or null
+          items:
+            $ref: "#/components/schemas/LineLosingActivity"
       required: [message, readerUids]
+
+    LineLosingActivity:              # amended 2026-09-28
+      type: object
+      properties:
+        readerUid: { type: string }
+        nextActivity:
+          allOf:
+            - $ref: "#/components/schemas/ActivityRef"
+          nullable: true
+      required: [readerUid, nextActivity]
 
     SetLineActivity:
       type: object
@@ -345,3 +360,13 @@ Kiosk-token `403`s on the non-kiosk routes come from the kiosk chain's `denyAll(
 - `ReaderApiToken.description`: add `GET/PUT /lines/{its uid}/current-activity` to the kiosk routes.
 - `POST /tags/scan`: request and response unchanged (FR-016); its description gains one sentence: "The record carries
   the line's current activity, if any."
+
+## Amendment 2026-09-28 (FR-008b, research R16–R18)
+
+- `LinesLosingActivity` gains `lines` (above); no other schema, path or access-matrix change.
+- Descriptions to update in `api.yaml`:
+  - `PUT /readers/{readerId}/activities`, `PATCH /activities/{activityId}`, `DELETE /activities/{activityId}`: "A line
+    left without current activity and with exactly one associated active activity gets it as current activity."
+  - `PATCH /readers/{readerId}` (mode): the same when the reader switches to `PRODUCTION`.
+  - `GET /lines/{readerUid}/current-activity`: "From midnight (station time), a line with exactly one associated
+    active activity has it as current activity until someone changes it."

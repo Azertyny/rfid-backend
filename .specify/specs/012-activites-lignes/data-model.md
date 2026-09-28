@@ -33,22 +33,29 @@ A reader switched to `ENREGISTREMENT` keeps its rows (FR-013).
 | New field | Column | Type | Rules |
 |---|---|---|---|
 | `currentActivity` | `current_activity_id` | UUID, FK `activity`, nullable, lazy | associated and active when set (FR-008); null for `ENREGISTREMENT` readers |
-| `currentActivitySetAt` | `current_activity_set_at` | timestamptz, nullable | instant of the choice; null when `currentActivity` is null |
+| `currentActivitySetAt` | `current_activity_set_at` | timestamptz, nullable | instant of the last change of the line's state, **also kept when the state is "aucune activité"** (amended 2026-09-28, research R15); null only for a line never changed since the amendment |
 
-**Effective current activity** (research R3): `currentActivity` if `currentActivitySetAt` falls on today's date in the
-station zone (`app.station.time-zone`), else none. Every read of the current activity (scan, kiosk, choice) uses this
-rule.
+**Default activity** (amended 2026-09-28, research R16): the line's only associated and active activity when it has
+exactly one, else none; none for a reader not in `PRODUCTION` mode.
+
+**Effective current activity** (research R3, R16): the state is **today's** when `currentActivitySetAt` falls on
+today's date in the station zone (`app.station.time-zone`): then `currentActivity` (possibly none). Otherwise the state
+is **stale** and the effective activity is the default activity. Every read of the current activity (scan, kiosk,
+choice) uses this rule.
 
 **State transitions of a line's current activity** (each one that changes the value writes a `LineActivityChange`):
 
 | From | Event | To | Author |
 |---|---|---|---|
 | any | Opérateur/Administrateur or kiosk chooses A (associated, active) | A, `setAt` = now | user / reader |
-| A | chooses "aucune activité" | none | user / reader |
-| A | Administrateur removes A from the line, confirmed | none | user |
-| A | Administrateur disables A, confirmed | none | user |
+| A | chooses "aucune activité" | none, `setAt` = now | user / reader |
+| A | Administrateur removes A from the line, confirmed | the default activity (R17), else none | user |
+| A | Administrateur disables A, confirmed | the default activity (R17), else none | user |
+| none (today) | Administrateur change (association, dissociation, activation, deletion, switch to `PRODUCTION`) leaves exactly one associated active activity B | B, `setAt` = now | user |
 | A | reader switched to `ENREGISTREMENT` | none | user |
-| A set before today (station time) | midnight job or startup catch-up | none, `changed_at` = the due midnight | system |
+| stale (A or none, `setAt` before today or null) | midnight job, startup catch-up, or any locked write first | the default activity, `setAt` = today's midnight; logged only if the value changes, `changed_at` = the due midnight | system |
+
+A line that has a current activity today is never changed by the default (FR-008b).
 
 ## Changed: `RecordEntity` → table `record`
 
@@ -84,8 +91,10 @@ Append-only; never updated or deleted.
 | `ActivityRepository` (new) | `existsByNameKey`, `existsByNameKeyAndIdNot`, `findAllByOrderByNameAsc` (with `lines` fetched) | FR-001, FR-002, FR-004 |
 | `ReaderRepository` | `findWithLockById`, `findWithLockByName` (`PESSIMISTIC_WRITE`, current activity fetched) | serialise choices, dissociations, mode switches and the job (research R9); the choice locks on its first load by uid |
 | `ReaderRepository` | `findWithCurrentActivityById`, `findWithCurrentActivityByName` (no lock) | scan stamp (research R2), kiosk read |
-| `ReaderRepository` | `findIdsByCurrentActivitySetAtBefore(instant)` → ids | daily job (research R3) |
+| `ReaderRepository` | `findIdsWithStaleState(instant)` → ids, `current_activity_set_at is null or < :instant` (replaces `findIdsByCurrentActivitySetAtBefore`) | daily job (research R3, R16) |
 | `ReaderRepository` | `findIdsByCurrentActivity(activity)` → ids | lines losing a disabled activity (research R6) |
+| `ActivityRepository` | `findAllByLine(readerId)` (exists) filtered on `active` | default activity (research R16) |
+| `ReaderRepository` | `findIdsByActivity(activity)` → ids of associated readers | lines to re-check when an activity is (de)activated or deleted (research R17) |
 | `RecordRepository` | `existsByActivity`, `countByReaderAndCreationDateGreaterThanEqualAndActivityIsNull` | delete check (R7), banner (R10) |
 | `RecordRepository` | `findTop10ByReader_Name…` entity graph gains `activity` | FR-017 in one query (R11) |
 | `LineActivityChangeRepository` (new) | `isReferenced(activity)`, `findAllByReaderOrderByChangedAtAsc` | delete check (R7), tests and SC-005 |
@@ -103,7 +112,7 @@ the reader and locking it afterwards.
 | activity name | blank after trim, > 100 | `400` |
 | activity name | same `name_key` as another activity | `409` |
 | association | reader in `ENREGISTREMENT`, unknown activity id | `400` |
-| association / disable | would clear a line's current activity, `confirmed` not true | `409 LinesLosingActivity` |
+| association / disable | would clear a line's current activity, `confirmed` not true | `409 LinesLosingActivity`, with each line's next activity (research R18) |
 | delete | referenced by a record or a change | `409` |
 | choice | unknown reader uid | `404` |
 | choice | reader in `ENREGISTREMENT`; activity unknown, disabled or not associated | `400` |

@@ -70,7 +70,8 @@ public class ReaderService {
     /**
      * A disabled reader keeps its token and its records, but the token is refused on /tags/scan. A reader that ends
      * up disabled or in PRODUCTION mode loses its open registration session, which could never get reads again. A
-     * reader switched to ENREGISTREMENT loses its current activity but keeps its associations (spec 012, FR-013).
+     * reader switched to ENREGISTREMENT loses its current activity but keeps its associations (spec 012, FR-013); one
+     * switched to PRODUCTION without current activity gets its only associated active activity, if any (FR-008b).
      */
     @Transactional
     public Reader updateReader(UUID readerId, UpdateReader request) {
@@ -83,6 +84,7 @@ public class ReaderService {
         if (request.getActive() != null) {
             readerEntity.setActive(request.getActive());
         }
+        ReaderMode previousMode = readerEntity.getMode();
         if (request.getMode() != null) {
             readerEntity.setMode(ReaderMode.valueOf(request.getMode().name()));
         }
@@ -91,6 +93,9 @@ public class ReaderService {
         }
         if (readerEntity.getMode() == ReaderMode.ENREGISTREMENT && readerEntity.getCurrentActivity() != null) {
             lineActivityService.clear(readerEntity, lineActivityService.currentUser());
+        }
+        if (readerEntity.getMode() == ReaderMode.PRODUCTION && previousMode != ReaderMode.PRODUCTION) {
+            lineActivityService.applyDefaultIfNone(readerEntity, lineActivityService::currentUser);
         }
         return toModel(readerRepository.save(readerEntity), true);
     }

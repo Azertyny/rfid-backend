@@ -69,6 +69,9 @@ paths:
           format: uuid
     patch:
       summary: Enable or disable a reader, or change its mode
+      description: >
+        A reader switched to ENREGISTREMENT loses its current activity. A reader switched to PRODUCTION without current
+        activity and with exactly one associated active activity gets it as current activity (spec 012).
       operationId: updateReader
       tags: [Reader]
       requestBody:
@@ -126,7 +129,9 @@ paths:
       description: >
         Replaces the reader's associated activities (spec 012). Only readers in PRODUCTION mode (400 otherwise); an
         unknown activity id is refused with 400. Removing the line's current activity needs confirmed=true; otherwise
-        the answer is 409 naming the line and nothing changes. Once confirmed, the line has no current activity.
+        the answer is 409 naming the line, and the activity it would get, and nothing changes. A line left without
+        current activity and with exactly one associated active activity gets it as current activity; otherwise it
+        has none.
       operationId: setReaderActivities
       tags: [Reader]
       requestBody:
@@ -206,7 +211,8 @@ paths:
       summary: Rename, disable or re-enable an activity
       description: >
         Disabling an activity that is the current activity of some lines needs confirmed=true; otherwise the answer is
-        409 naming those lines and nothing changes. Once confirmed, those lines have no current activity.
+        409 naming those lines, and the activity each would get, and nothing changes. A line left without current
+        activity and with exactly one associated active activity gets it as current activity; otherwise it has none.
       operationId: updateActivity
       tags: [Activity]
       requestBody:
@@ -236,7 +242,9 @@ paths:
                 $ref: "#/components/schemas/LinesLosingActivity"
     delete:
       summary: Delete an activity that was never used
-      description: Refused with 409 when a record carries it or it was ever a line's current activity; disable it instead.
+      description: >
+        Refused with 409 when a record carries it or it was ever a line's current activity; disable it instead. A line
+        left without current activity and with exactly one associated active activity gets it as current activity.
       operationId: deleteActivity
       tags: [Activity]
       responses:
@@ -258,8 +266,9 @@ paths:
       summary: Current activity of a line
       description: >
         Opérateur or Administrateur session, or the token of this reader (line kiosk); another reader's token gets 403.
-        An activity chosen before today (station time zone) is reported as none. A reader in ENREGISTREMENT mode gets
-        400.
+        An activity chosen before today (station time zone) is not reported: from midnight, a line with exactly one
+        associated active activity has it as current activity until someone changes it, any other line has none. A
+        reader in ENREGISTREMENT mode gets 400.
       operationId: getLineActivity
       tags: [Activity]
       security:
@@ -1239,9 +1248,27 @@ components:
           type: array
           items:
             type: string
+        lines:
+          type: array
+          description: Each line concerned and the activity it will have once confirmed (its only remaining one), or null
+          items:
+            $ref: "#/components/schemas/LineLosingActivity"
       required:
         - message
         - readerUids
+
+    LineLosingActivity:
+      type: object
+      properties:
+        readerUid:
+          type: string
+        nextActivity:
+          allOf:
+            - $ref: "#/components/schemas/ActivityRef"
+          nullable: true
+      required:
+        - readerUid
+        - nextActivity
 
     SetLineActivity:
       type: object

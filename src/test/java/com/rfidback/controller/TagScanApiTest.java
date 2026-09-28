@@ -205,10 +205,22 @@ class TagScanApiTest {
     @Test
     void scan_withAChoiceFromYesterday_createsARecordWithoutActivity() throws Exception {
         makeCurrent(activity("Scan fraise"), OffsetDateTime.now().minusDays(1).minusHours(1));
+        // Two activities: the line has no default one (Clarifications 2026-09-28).
+        activity("Scan framboise");
 
         scan(reader, ReferenceTagUids.nextInList(), true).andExpect(status().isOk());
 
         assertThat(latestRecord().getActivity()).isNull();
+    }
+
+    @Test
+    void scan_afterMidnight_onALineWithASingleActivity_carriesIt_beforeTheJobRuns() throws Exception {
+        ActivityEntity fraise = activity("Scan fraise");
+        makeCurrent(null, OffsetDateTime.now().minusDays(1).minusHours(1));
+
+        scan(reader, ReferenceTagUids.nextInList(), true).andExpect(status().isOk());
+
+        assertThat(latestRecord().getActivity().getId()).isEqualTo(fraise.getId());
     }
 
     @Test

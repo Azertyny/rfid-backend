@@ -202,12 +202,21 @@ class ActivityApiTest {
 
         setActivities(lineTwo, false, fraise)
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.readerUids[0]").value(lineTwo.getName()));
+                .andExpect(jsonPath("$.readerUids[0]").value(lineTwo.getName()))
+                .andExpect(jsonPath("$.lines[0].readerUid").value(lineTwo.getName()))
+                .andExpect(jsonPath("$.lines[0].nextActivity.name").value("Fraise"));
 
+        // Its only remaining activity replaces it, in one change (Clarifications 2026-09-28, FR-008b).
         setActivities(lineTwo, true, fraise)
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.currentActivity").isEmpty())
+                .andExpect(jsonPath("$.currentActivity.name").value("Fraise"))
                 .andExpect(jsonPath("$.availableActivities.length()").value(1));
+        List<LineActivityChangeEntity> changes = lineActivityChangeRepository.findAllByReaderOrderByChangedAtAsc(
+                lineTwo);
+        LineActivityChangeEntity last = changes.get(changes.size() - 1);
+        assertThat(last.getPreviousActivity().getId()).isEqualTo(framboise);
+        assertThat(last.getNewActivity().getId()).isEqualTo(fraise);
+        assertThat(last.getAuthorUser().getUsername()).isEqualTo("activity-admin");
     }
 
     // --- delete (FR-003) ---
@@ -226,10 +235,114 @@ class ActivityApiTest {
         assertThat(activityRepository.findById(unused)).isEmpty();
     }
 
+    // --- the single remaining activity applied by an Administrateur change (Clarifications 2026-09-28, FR-008b) ---
+
+    @Test
+    void firstAssociation_makesItCurrent_creditedToTheAdministrateur_aSecondOneChangesNothing() throws Exception {
+        UUID fraise = idOf(createActivity("Fraise"));
+        UUID framboise = idOf(createActivity("Framboise"));
+
+        setActivities(lineOne, false, fraise)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.currentActivity.name").value("Fraise"));
+        List<LineActivityChangeEntity> changes = changesOf(lineOne);
+        assertThat(changes).hasSize(1);
+        assertThat(changes.get(0).getAuthorType()).isEqualTo(ActivityChangeAuthorType.USER);
+        assertThat(changes.get(0).getAuthorUser().getUsername()).isEqualTo("activity-admin");
+        assertThat(changes.get(0).getPreviousActivity()).isNull();
+
+        setActivities(lineOne, false, fraise, framboise)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.currentActivity.name").value("Fraise"));
+        assertThat(changesOf(lineOne)).hasSize(1);
+    }
+
+    @Test
+    void resavingAnUnchangedLine_keepsANoneChosenOnPurpose() throws Exception {
+        UUID fraise = idOf(createActivity("Fraise"));
+        setActivities(lineOne, false, fraise).andExpect(status().isOk());
+        makeCurrent(lineOne, null);
+
+        setActivities(lineOne, false, fraise)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.currentActivity").isEmpty());
+    }
+
+    @Test
+    void disablingAnotherActivity_leavesALineWithoutActivityWithTheRemainingOne() throws Exception {
+        UUID fraise = idOf(createActivity("Fraise"));
+        UUID framboise = idOf(createActivity("Framboise"));
+        setActivities(lineOne, false, fraise, framboise).andExpect(status().isOk());
+
+        // Not current anywhere: no confirmation needed.
+        mockMvc.perform(patch("/api/activities/{id}", fraise).with(asAdmin()).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"active\":false}"))
+                .andExpect(status().isOk());
+
+        assertCurrent(lineOne, framboise);
+    }
+
+    @Test
+    void disablingTheCurrentActivity_namesTheOneThatRemains_andAppliesIt() throws Exception {
+        UUID fraise = idOf(createActivity("Fraise"));
+        UUID framboise = idOf(createActivity("Framboise"));
+        setActivities(lineOne, false, fraise, framboise).andExpect(status().isOk());
+        makeCurrent(lineOne, fraise);
+
+        mockMvc.perform(patch("/api/activities/{id}", fraise).with(asAdmin()).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"active\":false}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.lines[0].nextActivity.name").value("Framboise"));
+        mockMvc.perform(patch("/api/activities/{id}", fraise).with(asAdmin()).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"active\":false,\"confirmed\":true}"))
+                .andExpect(status().isOk());
+
+        assertCurrent(lineOne, framboise);
+    }
+
+    @Test
+    void reactivatingALinesOnlyActivity_makesItCurrent() throws Exception {
+        UUID fraise = idOf(createActivity("Fraise"));
+        mockMvc.perform(patch("/api/activities/{id}", fraise).with(asAdmin()).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"active\":false}"))
+                .andExpect(status().isOk());
+        setActivities(lineOne, false, fraise)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.currentActivity").isEmpty());
+
+        mockMvc.perform(patch("/api/activities/{id}", fraise).with(asAdmin()).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"active\":true}"))
+                .andExpect(status().isOk());
+
+        assertCurrent(lineOne, fraise);
+    }
+
+    @Test
+    void deletingAnUnusedActivity_leavesALineWithoutActivityWithTheRemainingOne() throws Exception {
+        UUID fraise = idOf(createActivity("Fraise"));
+        UUID typo = idOf(createActivity("Frasie"));
+        setActivities(lineOne, false, fraise, typo).andExpect(status().isOk());
+
+        mockMvc.perform(delete("/api/activities/{id}", typo).with(asAdmin()).with(csrf()))
+                .andExpect(status().isNoContent());
+
+        assertCurrent(lineOne, fraise);
+    }
+
+    private void assertCurrent(ReaderEntity line, UUID activityId) throws Exception {
+        mockMvc.perform(get("/api/lines/{readerUid}/current-activity", line.getName()).with(asOperator()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.currentActivity.id").value(activityId.toString()));
+    }
+
+    private List<LineActivityChangeEntity> changesOf(ReaderEntity line) {
+        return lineActivityChangeRepository.findAllByReaderOrderByChangedAtAsc(line);
+    }
+
     private void makeCurrent(ReaderEntity line, UUID activityId) throws Exception {
         mockMvc.perform(put("/api/lines/{readerUid}/current-activity", line.getName()).with(asOperator())
                 .with(csrf()).contentType(MediaType.APPLICATION_JSON)
-                .content("{\"activityId\":\"" + activityId + "\"}"))
+                .content("{\"activityId\":" + (activityId == null ? "null" : "\"" + activityId + "\"") + "}"))
                 .andExpect(status().isOk());
     }
 

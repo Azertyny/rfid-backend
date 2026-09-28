@@ -180,3 +180,103 @@ Decisions taken while planning spec `012`. Code references are to branch `012-ac
 
 - FR-003 refined (R7): an activity can be deleted only if no record **and no change-log entry** references it, i.e.
   it was never chosen as a line's current activity.
+- FR-008b refined (R17, amendment 2026-09-28): an association save applies the single remaining activity only if the
+  set of the line's active associated activities actually changed; re-saving an unchanged row keeps a deliberate
+  "aucune activité".
+
+## Amendment 2026-09-28 — single activity applied by default (FR-008a exception, FR-008b)
+
+Decisions for the spec clarifications of 2026-09-28. Code references are to `dev` at `078b530`.
+
+## R15 — Knowing which day a line's state belongs to
+
+- **Decision**: `reader.current_activity_set_at` becomes the instant of the **last change of the line's state**,
+  kept when that state is "aucune activité". Today it is set to null with the activity, so a line without activity
+  cannot tell "none since yesterday" (the default must apply) from "none chosen this morning" (it must stay). A state
+  is **stale** when `current_activity_set_at` is null or before today's midnight, station time. Rows existing at
+  deployment (activity null, `set_at` null) are stale, so the first startup applies the default to single-activity
+  lines, even one whose Opérateur chose "aucune" earlier that day: accepted, a one-off on the day of deployment.
+- **Rationale**: the midnight job (R16), the startup catch-up after a restart during the day and FR-008b all need this
+  distinction; the column already exists and nothing reads it outside `LineActivityService` (the API `setAt` is only
+  returned with a current activity).
+- **Alternatives considered**: a new `current_activity_day` date column (two columns that say almost the same thing);
+  deriving the day from the latest `line_activity_change` row (a query on every stale check, and "none since
+  yesterday" leaves no row when nothing changed).
+
+## R16 — The day's default, on read and at midnight
+
+- **Decision**: the **default activity** of a line is its only associated and active activity when it has exactly one,
+  otherwise none; a reader not in `PRODUCTION` mode has none.
+  1. **Rule applied on read** (`effectiveActivity`): a stale state (R15) now yields the default instead of none. The
+     scan between 00:00:00 and the job's commit, or after a downtime, thus stamps the single activity, never
+     yesterday's choice (spec edge case "Scan autour de minuit"). The default is looked up only for a stale state (one
+     extra indexed query, in practice a few seconds per day).
+  2. **Job and startup catch-up** (`resetStaleActivities`, renamed `startNewDayForAllLines`, which calls
+     `startNewDay(reader)`, today's `resetIfStale`, on each line): for every reader with a stale state
+     (query changed to `set_at is null or set_at < :startOfToday`), under the row lock, set the current activity to
+     the default and `set_at` to today's midnight, station time. A `SYSTEM` change is logged only when the value
+     changes (A → none, A → B, none → B), `changed_at` = the midnight following the old `set_at`, or today's midnight
+     when it was null. A line whose single activity was already current (A → A) gets its `set_at` moved to today with
+     no log row.
+  3. `change()` and every locked path of R17 first bring a stale state to today (`startNewDay(reader)`), so a choice or an Administrateur change made before the job runs works on today's state.
+- **Rationale**: same split as R3 (the rule on read gives the guarantee, the job gives the trace). Moving `set_at` to
+  today on A → A matters: if it stayed stale, an Administrateur associating a second activity later that day would
+  change the default computed on read to none and silently drop A.
+- **Alternatives considered**: the job only (a scan right after midnight would carry nothing, contrary to the edge
+  case); the kiosk selecting the activity (rejected in the clarification, option B).
+
+## R17 — Applying the single activity after an Administrateur change (FR-008b)
+
+- **Decision**: a package-private `LineActivityService.applyDefaultIfNone(lockedReader, author)`: after bringing the
+  state to today (R16.3), if the line is in `PRODUCTION`, has no current activity and its default is an activity,
+  make it current with a `USER` change authored by the Administrateur. Called, after the change is applied and
+  flushed, from:
+  - `ActivityService.setReaderActivities`, **only if the set of active associated activities of the line changed**
+    (re-saving an unchanged grid row does not override a deliberate "aucune");
+  - `ActivityService.updateActivity` when `active` flips (either way): for **every** line associated with the
+    activity, not only those where it was current (disabling A leaves B alone on a line that had none; reactivating A
+    on a line whose only association is A). Those readers are locked by id before the change, like the lines losing
+    A today;
+  - `ActivityService.deleteActivity` for the lines it was associated with (a delete removes associations; spec lists
+    "dissociation");
+  - `ReaderService.updateReader` when the mode becomes `PRODUCTION`.
+  When one transaction locks several readers (activation flip, deletion, lines losing a disabled activity), it locks
+  them in ascending id order, so two concurrent Administrateur changes cannot deadlock on the 5 s lock timeout.
+  A line that has a current activity is never touched (FR-008b). Choosing "aucune activité" at the kiosk or on the
+  front stays a plain choice, not undone until the next Administrateur change or the next midnight.
+  Found during implementation: a confirmed change that takes a line's current activity A away calls
+  `replaceWithDefault`, which writes **one** change A → B (or A → none) instead of A → none then none → B; and
+  `applyDefaultIfNone` takes the author as a `Supplier`, looked up only when a change is written (a switch to
+  `PRODUCTION` with no activity to apply must not need the user's row).
+- **Rationale**: one rule in the service that owns the current activity, called from the four places that change
+  associations or activation. Flushing first makes `findAllByLine` see the new associations and `active` flag.
+- **Alternatives considered**: a JPA entity listener on `reader_activity` (the join table has no entity; hidden
+  side effects); recomputing on every read (would override today's deliberate "aucune" at each poll, option C of the
+  clarification).
+
+## R18 — Telling the Administrateur which lines get the remaining activity (FR-007)
+
+- **Decision**: `LinesLosingActivity` gains an optional `lines` array of `{ readerUid, nextActivity: ActivityRef |
+  null }`, the activity each line will have once confirmed (from R17's default computed on the requested state);
+  `readerUids` is kept for compatibility. The modal of `front/activities.html` shows "L1 → Framboise" or "L1 → aucune
+  activité". Lines that only **gain** an activity (they had none) need no confirmation; the page reloads its data
+  after each save as today, and `PUT /readers/{id}/activities` already returns the line's `LineActivity`.
+- **Rationale**: FR-007 asks to name the lines concerned before confirmation; with FR-008b the result is no longer
+  always "none", and the Administrateur should see it.
+- **Alternatives considered**: a separate confirmation for lines gaining an activity (nothing is lost, one more
+  dialog for a routine set-up).
+
+## R19 — Tests for the amendment
+
+- **Decision**:
+  - `LineActivityServiceTest`: stale state yields the default (one activity) or none (zero, two, one disabled);
+    today's "aucune" stays none; `startNewDay` logs A → B, none → B, A → none, writes nothing for A → A but moves
+    `set_at`; `applyDefaultIfNone` never touches a line with a current activity.
+  - `ActivityDailyResetTest`: after midnight, a single-activity line has it and a `SYSTEM` row; a restart during the
+    day keeps a deliberate "aucune" chosen that day.
+  - `ActivityServiceTest` / `ActivityApiTest`: first association applies it (author the Administrateur); a second
+    association leaves the current one; removing the current A with B left → `409` with `lines[0].nextActivity = B`,
+    then B current once confirmed; disabling A applies B on a line that had none; re-saving an unchanged row keeps a
+    deliberate "aucune"; deleting an unused activity leaving one applies it.
+  - `ReaderServiceTest`: switching back to `PRODUCTION` with one association applies it.
+  - `TagScanApiTest`: a scan just after midnight on a single-activity line, before the job, carries that activity.

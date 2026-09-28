@@ -94,7 +94,10 @@ before spec 010's revision).
 `APP_STATION_TIME_ZONE` (default `Europe/Paris`) is the zone of the dashboard's days and hours (`GET /api/records/stats`,
 spec 007) and of the midnight reset of every line's current activity (spec 012: `service/ActivityDailyReset` at midnight
 and at startup, plus the rule on read in `service/LineActivityService`, so a choice from a previous day is never
-stamped on a record); startup fails for a zone whose offset is not a whole number of hours. The reference tag list (spec 010) is
+stamped on a record). The reset gives a line its only associated active activity, else none, and an Administrateur
+change that leaves a line without activity gives it the one that remains (`startNewDay` / `applyDefaultIfNone`);
+`reader.current_activity_set_at` dates the line's state, "no activity" included, which tells a restart during the day
+from a new day. Startup fails for a zone whose offset is not a whole number of hours. The reference tag list (spec 010) is
 `src/main/resources/tags/rfid_tag_list.csv`, loaded at startup by `service/ReferenceTagList` (startup fails on a missing,
 empty or malformed file); a uid is matched on its last 12 characters only (the readers send `E28069150000…` where
 the file has `E28069152000…`). A uid not in it is never stored: its scans and registration reads are ignored

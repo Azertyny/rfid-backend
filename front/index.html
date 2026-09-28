@@ -238,13 +238,13 @@
             await loadStats();
         });
 
-        // All readers, including disabled ones and those now in registration mode: they keep their past production
-        // records (research R6).
+        // Production readers only, including disabled ones, which keep their past records. A reader in registration
+        // mode is not a line; its past records stay in "Tous les lecteurs" (spec 013, replaces spec 007 research R6).
         async function loadReaders() {
             try {
                 const response = await apiFetch('/readers');
                 if (!response.ok) return;
-                const readers = (await response.json()).readers || [];
+                const readers = ((await response.json()).readers || []).filter(reader => reader.mode === 'PRODUCTION');
                 readers.sort((a, b) => a.uid.localeCompare(b.uid, 'fr'));
                 const select = document.getElementById('readerSelect');
                 readersById = {};
@@ -252,7 +252,6 @@
                     readersById[reader.id] = reader;
                     let label = reader.uid;
                     if (reader.active === false) label += ' (désactivé)';
-                    if (reader.mode === 'ENREGISTREMENT') label += ' (enregistrement)';
                     select.appendChild(new Option(label, reader.id));
                 });
             } catch (e) { console.error('Err Readers', e); }

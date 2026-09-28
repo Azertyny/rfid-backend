@@ -203,3 +203,102 @@ Polish:      T040 CLAUDE.md  ∥  T041 specs 005/008
 
 - [X] T044 In `front/activities.html`, keep the unsaved ticks of the other lines when the page refreshes after an action (remember the checked boxes of rows not being saved and restore them in `renderGrid()`, or redraw only the saved row), so preparing a season never loses work per SC-006 (partial)
 - [X] T045 Update the "Repository additions" table of `.specify/specs/012-activites-lignes/data-model.md` to match `src/main/java/com/rfidback/repository/ReaderRepository.java`: `findIdsByCurrentActivitySetAtBefore` and `findIdsByCurrentActivity` return ids, and `findWithLockByName` locks on the first load, so a lock never returns a reader already loaded and stale, per plan: data-model repository additions / research R9 (partial)
+
+---
+
+## Amendment 2026-09-28: single activity applied by default
+
+**Input**: spec Clarifications 2026-09-28 (FR-008a exception, FR-008b, FR-007, User Story 2 scenario 7, SC-002a); plan
+"Amendment 2026-09-28"; research R15–R19; data-model (default activity, state transitions); contract "Amendment
+2026-09-28"; quickstart section 8. Code references are to `dev` at `078b530`.
+
+**Story**: the amendment extends User Story 2 (the line's current activity), so its story tasks carry `[US2]`. User
+Stories 1 and 3 get no new behaviour (US3 records simply stamp the effective activity, which now includes the default).
+
+**Key rule** (used by every task below): the **default activity** of a line is its only associated **and active**
+activity when it has exactly one, else none (none for a reader not in `PRODUCTION`). A line's state is **today's** when
+`reader.current_activity_set_at` falls on today's date, station time; otherwise it is **stale** (null included) and
+counts as the default activity.
+
+## Phase 8: Setup (amendment)
+
+- [X] T046 From an up-to-date `dev`, create the branch `012-activite-unique-par-defaut` (PRs target `dev`), then run `mvn clean test` to confirm a green baseline before any change.
+
+## Phase 9: Foundational (amendment)
+
+**Purpose**: the contract, the queries and the state rule every US2 task relies on. Blocks Phase 10.
+
+- [X] T047 In `src/main/resources/openapi/api.yaml`: add schema `LineLosingActivity { readerUid: string, nextActivity: ActivityRef nullable (allOf + nullable, as LineActivity.currentActivity) }`, required both; add optional property `lines: array of LineLosingActivity` to `LinesLosingActivity` (keep `readerUids` and its `required`); update the descriptions of `PUT /readers/{readerId}/activities`, `PATCH /activities/{activityId}`, `DELETE /activities/{activityId}`, `PATCH /readers/{readerId}` and `GET /lines/{readerUid}/current-activity` with the sentences of `contracts/openapi-activities.md` ("Amendment 2026-09-28"). Run `mvn generate-sources`.
+- [X] T048 [P] In `src/main/java/com/rfidback/repository/ReaderRepository.java`: replace `findIdsByCurrentActivitySetAtBefore` with `@Query("select r.id from ReaderEntity r where r.currentActivitySetAt is null or r.currentActivitySetAt < :instant") List<UUID> findIdsWithStaleState(@Param("instant") OffsetDateTime instant)` (Javadoc: readers whose state belongs to a previous day or was never dated, research R15/R16); add `@Query("select r.id from ReaderEntity r join ActivityEntity a on r member of a.lines where a = :activity") List<UUID> findIdsByActivity(@Param("activity") ActivityEntity activity)` (or the equivalent `select l.id from ActivityEntity a join a.lines l where a = :activity`), returning ids for the same reason as the comment above the two existing id queries.
+- [X] T049 In `src/main/java/com/rfidback/entity/ReaderEntity.java`, rewrite the comment above `currentActivity`: `currentActivitySetAt` is the instant of the last change of the line's state, kept when the state is "aucune activité"; a state dated before today, station time, or not dated counts as the line's default activity (spec 012, research R1/R3/R15/R16); read it through `LineActivityService.effectiveActivity`.
+- [X] T050 In `src/main/java/com/rfidback/service/LineActivityService.java` (research R15, R16):
+  - add `ActivityEntity defaultActivity(ReaderEntity reader)`: null if `reader.getMode() != PRODUCTION`; else `activityRepository.findAllByLine(reader.getId())` filtered on `isActive()`; the single element if exactly one, else null;
+  - add `boolean isToday(ReaderEntity reader)`: `currentActivitySetAt != null && !currentActivitySetAt.isBefore(startOfToday())`;
+  - `effectiveActivity(reader)`: `isToday(reader) ? reader.getCurrentActivity() : defaultActivity(reader)`; update its Javadoc and the class Javadoc (the rule now includes the day's default, Clarifications 2026-09-28);
+  - `change(...)`: set `lockedReader.setCurrentActivitySetAt(now)` for every change, **including to none** (was null for none);
+  - rename `resetIfStale` to `startNewDay(ReaderEntity lockedReader)` (package-private, returns `boolean` = a change was logged): if `isToday` → return false; else `previous = currentActivity`, `next = defaultActivity(lockedReader)`, set `currentActivity = next` and `currentActivitySetAt = startOfToday()`; if `idOf(previous) != idOf(next)` save a `SYSTEM` `LineActivityChangeEntity` (`previousActivity` = previous, `newActivity` = next, `changedAt` = the midnight following the old `set_at` in the station zone, or `startOfToday()` when it was null) and return true; else return false (A → A: date moved, nothing logged). Keep calling it first in `change(...)`;
+  - `resetStaleActivities()` → rename `startNewDayForAllLines()`, iterating `readerRepository.findIdsWithStaleState(startOfToday())`, locking each with `findWithLockById`, counting `startNewDay` results; Javadoc updated;
+  - add `void applyDefaultIfNone(ReaderEntity lockedReader, UserEntity author)` (research R17, FR-008b): `startNewDay(lockedReader)`; if `lockedReader.getCurrentActivity() == null` and `defaultActivity(lockedReader)` is not null → `change(lockedReader, default, USER, author, null)`. Javadoc: never changes a line that has a current activity; the caller holds the row lock and has flushed its association or activation change;
+  - `describe(reader)`: `setAt` = `reader.getCurrentActivitySetAt()` when the state is today's and the current activity is not null, `startOfToday()` when the effective activity comes from a stale state's default, else null.
+- [X] T051 In `src/main/java/com/rfidback/service/ActivityDailyReset.java`: call `lineActivityService.startNewDayForAllLines()` from both entry points; update the class Javadoc (every line starts the day with its default activity: its only associated and active activity, else none, FR-008a) and the log message ("Current activity reset to the day's default on {} line(s)").
+- [X] T052 In `src/main/java/com/rfidback/exception/LinesLosingActivityException.java` and `src/main/java/com/rfidback/controller/ApiExceptionHandler.java` (research R18): the exception carries a `List<LineLosingActivity>` (reader uid + next `ActivityRef` or null) instead of, or next to, the uid list; the 409 body fills both `readerUids` and `lines`.
+
+**Checkpoint**: `mvn clean test` compiles; failures are limited to the tests adapted in T053–T055, T058 and T059.
+
+## Phase 10: User Story 2 — the single activity applied by default (Priority: P1)
+
+**Goal**: a line with exactly one associated and active activity has it as current activity from midnight, and as soon as an Administrateur change leaves it without one (User Story 2 scenario 7, FR-008a, FR-008b, SC-002a).
+
+**Independent Test**: L1 with only "Fraise" associated: after midnight (fixed clock) L1's current activity is "Fraise" with a `SYSTEM` change and a scan carries it; associating "Fraise" during the day to L1 without activity makes it current with a `USER` change by the Administrateur; a line that already has a current activity is never changed.
+
+### Tests for the amendment
+
+- [X] T053 [P] [US2] Adapt and extend `src/test/java/com/rfidback/service/LineActivityServiceTest.java` (research R19): mock `activityRepository.findAllByLine` where the default is looked up; rename the `resetIfStale_*` tests to `startNewDay_*`; existing "yesterday's choice is cleared" case now with **two** active associated activities (→ none, `SYSTEM` row A → none at the due midnight); new cases: stale state with one active activity → `effectiveActivity` returns it; with one active and one disabled → the active one; with zero or two → null; a reader in `ENREGISTREMENT` → null; today's "aucune" (`currentActivity` null, `setAt` today) with one activity → null; `startNewDay` logs none → B (null `setAt`, `changedAt` = today 00:00), A → B, and writes nothing for A → A but moves `setAt` to today 00:00; `change` to none keeps `setAt` = now; `applyDefaultIfNone` sets the single activity with a `USER` change, and does nothing when a current activity exists or when there are two activities.
+- [X] T054 [P] [US2] Adapt and extend `src/test/java/com/rfidback/service/ActivityDailyResetTest.java` (call the renamed method through the two entry points, class stays non-transactional): the existing stale case gets a second associated activity so it still ends with none; new cases: a line with one associated activity and `set_at` yesterday → after `resetAtMidnight()` it has it, one `SYSTEM` row A → A **not** written when it was already A (only `set_at` moved), and none → A written when it had none yesterday; a line whose "aucune activité" was chosen today (`current_activity_id` null, `set_at` today) with one association → `catchUpOnStartup()` leaves it on none (restart during the day); a line with `set_at` null and one association → gets it.
+- [X] T055 [P] [US2] Adapt `src/test/java/com/rfidback/controller/LineActivityApiTest.java` (the case at line ~222 whose `currentActivitySetAt` is two days old now needs two associated activities to keep reading `currentActivity: null`) and add: a line with one associated activity and a stale state reads it as `currentActivity` with `setAt` = today 00:00 Europe/Paris; after the kiosk `PUT` with `activityId: null` on that line the next `GET` reads `null` (the kiosk choice of "aucune" is kept).
+- [X] T056 [P] [US2] Extend `src/test/java/com/rfidback/controller/ActivityApiTest.java` (Administrateur session, `csrf()`), research R19: `PUT /api/readers/{L1}/activities` with only "Fraise" on L1 without activity → `200`, body `currentActivity` = Fraise, one `USER` change by the admin; then with "Fraise" and "Framboise" → L1 keeps Fraise; with only "Framboise" (removing the current one) without `confirmed` → `409` with `readerUids = [L1]` and `lines[0].nextActivity.name = "Framboise"`, then `confirmed: true` → Framboise current; L1 set to "aucune" by the kiosk, then the same `PUT` resent unchanged → L1 stays on none; `PATCH /api/activities/{A}` `{active:false, confirmed:true}` on a line without activity associated with A and B → B becomes current; reactivating A where it is a line's only association and the line has none → A current; `DELETE` of an unused activity leaving one association on a line without activity → that one becomes current.
+- [X] T057 [P] [US2] Adapt `src/test/java/com/rfidback/service/ActivityServiceTest.java` to the new calls (`applyDefaultIfNone` verified with the admin as author on the paths above, `lines` in `LinesLosingActivityException`) and `src/test/java/com/rfidback/service/ReaderServiceTest.java`: switching a reader to `PRODUCTION` calls `lineActivityService.applyDefaultIfNone(reader, admin)`; switching to `ENREGISTREMENT` still calls `clear` and not `applyDefaultIfNone`.
+- [X] T058 [P] [US2] Adapt and extend `src/test/java/com/rfidback/controller/TagScanApiTest.java`: the "choice from yesterday → record without activity" case (line ~207) gets a second associated activity so it keeps its meaning; add: a reader with one associated activity and a stale state (`set_at` yesterday, before any job run) → the scan's record carries that activity; existing requests and expected responses unchanged (SC-003).
+
+- [X] T059 [US2] Adapt the existing tests that give a line with no date yet exactly one associated activity and then expect "aucune activité" (finding C1): after T050 such a line reads as having its default activity. Known cases on `dev`: `src/test/java/com/rfidback/security/KioskReaderTokenSecurityTest.java` `lineActivity_ownLine_returns200` (line ~157, expects `currentActivity` empty: add a second activity to `lineOne`, or expect "Kiosk fraise"); `src/test/java/com/rfidback/controller/ActivityApiTest.java` `untick_currentActivity_needsConfirmation` (line ~209: after removing "Framboise", L2 keeps only "Fraise", so expect `currentActivity.name = "Fraise"` and `lines[0].nextActivity.name = "Fraise"` in the 409) and `disable_currentOnALine_needsConfirmation` (still 2 changes, but the first is now the association's `USER` change none → Fraise; keep the assertions on `changes.get(1)`). Then run `mvn clean test` once and fix every other failure of this kind the same way (second activity when the test is about "none", new expectation when it is about the line's state).
+
+### Implementation for the amendment
+
+- [X] T060 [US2] In `src/main/java/com/rfidback/service/ActivityService.java` (research R17, R18):
+  - `setReaderActivities`: after locking, call `lineActivityService.startNewDay(reader)` first (make it public or expose a public wrapper), compute the line's active associated activity ids before and after the request; when the current one is removed, build the 409 with each line's `nextActivity` = the single active activity among the requested ones, or null; apply the association change and `activityRepository.flush()`; then, if the set of active associated activities changed, call `lineActivityService.applyDefaultIfNone(reader, lineActivityService.currentUser())`;
+  - `updateActivity` when `active` flips: lock by id every reader of `readerRepository.findIdsByActivity(activity)` (plus those of `findIdsByCurrentActivity`, already covered by the association), `startNewDay` each; for disabling, the 409 lists the lines where it is current with their `nextActivity`; set `active`, `saveAndFlush`, clear the confirmed lines as today, then `applyDefaultIfNone(reader, admin)` on every locked line;
+  - `deleteActivity`: before clearing the associations, lock by id the readers of `findIdsByActivity`; after `delete` and `flush`, `applyDefaultIfNone` on each;
+  - wherever several readers are locked in one transaction (`updateActivity`, `deleteActivity`, and the existing
+    `findIdsByCurrentActivity` loop), lock them **in ascending id order** (sort the id list first), so two
+    concurrent Administrateur changes never lock the same lines in opposite orders (finding U1, research R17);
+  - update the class and method Javadoc (FR-008b).
+- [X] T061 [US2] In `src/main/java/com/rfidback/service/ReaderService.java` `updateReader`: after the mode is set and the registration session handled, when the resulting mode is `PRODUCTION` and the mode changed, call `lineActivityService.applyDefaultIfNone(readerEntity, lineActivityService.currentUser())`; keep the `ENREGISTREMENT` branch as is, but `clear` now keeps `set_at` (T050). Update the Javadoc (FR-008b).
+- [X] T062 [US2] In `front/activities.html` `withConfirmation`: when the 409 body has `lines`, render each item as `<li>L1 → Framboise</li>` or `<li>L1 → aucune activité</li>` (escape both through `escapeHtml`), falling back to `readerUids` when `lines` is absent; adjust the modal's intro text to say the lines lose their current activity and, where shown, get the one that remains.
+- [X] T063 [US2] Run `mvn clean test -Dtest='LineActivityServiceTest,ActivityDailyResetTest,LineActivityApiTest,ActivityApiTest,ActivityServiceTest,ReaderServiceTest,TagScanApiTest,TagServiceTest,KioskReaderTokenSecurityTest,RecordApiTest'` until green.
+
+**Checkpoint**: User Story 2 scenario 7 and SC-002a pass; the delivered behaviour of lines with zero or several activities is unchanged.
+
+## Phase 11: Polish (amendment)
+
+- [X] T064 [P] Update `CLAUDE.md` "Persistence": the midnight reset (spec 012) gives each line its only associated active activity, or none, and an Administrateur change that leaves a line without activity gives it the one that remains (`service/LineActivityService`, `startNewDay` / `applyDefaultIfNone`); `reader.current_activity_set_at` dates the line's state, including "aucune".
+- [X] T065 Run `mvn clean install` (full build, test classes in CI order); all pass.
+- [X] T066 Walk through [quickstart.md](quickstart.md) section 8 on the `dev` profile, note any deviation in the spec's Clarifications, then set the spec's **Status** to `Delivered (2026-09-26); amended <date>` and open the PR with `--base dev`.
+
+## Amendment dependencies
+
+- T046 → T047 → (T048, T049 in parallel) → T050 → (T051, T052) → Phase 10.
+- Phase 10 tests T053–T058 can be written in parallel (different files) once T050–T052 compile; T053–T055 and T058 exercise `LineActivityService` only, T056–T057 need T060–T061 to pass.
+- T059 (adapt existing tests) right after T050–T052, before the implementation tasks, so the remaining failures are only the new cases.
+- T060 → T061 → T062 → T063 → Phase 11.
+
+## Amendment parallel example
+
+```text
+After T050–T052:  T053 LineActivityServiceTest  |  T054 ActivityDailyResetTest  |  T055 LineActivityApiTest  |  T058 TagScanApiTest
+Then:             T059 existing tests  →  T060 ActivityService  →  T061 ReaderService  →  T062 activities.html   (with T056, T057 alongside)
+Polish:           T064 CLAUDE.md  |  T065 full build
+```
+
+## Amendment strategy
+
+MVP = Phases 8–9 plus T053–T055, T058 and T059: the midnight default and the rule on read alone satisfy the daily use (a single-activity line starts every day with its activity). T056, T057 and T060–T062 then add FR-008b (Administrateur changes during the day) and the confirmation dialog.

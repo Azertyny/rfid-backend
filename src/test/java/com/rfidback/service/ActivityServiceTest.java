@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -119,14 +120,15 @@ class ActivityServiceTest {
                 () -> activityService.updateActivity(activity.getId(), new UpdateActivity().active(false)));
 
         assertThat(exception.getReaderUids()).containsExactly("L1");
+        assertThat(exception.getLines().get(0).getNextActivity()).isNull();
         assertThat(activity.isActive()).isTrue();
-        verify(lineActivityService, never()).clear(any(), any());
+        verify(lineActivityService, never()).replaceWithDefault(any(), any());
         verify(activityRepository, never()).saveAndFlush(any());
         assertThat(line.getCurrentActivity()).isSameAs(activity);
     }
 
     @Test
-    void disable_currentOnLines_confirmed_clearsEachLine() {
+    void disable_currentOnLines_confirmed_givesEachLineItsDefault() {
         ActivityEntity activity = activity("Fraise");
         ReaderEntity line = currentOn(activity, "L1");
         UserEntity admin = UserEntity.builder().username("admin").build();
@@ -134,7 +136,8 @@ class ActivityServiceTest {
 
         activityService.updateActivity(activity.getId(), new UpdateActivity().active(false).confirmed(true));
 
-        verify(lineActivityService).clear(line, admin);
+        // The default, computed by LineActivityService, is the line's only remaining activity or none (FR-008b).
+        verify(lineActivityService).replaceWithDefault(line, admin);
         assertThat(activity.isActive()).isFalse();
     }
 
@@ -157,13 +160,18 @@ class ActivityServiceTest {
     @Test
     void delete_neverUsed_removesAssociationsAndActivity() {
         ActivityEntity activity = activity("Test");
-        activity.getLines().add(reader("L1", ReaderMode.PRODUCTION));
+        ReaderEntity line = reader("L1", ReaderMode.PRODUCTION);
+        activity.getLines().add(line);
         when(activityRepository.findById(activity.getId())).thenReturn(Optional.of(activity));
+        when(readerRepository.findIdsByActivity(activity)).thenReturn(List.of(line.getId()));
+        when(readerRepository.findWithLockById(line.getId())).thenReturn(Optional.of(line));
 
         activityService.deleteActivity(activity.getId());
 
         assertThat(activity.getLines()).isEmpty();
         verify(activityRepository).delete(activity);
+        // The line it leaves may have a single activity left (FR-008b).
+        verify(lineActivityService).applyDefaultIfNone(eq(line), any());
     }
 
     // --- associations (FR-005 to FR-007) ---
@@ -192,15 +200,18 @@ class ActivityServiceTest {
         ActivityEntity fraise = activity("Fraise");
         ReaderEntity reader = reader("L1", ReaderMode.PRODUCTION);
         fraise.getLines().add(reader);
+        reader.setCurrentActivity(fraise);
         when(readerRepository.findWithLockById(reader.getId())).thenReturn(Optional.of(reader));
         when(activityRepository.findAllById(any())).thenReturn(List.of());
-        when(lineActivityService.effectiveActivity(reader)).thenReturn(fraise);
 
         LinesLosingActivityException exception = assertThrows(LinesLosingActivityException.class,
                 () -> activityService.setReaderActivities(reader.getId(), new SetReaderActivities(Set.of())));
 
         assertThat(exception.getReaderUids()).containsExactly("L1");
+        assertThat(exception.getLines().get(0).getNextActivity()).isNull();
         assertThat(fraise.getLines()).contains(reader);
+        // Today's state is checked, not a choice from a previous day (research R16).
+        verify(lineActivityService).startNewDay(reader);
     }
 
     @Test
@@ -219,6 +230,23 @@ class ActivityServiceTest {
         assertThat(framboise.getLines()).containsExactly(reader);
         verify(lineActivityService).describe(reader);
         verify(lineActivityService, never()).clear(any(), any());
+        // The line's active activities changed: it may now have a single one (FR-008b).
+        verify(lineActivityService).applyDefaultIfNone(eq(reader), any());
+    }
+
+    @Test
+    void setReaderActivities_unchanged_leavesTheCurrentActivityAlone() {
+        ActivityEntity fraise = activity("Fraise");
+        ReaderEntity reader = reader("L1", ReaderMode.PRODUCTION);
+        fraise.getLines().add(reader);
+        when(readerRepository.findWithLockById(reader.getId())).thenReturn(Optional.of(reader));
+        when(activityRepository.findAllById(any())).thenReturn(List.of(fraise));
+        when(activityRepository.findAllByLine(reader.getId())).thenReturn(List.of(fraise));
+
+        activityService.setReaderActivities(reader.getId(), new SetReaderActivities(Set.of(fraise.getId())));
+
+        verify(lineActivityService, never()).applyDefaultIfNone(any(), any());
+        verify(lineActivityService, never()).replaceWithDefault(any(), any());
     }
 
     private ReaderEntity currentOn(ActivityEntity activity, String name) {

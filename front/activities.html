@@ -118,9 +118,9 @@
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
-                    <p>Les lignes suivantes n'auront plus d'activité en cours :</p>
+                    <p>Les lignes suivantes perdent leur activité en cours ; celle indiquée après la flèche la remplace :</p>
                     <ul id="confirmLines" class="fw-bold"></ul>
-                    <p class="small text-muted mb-0">Leurs prochaines lectures seront « Sans activité » jusqu'à ce que l'opérateur en choisisse une.</p>
+                    <p class="small text-muted mb-0">Une ligne à qui il ne reste qu'une activité la reçoit. Les autres liront « Sans activité » jusqu'à ce que l'opérateur en choisisse une.</p>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
@@ -315,8 +315,14 @@
                 }
                 const body = await response.json().catch(() => ({}));
                 if (response.status === 409 && Array.isArray(body.readerUids)) {
-                    document.getElementById('confirmLines').innerHTML =
-                        body.readerUids.map(uid => `<li>${escapeHtml(uid)}</li>`).join('');
+                    // Each line with the activity it gets instead (spec 012, FR-008b); readerUids alone otherwise.
+                    const lines = Array.isArray(body.lines)
+                        ? body.lines
+                        : body.readerUids.map(readerUid => ({ readerUid, nextActivity: null }));
+                    document.getElementById('confirmLines').innerHTML = lines.map(line => {
+                        const next = line.nextActivity ? escapeHtml(line.nextActivity.name) : 'aucune activité';
+                        return `<li>${escapeHtml(line.readerUid)} → ${next}</li>`;
+                    }).join('');
                     document.getElementById('confirmButton').onclick = async () => {
                         confirmModal.hide();
                         const confirmedResponse = await send(true);
