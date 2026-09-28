@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-26
 
-**Status**: Delivered (2026-09-26)
+**Status**: Delivered (2026-09-26); amended 2026-09-28 (single activity applied by default), delivered 2026-09-28
 
 **Input**: User description: "J'aimerais ajouter une notion \"d'activité\" dans l'application. L'objectif étant de pouvoir sélectionner le type de produit en cours de production pour une ligne donnée, dons pour un lecteur donné. Ensuite, un opérateur de la ligne pourra sélectionner l'activité en cours sur sa ligne. Les activités seront associées aux lignes par l'administrateur en amont."
 
@@ -28,6 +28,11 @@ elles l'activité en cours, et la change quand la ligne change de produit.
 - Q: Si l'Opérateur a oublié de changer d'activité, peut-on corriger après coup l'activité des lectures déjà faites ? → A: Non : l'activité d'une lecture est figée à sa création, aucune correction n'est prévue dans cette fonctionnalité.
 - Q: L'activité en cours d'une ligne doit-elle persister d'un jour à l'autre, ou repartir de « aucune activité » chaque jour ? → A: Remise à zéro chaque jour à minuit (fuseau de la station) : toutes les lignes repassent à « aucune activité », l'Opérateur choisit l'activité en début de poste.
 - Q: Quand une ligne n'a pas d'activité en cours, comment le kiosque doit-il le signaler à l'Opérateur ? → A: Bandeau d'alerte bien visible en haut du kiosque, tant qu'aucune activité n'est choisie, avec le nombre de lectures faites sans activité depuis minuit ; aucun blocage.
+
+### Session 2026-09-28
+
+- Q: À quel moment l'activité unique d'une ligne doit-elle devenir automatiquement son activité en cours ? → A: Côté serveur, à la remise à zéro quotidienne (minuit, ou au démarrage si le serveur était arrêté) : une ligne ayant exactement une activité associée et active reçoit cette activité au lieu de « aucune », changement tracé avec le système pour auteur ; le kiosque l'affiche simplement.
+- Q: Pendant la journée, quand une ligne sans activité en cours se retrouve avec une seule activité associée et active, faut-il la lui appliquer tout de suite ? → A: Oui, immédiatement, dès que la ligne n'a pas d'activité en cours au moment du changement, quelle qu'en soit la raison (y compris un « aucune activité » choisi exprès par l'Opérateur le jour même) ; le changement est tracé avec pour auteur l'Administrateur qui a fait la modification.
 
 ## User Scenarios & Testing _(mandatory)_
 
@@ -85,6 +90,10 @@ le kiosque l'affiche comme activité en cours, et les lectures suivantes de L1 l
    ligne, **Then** le choix est accepté aux mêmes conditions qu'au kiosque.
 6. **Given** un lecteur en mode "enregistrement", **When** on tente de lui associer une activité ou de lui choisir une
    activité en cours, **Then** c'est refusé : seules les lignes de production ont une activité.
+7. **Given** la ligne L1 associée à la seule activité active "Fraise" (Clarifications 2026-09-28), **When** minuit
+   passe, ou quand l'Administrateur associe "Fraise" à L1 alors sans activité en cours, **Then** "Fraise" devient
+   l'activité en cours de L1 sans action de l'Opérateur, le kiosque l'affiche sans bandeau d'alerte, et le changement
+   est tracé (système à minuit, Administrateur sinon).
 
 ---
 
@@ -114,9 +123,10 @@ la bonne activité, et le kiosque affiche l'activité de chaque lecture.
   disponible pour la ligne et invite à contacter l'Administrateur ; les scans continuent sans activité.
 - **Dissociation de l'activité en cours** : si l'Administrateur retire à une ligne l'activité en cours, la ligne n'a
   plus d'activité en cours ; les lectures suivantes n'en portent pas jusqu'au prochain choix de l'Opérateur.
+  S'il reste à la ligne exactement une activité associée et active, elle devient l'activité en cours (FR-008b).
   L'Administrateur est prévenu avant de confirmer.
-- **Désactivation d'une activité en cours sur une ou plusieurs lignes** : même effet que la dissociation, pour chacune
-  de ces lignes ; l'activité n'est plus proposée au choix, mais reste visible sur les lectures passées et dans les
+- **Désactivation d'une activité en cours sur une ou plusieurs lignes** : même effet que la dissociation (y compris
+  FR-008b), pour chacune de ces lignes ; l'activité n'est plus proposée au choix, mais reste visible sur les lectures passées et dans les
   associations (marquée désactivée) pour pouvoir être réactivée.
 - **Suppression d'une activité** : impossible dès qu'une lecture la porte ou qu'elle a déjà été choisie sur une ligne
   (il faut la désactiver) ; possible sinon, ce qui retire aussi ses associations.
@@ -125,14 +135,19 @@ la bonne activité, et le kiosque affiche l'activité de chaque lecture.
 - **Choix d'une activité au moment d'un scan** : le scan porte soit l'ancienne, soit la nouvelle activité, jamais un
   mélange ni une activité non associée à la ligne.
 - **Lecteur passé du mode "production" au mode "enregistrement"** : il perd son activité en cours ; ses
-  associations sont conservées pour le jour où il repasse en production.
+  associations sont conservées pour le jour où il repasse en production. S'il repasse en production avec exactement
+  une activité associée et active, il la reçoit aussitôt (FR-008b).
+- **Première activité associée à une ligne en cours de journée** : la ligne, sans activité en cours, la reçoit
+  immédiatement (FR-008b) ; en associer une seconde ne change pas l'activité en cours.
 - **Lecteur désactivé** : son activité en cours et ses associations sont conservées ; le kiosque est refusé comme
   aujourd'hui pour un lecteur désactivé.
 - **Scan autour de minuit** : une lecture faite avant minuit (heure de la station) porte l'activité de la veille,
   une lecture faite après n'en porte aucune tant que l'Opérateur n'a pas choisi ; jamais l'activité de la veille
-  après minuit, même si le serveur a redémarré entre-temps.
+  après minuit, même si le serveur a redémarré entre-temps. Sur une ligne à activité unique (FR-008a), la lecture
+  faite après minuit porte cette activité unique, choisie pour le nouveau jour.
 - **Poste de nuit qui traverse minuit** : la ligne repasse à "aucune activité" à minuit et l'Opérateur doit
-  choisir de nouveau l'activité ; le kiosque affiche alors "aucune activité".
+  choisir de nouveau l'activité ; le kiosque affiche alors "aucune activité". Une ligne à activité unique repasse
+  directement à cette activité (FR-008a).
 - **Lectures antérieures à la fonctionnalité** : elles n'ont pas d'activité et apparaissent comme "Sans activité".
 
 ## Requirements _(mandatory)_
@@ -160,8 +175,9 @@ la bonne activité, et le kiosque affiche l'activité de chaque lecture.
 - **FR-006** : seules les lignes (lecteurs en mode "production") PEUVENT recevoir une association ; une association à
   un lecteur en mode "enregistrement" DOIT être refusée.
 - **FR-007** : dissocier d'une ligne son activité en cours, ou désactiver une activité en cours sur des lignes, DOIT
-  laisser ces lignes sans activité en cours ; le système DOIT indiquer à l'Administrateur, avant confirmation, les
-  lignes concernées.
+  laisser ces lignes sans activité en cours, sauf celles à qui il reste exactement une activité associée et active,
+  qui la reçoivent (FR-008b) ; le système DOIT indiquer à l'Administrateur, avant confirmation, les lignes
+  concernées.
 
 **Activité en cours (Opérateur)**
 
@@ -169,9 +185,19 @@ la bonne activité, et le kiosque affiche l'activité de chaque lecture.
   actives, ou aucune.
 - **FR-008a** (Clarifications 2026-09-26) : chaque jour à minuit, dans le fuseau de la station (celui du tableau de
   bord, spec `007`, FR-007), le système DOIT remettre toutes les lignes à "aucune activité" ; les lectures suivantes
-  n'en portent pas jusqu'au choix de l'Opérateur. Cette remise à zéro est tracée comme un changement (FR-012), avec
-  pour auteur le système. Elle DOIT avoir lieu même si le serveur était arrêté à minuit : une activité choisie un jour
+  n'en portent pas jusqu'au choix de l'Opérateur. Exception (Clarifications 2026-09-28) : une ligne qui a exactement
+  une activité associée et active reçoit cette activité au lieu de "aucune activité" ; ses lectures suivantes la
+  portent sans action de l'Opérateur, qui peut toujours la retirer. Cette remise à zéro est tracée comme un changement
+  (FR-012), avec pour auteur le système. Elle DOIT avoir lieu même si le serveur était arrêté à minuit : une activité choisie un jour
   précédent (dans le fuseau de la station) n'est jamais appliquée à une lecture du jour.
+- **FR-008b** (Clarifications 2026-09-28) : quand une modification de l'Administrateur (association, dissociation,
+  désactivation, réactivation ou suppression d'une activité, passage d'un lecteur en mode "production") laisse une ligne sans
+  activité en cours avec exactement une activité associée et active, le système DOIT lui appliquer immédiatement
+  cette activité, quelle que soit la raison pour laquelle la ligne n'en avait pas (y compris un "aucune activité"
+  choisi par l'Opérateur le jour même). Le changement est tracé (FR-012) avec pour auteur l'Administrateur. Une ligne
+  qui a déjà une activité en cours n'est jamais modifiée par cette règle. Choisir "aucune activité" au kiosque ou au
+  front reste permis et ne déclenche pas la règle : ce choix reste en vigueur jusqu'à la prochaine modification de
+  l'Administrateur ou jusqu'à minuit.
 - **FR-009** : le kiosque d'une ligne DOIT afficher l'activité en cours de la ligne et permettre de la changer ou de
   la retirer, avec le jeton du lecteur de la ligne (spec `008`, FR-005a) ; ce jeton NE DOIT permettre de changer que
   l'activité en cours de sa propre ligne.
@@ -225,6 +251,10 @@ la bonne activité, et le kiosque affiche l'activité de chaque lecture.
   choisir l'activité), en moins de 10 secondes.
 - **SC-002** : 100 % des lectures faites après un changement d'activité portent la nouvelle activité, et 100 % des
   lectures faites avant gardent l'ancienne — vérifié par tests automatisés.
+- **SC-002a** (Clarifications 2026-09-28) : 100 % des lignes ayant exactement une activité associée et active l'ont
+  pour activité en cours après la remise à zéro quotidienne, et après toute modification de l'Administrateur qui les
+  laissait sans activité ; aucune ligne qui avait déjà une activité en cours n'est modifiée — vérifié par tests
+  automatisés.
 - **SC-003** : 0 scan refusé ou perdu à cause de l'activité (absente, dissociée, désactivée) ; les tests existants du
   scan passent sans modification de leur requête ni de la réponse attendue.
 - **SC-004** : 100 % des tentatives, au kiosque, de choisir une activité non associée à sa ligne ou de changer
@@ -244,8 +274,10 @@ la bonne activité, et le kiosque affiche l'activité de chaque lecture.
   lecteur (spec `008`) ; les utilisateurs connectés peuvent aussi changer l'activité d'une ligne, pour dépanner.
 - Une activité est un simple libellé ; aucun autre attribut (variété, calibre, client, objectif de cadence) n'est
   introduit. Le produit n'a pas d'effet sur la conformité, le cueilleur ou le seau.
-- Aucune activité n'est choisie automatiquement : même si une ligne n'a qu'une activité associée, l'Opérateur la
-  choisit explicitement, y compris chaque matin après la remise à zéro (FR-008a).
+- Une activité n'est choisie automatiquement que pour une ligne ayant exactement une activité associée et active, et
+  seulement à la remise à zéro quotidienne (FR-008a) ou après une modification de l'Administrateur qui la laisse sans
+  activité en cours (FR-008b) (Clarifications 2026-09-28) ; dans tous les autres cas, l'Opérateur choisit l'activité
+  explicitement.
 - Les lectures créées avant la livraison restent sans activité ; aucune reprise de données n'est prévue.
 - Les lecteurs physiques ne changent pas : l'activité est déterminée côté serveur, pas envoyée par le lecteur.
 - Hors périmètre (Clarifications 2026-09-26) : le filtre et les totaux par activité du tableau de bord (spec `007`)

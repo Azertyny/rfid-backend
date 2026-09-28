@@ -1,6 +1,6 @@
 # Implementation Plan: Activités des lignes de production
 
-**Branch**: `012-activites-lignes` | **Date**: 2026-09-26 | **Spec**: [spec.md](spec.md)
+**Branch**: `012-activites-lignes` | **Date**: 2026-09-26, amended 2026-09-28 | **Spec**: [spec.md](spec.md)
 
 **Input**: Feature specification from `.specify/specs/012-activites-lignes/spec.md`
 
@@ -27,6 +27,23 @@ An **activity** (product type) is chosen per line, a line being a reader in `PRO
    of today's records without activity, and each record's activity (R10, R13).
 
 Dashboard filtering by activity is out of scope (Clarifications 2026-09-26).
+
+### Amendment 2026-09-28: single activity applied by default
+
+Spec clarifications of 2026-09-28 (FR-008a exception, FR-008b, SC-002a), on top of the delivered feature:
+
+5. **The day's default**: a line with exactly one associated and active activity has it as current activity from
+   midnight. `reader.current_activity_set_at` now also dates a state of "aucune activité" (R15), so the server tells
+   "none since yesterday" from "none chosen today". A stale state yields the default on read (scan, kiosk), and the
+   midnight job / startup catch-up write it with a `SYSTEM` change when the value changes (R16).
+6. **After an Administrateur change**: `LineActivityService.applyDefaultIfNone` gives the single remaining activity
+   to a line left without one, from `setReaderActivities` (when the line's active associations changed),
+   `updateActivity` (activation flipped, every associated line), `deleteActivity` and `ReaderService.updateReader`
+   (switch to `PRODUCTION`); author the Administrateur (R17). The `409 LinesLosingActivity` body names each line's
+   next activity, shown in the confirmation modal (R18).
+
+No new table, column, route or security rule; the kiosk (`reader.html`) is unchanged, it already polls the line's
+activity every 5 s.
 
 ## Technical Context
 
@@ -62,8 +79,13 @@ station time (FR-008a); kiosk token limited to its own line (FR-009); no browser
 security-matrix changes, 1 new front page, `reader.html` and the navbar of every page, docs (`CLAUDE.md`,
 `deploy/INSTALL.md` untouched unless the kiosk launcher changes — it does not).
 
-No `NEEDS CLARIFICATION` remains: spec questions were answered on 2026-09-26; the rest is settled in
-[research.md](research.md) (R1–R14).
+No `NEEDS CLARIFICATION` remains: spec questions were answered on 2026-09-26 and 2026-09-28; the rest is settled in
+[research.md](research.md) (R1–R14, amendment R15–R19).
+
+**Amendment scope**: 1 schema (`LinesLosingActivity.lines`) and 5 descriptions in `api.yaml`; `LineActivityService`
+(default rule, `startNewDay`, `applyDefaultIfNone`), `ActivityService`, `ReaderService`, 2 `ReaderRepository` queries,
+the modal of `front/activities.html`; tests in R19; `CLAUDE.md` (the midnight reset gives a single-activity line its
+activity). No schema change: `current_activity_set_at` keeps its type, only its meaning widens (R15).
 
 ## Constitution Check
 
@@ -82,6 +104,7 @@ No `NEEDS CLARIFICATION` remains: spec questions were answered on 2026-09-26; th
 | Schema changes through entities with `ddl-auto: update`; no constraint relaxed | `CLAUDE.md` | Pass | Pass: only new tables, nullable columns and indexes (data-model) |
 | Station time zone for day boundaries | `CLAUDE.md` (`APP_STATION_TIME_ZONE`) | Pass | Pass: reset and banner count use `StationProperties` (R3, R10) |
 | Tests on the `test` profile; `mvn clean install` passes | `CLAUDE.md` | Pass | Pass (planned, R14) |
+| Amendment 2026-09-28: same gates | `CLAUDE.md` | Pass | Pass: no new route or security rule; `api.yaml` changed first (one optional property); no schema change, so nothing for `ddl-auto` to relax; station zone used for "today" (R15–R19) |
 
 No violations, so Complexity Tracking stays empty.
 
@@ -93,11 +116,11 @@ No violations, so Complexity Tracking stays empty.
 .specify/specs/012-activites-lignes/
 ├── spec.md              # Spec + 2026-09-26 clarifications (FR-003 refined during planning, research R7)
 ├── plan.md              # This file
-├── research.md          # Phase 0: decisions R1-R14
+├── research.md          # Phase 0: decisions R1-R14, amendment R15-R19
 ├── data-model.md        # Phase 1: tables, state transitions, repository additions
 ├── quickstart.md        # Phase 1: automated and manual checks
 ├── contracts/
-│   └── openapi-activities.md   # Phase 1: api.yaml changes and access matrix
+│   └── openapi-activities.md   # Phase 1: api.yaml changes and access matrix (+ amendment 2026-09-28)
 ├── checklists/
 │   └── requirements.md
 └── tasks.md             # Phase 2 (/speckit-tasks, not created here)
@@ -155,6 +178,12 @@ front/
 
 CLAUDE.md                                                 # kiosk chain routes; activity reset job; domain term "Activity"
 ```
+
+**Amendment 2026-09-28 files**: `api.yaml` (`LinesLosingActivity.lines`, descriptions);
+`service/LineActivityService.java`, `service/ActivityDailyReset.java` (renamed call), `service/ActivityService.java`,
+`service/ReaderService.java`, `repository/ReaderRepository.java`, `controller/ApiExceptionHandler.java` (409 body),
+`exception/LinesLosingActivityException.java` (carries the next activities); `front/activities.html` (modal);
+tests of R19; `CLAUDE.md`.
 
 **Structure Decision**: the existing single Spring Boot project with its static front. `LineActivityService` owns the
 "effective activity" rule so the scan, the kiosk and the job share it; `ActivityService` owns the catalogue and

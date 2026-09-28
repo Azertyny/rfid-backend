@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -14,6 +15,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import com.rfidback.entity.ActivityChangeAuthorType;
 import com.rfidback.entity.ActivityEntity;
@@ -45,9 +48,13 @@ class ActivityDailyResetTest {
     @Autowired
     private LineActivityChangeRepository lineActivityChangeRepository;
 
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+
     private ActivityEntity fraise;
     private ReaderEntity staleLine;
     private ReaderEntity todaysLine;
+    private final List<ReaderEntity> singleActivityLines = new ArrayList<>();
 
     @BeforeEach
     void setUp() {
@@ -59,7 +66,10 @@ class ActivityDailyResetTest {
 
     @AfterEach
     void tearDown() {
-        for (ReaderEntity line : List.of(staleLine, todaysLine)) {
+        inTransaction(() -> activityRepository.findById(fraise.getId()).orElseThrow().getLines().clear());
+        List<ReaderEntity> lines = new ArrayList<>(List.of(staleLine, todaysLine));
+        lines.addAll(singleActivityLines);
+        for (ReaderEntity line : lines) {
             lineActivityChangeRepository.deleteAll(lineActivityChangeRepository.findAllByReaderOrderByChangedAtAsc(line));
             readerRepository.deleteById(line.getId());
         }
@@ -86,6 +96,51 @@ class ActivityDailyResetTest {
         assertStaleLineReset();
     }
 
+    // --- a line with a single activity starts the day with it (Clarifications 2026-09-28) ---
+
+    @Test
+    void resetAtMidnight_singleActivityLine_keepsYesterdaysOne_withoutLoggingIt() {
+        ReaderEntity line = singleActivityLine(fraise, startOfToday().minusHours(1));
+
+        activityDailyReset.resetAtMidnight();
+
+        ReaderEntity reset = readerRepository.findWithCurrentActivityById(line.getId()).orElseThrow();
+        assertThat(reset.getCurrentActivity().getId()).isEqualTo(fraise.getId());
+        assertThat(reset.getCurrentActivitySetAt().toInstant()).isEqualTo(startOfToday().toInstant());
+        assertThat(lineActivityChangeRepository.findAllByReaderOrderByChangedAtAsc(line)).isEmpty();
+    }
+
+    @Test
+    void resetAtMidnight_singleActivityLineWithoutActivityYesterday_getsIt_loggedAtMidnight() {
+        ReaderEntity yesterday = singleActivityLine(null, startOfToday().minusHours(1));
+        ReaderEntity undated = singleActivityLine(null, null);
+
+        activityDailyReset.resetAtMidnight();
+
+        for (ReaderEntity line : List.of(yesterday, undated)) {
+            assertThat(readerRepository.findWithCurrentActivityById(line.getId()).orElseThrow()
+                    .getCurrentActivity().getId()).isEqualTo(fraise.getId());
+            List<LineActivityChangeEntity> changes = lineActivityChangeRepository.findAllByReaderOrderByChangedAtAsc(
+                    line);
+            assertThat(changes).hasSize(1);
+            assertThat(changes.get(0).getAuthorType()).isEqualTo(ActivityChangeAuthorType.SYSTEM);
+            assertThat(changes.get(0).getPreviousActivity()).isNull();
+            assertThat(changes.get(0).getNewActivity().getId()).isEqualTo(fraise.getId());
+            assertThat(changes.get(0).getChangedAt().toInstant()).isEqualTo(startOfToday().toInstant());
+        }
+    }
+
+    @Test
+    void catchUpOnStartup_duringTheDay_keepsANoneChosenToday() {
+        ReaderEntity line = singleActivityLine(null, OffsetDateTime.now());
+
+        activityDailyReset.catchUpOnStartup();
+
+        assertThat(readerRepository.findWithCurrentActivityById(line.getId()).orElseThrow()
+                .getCurrentActivity()).isNull();
+        assertThat(lineActivityChangeRepository.findAllByReaderOrderByChangedAtAsc(line)).isEmpty();
+    }
+
     private void assertStaleLineReset() {
         assertThat(readerRepository.findWithCurrentActivityById(staleLine.getId()).orElseThrow()
                 .getCurrentActivity()).isNull();
@@ -101,6 +156,23 @@ class ActivityDailyResetTest {
         line.setCurrentActivity(fraise);
         line.setCurrentActivitySetAt(setAt);
         return readerRepository.save(line);
+    }
+
+    private ReaderEntity singleActivityLine(ActivityEntity current, OffsetDateTime setAt) {
+        ReaderEntity line = ReaderEntity.builder().name("Reset single " + UUID.randomUUID()).build();
+        line.setCurrentActivity(current);
+        line.setCurrentActivitySetAt(setAt);
+        line = readerRepository.save(line);
+        ReaderEntity saved = line;
+        inTransaction(() -> activityRepository.findById(fraise.getId()).orElseThrow().getLines()
+                .add(readerRepository.findById(saved.getId()).orElseThrow()));
+        singleActivityLines.add(line);
+        return line;
+    }
+
+    /** The test stays non-transactional (see catchUpOnStartup_runsInATransaction); only associations need one. */
+    private void inTransaction(Runnable work) {
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> work.run());
     }
 
     private static OffsetDateTime startOfToday() {

@@ -150,6 +150,8 @@ class KioskReaderTokenSecurityTest {
     void lineActivity_ownLine_returns200() throws Exception {
         ActivityEntity fraise = activityRepository.save(ActivityEntity.builder().name("Kiosk fraise").build());
         fraise.getLines().add(lineOne);
+        // A second activity, so that the line has no activity of the day by default (Clarifications 2026-09-28).
+        activityRepository.save(ActivityEntity.builder().name("Kiosk framboise").build()).getLines().add(lineOne);
 
         mockMvc.perform(get("/api/lines/{readerUid}/current-activity", "Kiosk L1")
                         .header("x-api-token", lineOne.getApitoken()))

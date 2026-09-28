@@ -5,12 +5,14 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
@@ -22,6 +24,7 @@ import com.rfidback.entity.ActivityChangeAuthorType;
 import com.rfidback.entity.ActivityEntity;
 import com.rfidback.entity.LineActivityChangeEntity;
 import com.rfidback.entity.ReaderEntity;
+import com.rfidback.entity.ReaderMode;
 import com.rfidback.entity.UserEntity;
 import com.rfidback.repository.ActivityRepository;
 import com.rfidback.repository.LineActivityChangeRepository;
@@ -29,12 +32,17 @@ import com.rfidback.repository.ReaderRepository;
 import com.rfidback.repository.RecordRepository;
 import com.rfidback.repository.UserRepository;
 
-/** The midnight rule, station time Europe/Paris (spec 012, FR-008a, research R3). */
+/**
+ * The midnight rule, station time Europe/Paris, and the day's default activity (spec 012, FR-008a, FR-008b, research
+ * R3, R16, R17). Without associations mocked, a line's default activity is none.
+ */
 class LineActivityServiceTest {
 
     private static final ZoneId PARIS = ZoneId.of("Europe/Paris");
 
     private final LineActivityChangeRepository changeRepository = Mockito.mock(LineActivityChangeRepository.class);
+    private final ActivityRepository activityRepository = Mockito.mock(ActivityRepository.class);
+    private final UserEntity admin = UserEntity.builder().username("admin").build();
 
     @Test
     void effectiveActivity_lastsUntilMidnightStationTime_inWinterAndSummer() {
@@ -57,7 +65,7 @@ class LineActivityServiceTest {
         LineActivityService service = serviceAt("2026-01-15T10:00:00Z");
         ReaderEntity line = ReaderEntity.builder().id(UUID.randomUUID()).name("L1").build();
 
-        service.clear(line, UserEntity.builder().username("admin").build());
+        service.clear(line, admin);
 
         verify(changeRepository, never()).save(any());
     }
@@ -68,7 +76,7 @@ class LineActivityServiceTest {
         ActivityEntity fraise = activity("Fraise");
         ReaderEntity line = lineWith(fraise, "2026-01-15T08:00:00Z");
 
-        service.clear(line, UserEntity.builder().username("admin").build());
+        service.clear(line, admin);
 
         ArgumentCaptor<LineActivityChangeEntity> captor = ArgumentCaptor.forClass(LineActivityChangeEntity.class);
         verify(changeRepository).save(captor.capture());
@@ -82,27 +90,165 @@ class LineActivityServiceTest {
     }
 
     @Test
-    void resetIfStale_todaysChoice_isKept() {
+    void startNewDay_todaysChoice_isKept() {
         LineActivityService service = serviceAt("2026-01-15T10:00:00Z");
         ActivityEntity fraise = activity("Fraise");
         ReaderEntity line = lineWith(fraise, "2026-01-15T08:00:00Z");
 
-        assertThat(service.resetIfStale(line)).isFalse();
+        assertThat(service.startNewDay(line)).isFalse();
 
         assertThat(line.getCurrentActivity()).isSameAs(fraise);
         verify(changeRepository, never()).save(any());
     }
 
     @Test
-    void resetIfStale_yesterdaysChoice_isClearedOnce() {
+    void startNewDay_yesterdaysChoice_withSeveralActivities_isClearedOnce() {
         LineActivityService service = serviceAt("2026-01-16T00:30:00Z");
-        ReaderEntity line = lineWith(activity("Fraise"), "2026-01-15T08:00:00Z");
+        ActivityEntity fraise = activity("Fraise");
+        ReaderEntity line = lineWith(fraise, "2026-01-15T08:00:00Z");
+        associate(line, fraise, activity("Framboise"));
 
-        assertThat(service.resetIfStale(line)).isTrue();
-        assertThat(service.resetIfStale(line)).isFalse();
+        assertThat(service.startNewDay(line)).isTrue();
+        assertThat(service.startNewDay(line)).isFalse();
 
         verify(changeRepository, times(1)).save(any());
-        assertThat(line.getCurrentActivitySetAt()).isNull();
+        assertThat(line.getCurrentActivity()).isNull();
+        // Dated today's midnight: a restart later today does not start the day again.
+        assertThat(line.getCurrentActivitySetAt().toInstant()).isEqualTo(Instant.parse("2026-01-15T23:00:00Z"));
+    }
+
+    // --- the day's default activity (Clarifications 2026-09-28) ---
+
+    @Test
+    void effectiveActivity_staleState_isTheOnlyActiveAssociatedActivity() {
+        LineActivityService service = serviceAt("2026-01-16T00:00:01Z");
+        ActivityEntity fraise = activity("Fraise");
+        ActivityEntity disabled = activity("Disabled");
+        disabled.setActive(false);
+        ReaderEntity line = lineWith(fraise, "2026-01-15T08:00:00Z");
+
+        associate(line, fraise, disabled);
+        assertThat(service.effectiveActivity(line)).isSameAs(fraise);
+
+        associate(line, fraise, activity("Framboise"));
+        assertThat(service.effectiveActivity(line)).isNull();
+
+        associate(line);
+        assertThat(service.effectiveActivity(line)).isNull();
+    }
+
+    @Test
+    void effectiveActivity_undatedLine_hasItsDefault_butNotARegistrationReader() {
+        LineActivityService service = serviceAt("2026-01-16T10:00:00Z");
+        ActivityEntity fraise = activity("Fraise");
+        ReaderEntity line = ReaderEntity.builder().id(UUID.randomUUID()).name("L1").build();
+        associate(line, fraise);
+
+        assertThat(service.effectiveActivity(line)).isSameAs(fraise);
+
+        line.setMode(ReaderMode.ENREGISTREMENT);
+        assertThat(service.effectiveActivity(line)).isNull();
+    }
+
+    @Test
+    void effectiveActivity_noneChosenToday_staysNone() {
+        LineActivityService service = serviceAt("2026-01-16T10:00:00Z");
+        ReaderEntity line = lineWith(null, "2026-01-16T09:00:00Z");
+        associate(line, activity("Fraise"));
+
+        assertThat(service.effectiveActivity(line)).isNull();
+    }
+
+    @Test
+    void startNewDay_undatedLineWithoutActivity_getsItsDefault_loggedAtTodaysMidnight() {
+        LineActivityService service = serviceAt("2026-01-16T10:00:00Z");
+        ActivityEntity fraise = activity("Fraise");
+        ReaderEntity line = ReaderEntity.builder().id(UUID.randomUUID()).name("L1").build();
+        associate(line, fraise);
+
+        assertThat(service.startNewDay(line)).isTrue();
+
+        LineActivityChangeEntity change = savedChange();
+        assertThat(change.getAuthorType()).isEqualTo(ActivityChangeAuthorType.SYSTEM);
+        assertThat(change.getPreviousActivity()).isNull();
+        assertThat(change.getNewActivity()).isSameAs(fraise);
+        assertThat(change.getChangedAt().toInstant()).isEqualTo(Instant.parse("2026-01-15T23:00:00Z"));
+        assertThat(line.getCurrentActivity()).isSameAs(fraise);
+    }
+
+    @Test
+    void startNewDay_yesterdaysOtherChoice_isReplacedByTheDefault() {
+        LineActivityService service = serviceAt("2026-01-16T00:30:00Z");
+        ActivityEntity fraise = activity("Fraise");
+        ActivityEntity framboise = activity("Framboise");
+        ReaderEntity line = lineWith(fraise, "2026-01-15T08:00:00Z");
+        associate(line, framboise);
+
+        assertThat(service.startNewDay(line)).isTrue();
+
+        LineActivityChangeEntity change = savedChange();
+        assertThat(change.getPreviousActivity()).isSameAs(fraise);
+        assertThat(change.getNewActivity()).isSameAs(framboise);
+        assertThat(change.getChangedAt().toInstant()).isEqualTo(Instant.parse("2026-01-15T23:00:00Z"));
+    }
+
+    @Test
+    void startNewDay_yesterdaysChoiceIsTheDefault_writesNothingButDatesItToday() {
+        LineActivityService service = serviceAt("2026-01-16T00:30:00Z");
+        ActivityEntity fraise = activity("Fraise");
+        ReaderEntity line = lineWith(fraise, "2026-01-15T08:00:00Z");
+        associate(line, fraise);
+
+        assertThat(service.startNewDay(line)).isFalse();
+
+        verify(changeRepository, never()).save(any());
+        assertThat(line.getCurrentActivity()).isSameAs(fraise);
+        assertThat(line.getCurrentActivitySetAt().toInstant()).isEqualTo(Instant.parse("2026-01-15T23:00:00Z"));
+    }
+
+    @Test
+    void clear_datesTheStateOfNoActivity() {
+        LineActivityService service = serviceAt("2026-01-15T10:00:00Z");
+        ReaderEntity line = lineWith(activity("Fraise"), "2026-01-15T08:00:00Z");
+
+        service.clear(line, admin);
+
+        assertThat(line.getCurrentActivity()).isNull();
+        assertThat(line.getCurrentActivitySetAt().toInstant()).isEqualTo(Instant.parse("2026-01-15T10:00:00Z"));
+    }
+
+    @Test
+    void applyDefaultIfNone_lineWithoutActivity_getsTheSingleOne_byTheAdministrateur() {
+        LineActivityService service = serviceAt("2026-01-15T10:00:00Z");
+        ActivityEntity fraise = activity("Fraise");
+        ReaderEntity line = lineWith(null, "2026-01-15T08:00:00Z");
+        associate(line, fraise);
+
+        service.applyDefaultIfNone(line, () -> admin);
+
+        assertThat(line.getCurrentActivity()).isSameAs(fraise);
+        LineActivityChangeEntity change = savedChange();
+        assertThat(change.getAuthorType()).isEqualTo(ActivityChangeAuthorType.USER);
+        assertThat(change.getAuthorUser()).isSameAs(admin);
+        assertThat(change.getNewActivity()).isSameAs(fraise);
+    }
+
+    @Test
+    void applyDefaultIfNone_neverChangesACurrentActivity_norChoosesAmongSeveral() {
+        LineActivityService service = serviceAt("2026-01-15T10:00:00Z");
+        ActivityEntity fraise = activity("Fraise");
+        ActivityEntity framboise = activity("Framboise");
+        ReaderEntity current = lineWith(fraise, "2026-01-15T08:00:00Z");
+        associate(current, framboise);
+        ReaderEntity several = lineWith(null, "2026-01-15T08:00:00Z");
+        associate(several, fraise, framboise);
+
+        service.applyDefaultIfNone(current, () -> admin);
+        service.applyDefaultIfNone(several, () -> admin);
+
+        assertThat(current.getCurrentActivity()).isSameAs(fraise);
+        assertThat(several.getCurrentActivity()).isNull();
+        verify(changeRepository, never()).save(any());
     }
 
     private void assertEffectiveAt(String setAt, String now, boolean effective) {
@@ -118,8 +264,18 @@ class LineActivityServiceTest {
         }
     }
 
+    private void associate(ReaderEntity line, ActivityEntity... activities) {
+        when(activityRepository.findAllByLine(line.getId())).thenReturn(List.of(activities));
+    }
+
+    private LineActivityChangeEntity savedChange() {
+        ArgumentCaptor<LineActivityChangeEntity> captor = ArgumentCaptor.forClass(LineActivityChangeEntity.class);
+        verify(changeRepository).save(captor.capture());
+        return captor.getValue();
+    }
+
     private LineActivityService serviceAt(String instant) {
-        return new LineActivityService(Mockito.mock(ReaderRepository.class), Mockito.mock(ActivityRepository.class),
+        return new LineActivityService(Mockito.mock(ReaderRepository.class), activityRepository,
                 Mockito.mock(RecordRepository.class), changeRepository, Mockito.mock(UserRepository.class),
                 new StationProperties(PARIS), Clock.fixed(Instant.parse(instant), ZoneOffset.UTC));
     }

@@ -1,8 +1,9 @@
 package com.rfidback.service;
 
-import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -16,7 +17,6 @@ import org.springframework.web.server.ResponseStatusException;
 import com.rfidback.entity.ActivityEntity;
 import com.rfidback.entity.ReaderEntity;
 import com.rfidback.entity.ReaderMode;
-import com.rfidback.entity.UserEntity;
 import com.rfidback.exception.ActivityAlreadyExistsException;
 import com.rfidback.exception.ActivityNotFoundException;
 import com.rfidback.exception.LinesLosingActivityException;
@@ -25,6 +25,7 @@ import com.rfidback.generated.model.ActivitiesList;
 import com.rfidback.generated.model.Activity;
 import com.rfidback.generated.model.CreateActivity;
 import com.rfidback.generated.model.LineActivity;
+import com.rfidback.generated.model.LineLosingActivity;
 import com.rfidback.generated.model.SetReaderActivities;
 import com.rfidback.generated.model.UpdateActivity;
 import com.rfidback.repository.ActivityRepository;
@@ -36,7 +37,9 @@ import lombok.RequiredArgsConstructor;
 
 /**
  * The Administrateur's catalogue of activities and their association with lines (spec 012, FR-001 to FR-007). A
- * change that would leave a line without its current activity needs confirmation (research R6).
+ * change that would take a line's current activity away needs confirmation (research R6). A line left without
+ * current activity and with exactly one associated active activity gets it (FR-008b, research R17). Several readers
+ * are always locked in ascending id order, so two concurrent changes cannot deadlock.
  */
 @Service
 @RequiredArgsConstructor
@@ -73,13 +76,19 @@ public class ActivityService {
         }
     }
 
-    /** Renames, disables or re-enables. Disabling clears it on the lines where it is current, once confirmed. */
+    /**
+     * Renames, disables or re-enables. Disabling takes it from the lines where it is current, once confirmed; turning
+     * it on or off can leave an associated line with a single active activity, which it then gets (FR-008b).
+     */
     @Transactional
     public Activity updateActivity(UUID activityId, UpdateActivity request) {
         if (request.getName() == null && request.getActive() == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Provide a name and/or an active state");
         }
         ActivityEntity activity = loadActivity(activityId);
+        boolean flips = request.getActive() != null && request.getActive() != activity.isActive();
+        // Locked before anything reads the activity's lines, so each reader comes back as it is once locked.
+        List<ReaderEntity> lines = flips ? lockLines(activity) : List.of();
         if (request.getName() != null) {
             String name = validName(request.getName());
             if (activityRepository.existsByNameKeyAndIdNot(ActivityEntity.nameKey(name), activityId)) {
@@ -87,35 +96,50 @@ public class ActivityService {
             }
             activity.setName(name);
         }
-        if (Boolean.FALSE.equals(request.getActive()) && activity.isActive()) {
-            List<ReaderEntity> losing = new ArrayList<>();
-            for (UUID readerId : readerRepository.findIdsByCurrentActivity(activity)) {
-                readerRepository.findWithLockById(readerId)
-                        .filter(reader -> isCurrent(activity, reader))
-                        .ifPresent(losing::add);
-            }
-            clearConfirmed(losing, Boolean.TRUE.equals(request.getConfirmed()));
+        boolean disabling = flips && !request.getActive();
+        List<ReaderEntity> losing = disabling
+                ? lines.stream().filter(reader -> isCurrent(activity, reader)).toList()
+                : List.of();
+        if (!losing.isEmpty() && !Boolean.TRUE.equals(request.getConfirmed())) {
+            throw new LinesLosingActivityException(losing.stream()
+                    .map(reader -> losingLine(reader, activeAssociatedExcept(reader, activity)))
+                    .toList());
         }
         if (request.getActive() != null) {
             activity.setActive(request.getActive());
         }
+        Activity saved;
         try {
-            return toModel(activityRepository.saveAndFlush(activity));
+            saved = toModel(activityRepository.saveAndFlush(activity));
         } catch (DataIntegrityViolationException exception) {
             throw new ActivityAlreadyExistsException(DUPLICATE_NAME_MESSAGE);
         }
+        for (ReaderEntity reader : lines) {
+            if (losing.contains(reader)) {
+                lineActivityService.replaceWithDefault(reader, lineActivityService.currentUser());
+            } else {
+                lineActivityService.applyDefaultIfNone(reader, lineActivityService::currentUser);
+            }
+        }
+        return saved;
     }
 
-    /** Only an activity never used: no record carries it and no line ever had it as current (research R7). */
+    /**
+     * Only an activity never used: no record carries it and no line ever had it as current (research R7). A line it
+     * leaves with a single active activity gets that one (FR-008b).
+     */
     @Transactional
     public void deleteActivity(UUID activityId) {
         ActivityEntity activity = loadActivity(activityId);
         if (recordRepository.existsByActivity(activity) || lineActivityChangeRepository.isReferenced(activity)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Activity already used: disable it instead");
         }
+        List<ReaderEntity> lines = lockLines(activity);
         // No reader can still point to it: every choice is logged, and the log refuses the deletion above.
         activity.getLines().clear();
         activityRepository.delete(activity);
+        activityRepository.flush();
+        lines.forEach(reader -> lineActivityService.applyDefaultIfNone(reader, lineActivityService::currentUser));
     }
 
     /** Replaces the activities a line can run (FR-005, FR-006). */
@@ -136,12 +160,17 @@ public class ActivityService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Activities not found: " + missing);
         }
 
-        ActivityEntity current = lineActivityService.effectiveActivity(reader);
-        if (current != null && !activityIds.contains(current.getId())) {
-            clearConfirmed(List.of(reader), Boolean.TRUE.equals(request.getConfirmed()));
+        lineActivityService.startNewDay(reader);
+        List<ActivityEntity> associated = activityRepository.findAllByLine(readerId);
+        Set<UUID> activeBefore = activeIds(associated);
+        List<ActivityEntity> wantedActive = wanted.stream().filter(ActivityEntity::isActive).toList();
+        ActivityEntity current = reader.getCurrentActivity();
+        boolean losesCurrent = current != null && !activityIds.contains(current.getId());
+        if (losesCurrent && !Boolean.TRUE.equals(request.getConfirmed())) {
+            throw new LinesLosingActivityException(List.of(losingLine(reader, wantedActive)));
         }
 
-        for (ActivityEntity activity : activityRepository.findAllByLine(readerId)) {
+        for (ActivityEntity activity : associated) {
             if (!activityIds.contains(activity.getId())) {
                 activity.getLines().removeIf(line -> line.getId().equals(readerId));
             }
@@ -152,21 +181,46 @@ public class ActivityService {
             }
         }
         activityRepository.flush();
+        if (losesCurrent) {
+            lineActivityService.replaceWithDefault(reader, lineActivityService.currentUser());
+        } else if (!activeBefore.equals(activeIds(wantedActive))) {
+            // Re-saving an unchanged row keeps a deliberate "no activity" (research R17).
+            lineActivityService.applyDefaultIfNone(reader, lineActivityService::currentUser);
+        }
         return lineActivityService.describe(reader);
     }
 
-    /** FR-007: the lines are named first (409); once confirmed, each loses its current activity. */
-    private void clearConfirmed(List<ReaderEntity> lockedReaders, boolean confirmed) {
-        if (lockedReaders.isEmpty()) {
-            return;
-        }
-        if (!confirmed) {
-            throw new LinesLosingActivityException(lockedReaders.stream().map(ReaderEntity::getName).toList());
-        }
-        UserEntity author = lineActivityService.currentUser();
-        for (ReaderEntity reader : lockedReaders) {
-            lineActivityService.clear(reader, author);
-        }
+    /**
+     * The lines associated with the activity, or having it as current, row-locked in ascending id order, each with
+     * its state brought to today so the change applies to today's activity.
+     */
+    private List<ReaderEntity> lockLines(ActivityEntity activity) {
+        Set<UUID> ids = new TreeSet<>(readerRepository.findIdsByActivity(activity));
+        ids.addAll(readerRepository.findIdsByCurrentActivity(activity));
+        List<ReaderEntity> lines = ids.stream()
+                .map(readerRepository::findWithLockById)
+                .flatMap(Optional::stream)
+                .toList();
+        lines.forEach(lineActivityService::startNewDay);
+        return lines;
+    }
+
+    /** FR-007: a line losing its current activity, named with the one it would get: its only remaining one. */
+    private static LineLosingActivity losingLine(ReaderEntity reader, List<ActivityEntity> remainingActive) {
+        ActivityEntity next = remainingActive.size() == 1 ? remainingActive.get(0) : null;
+        return new LineLosingActivity(reader.getName(), next == null ? null : LineActivityService.toRef(next));
+    }
+
+    private List<ActivityEntity> activeAssociatedExcept(ReaderEntity reader, ActivityEntity excluded) {
+        return activityRepository.findAllByLine(reader.getId()).stream()
+                .filter(ActivityEntity::isActive)
+                .filter(activity -> !activity.getId().equals(excluded.getId()))
+                .toList();
+    }
+
+    private static Set<UUID> activeIds(List<ActivityEntity> activities) {
+        return activities.stream().filter(ActivityEntity::isActive).map(ActivityEntity::getId)
+                .collect(Collectors.toSet());
     }
 
     private boolean isCurrent(ActivityEntity activity, ReaderEntity reader) {

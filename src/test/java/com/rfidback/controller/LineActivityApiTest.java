@@ -9,7 +9,9 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.UUID;
 
@@ -148,6 +150,9 @@ class LineActivityApiTest {
 
     @Test
     void operator_choosesOnAnyLine_creditedToTheUser() throws Exception {
+        // A second activity, so that cerise is not already L2's activity of the day (Clarifications 2026-09-28).
+        activity("Line prune", lineTwo);
+
         mockMvc.perform(put(path(lineTwo)).with(asOperator()).with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"activityId\":\"" + cerise.getId() + "\"}"))
@@ -225,6 +230,36 @@ class LineActivityApiTest {
         asKiosk(lineOne, get(path(lineOne)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.currentActivity").isEmpty());
+    }
+
+    // --- the day's default activity (Clarifications 2026-09-28, FR-008a) ---
+
+    @Test
+    void lineWithASingleActivity_andAStateFromBefore_readsIt_sinceMidnight() throws Exception {
+        String setAt = asKiosk(lineTwo, get(path(lineTwo)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.currentActivity.name").value("Line cerise"))
+                .andReturn().getResponse().getContentAsString()
+                .replaceAll(".*\"setAt\":\"([^\"]+)\".*", "$1");
+
+        ZoneId paris = ZoneId.of("Europe/Paris");
+        assertThat(OffsetDateTime.parse(setAt).toInstant())
+                .isEqualTo(LocalDate.now(paris).atStartOfDay(paris).toInstant());
+    }
+
+    @Test
+    void lineWithASingleActivity_keepsNoneOnceChosenAtTheKiosk() throws Exception {
+        asKiosk(lineTwo, put(path(lineTwo)), null)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.currentActivity").isEmpty());
+
+        asKiosk(lineTwo, get(path(lineTwo)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.currentActivity").isEmpty());
+        // The start of the day (system, none -> cerise), then the kiosk's choice (cerise -> none).
+        List<LineActivityChangeEntity> changes = changesOf(lineTwo);
+        assertThat(changes).extracting(LineActivityChangeEntity::getAuthorType)
+                .containsExactly(ActivityChangeAuthorType.SYSTEM, ActivityChangeAuthorType.READER);
     }
 
     private ActivityEntity activity(String name, ReaderEntity line) {

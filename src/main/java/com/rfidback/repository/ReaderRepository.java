@@ -41,15 +41,25 @@ public interface ReaderRepository extends JpaRepository<ReaderEntity, UUID> {
     @Query("select r from ReaderEntity r left join fetch r.currentActivity where r.name = :name")
     Optional<ReaderEntity> findWithLockByName(@Param("name") String name);
 
-    // The two queries below return ids, not readers: the caller then locks each reader, and a reader already loaded
-    // in the persistence context would come back from the lock query as it was, not as it is once locked.
+    // The queries below return ids, not readers: the caller then locks each reader, and a reader already loaded in
+    // the persistence context would come back from the lock query as it was, not as it is once locked. They are
+    // sorted, so a transaction locking several readers always locks them in the same order and two of them cannot
+    // deadlock (research R17).
 
-    /** Lines whose activity was chosen before {@code instant}, for the midnight reset (research R3). */
-    @Query("select r.id from ReaderEntity r where r.currentActivitySetAt < :instant")
-    List<UUID> findIdsByCurrentActivitySetAtBefore(@Param("instant") OffsetDateTime instant);
+    /**
+     * Readers whose state belongs to a previous day, or was never dated, for the start of the day (research R15,
+     * R16).
+     */
+    @Query("select r.id from ReaderEntity r where r.currentActivitySetAt is null or r.currentActivitySetAt < :instant"
+            + " order by r.id")
+    List<UUID> findIdsWithStaleState(@Param("instant") OffsetDateTime instant);
 
-    @Query("select r.id from ReaderEntity r where r.currentActivity = :activity")
+    @Query("select r.id from ReaderEntity r where r.currentActivity = :activity order by r.id")
     List<UUID> findIdsByCurrentActivity(@Param("activity") ActivityEntity activity);
+
+    /** The lines associated with an activity (research R17). */
+    @Query("select l.id from ActivityEntity a join a.lines l where a = :activity order by l.id")
+    List<UUID> findIdsByActivity(@Param("activity") ActivityEntity activity);
 
     Optional<ReaderEntity> findByApitoken(String apitoken);
 
