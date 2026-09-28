@@ -105,6 +105,8 @@ What already exists (checked on 2026-09-25):
   for a live view but hides history now that periods exist.
 - **Alternatives considered**: reader uid as the filter (uids are case-insensitive unique but editable text; the UUID
   is stable).
+- **Superseded (spec 013)**: readers in `ENREGISTREMENT` mode are no longer listed; their past production records
+  stay in "Tous les lecteurs".
 
 ## R7. Picker rows: attribution, names, order
 
