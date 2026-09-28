@@ -7,6 +7,7 @@ import java.time.ZoneId;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
@@ -37,8 +38,9 @@ import lombok.RequiredArgsConstructor;
 
 /**
  * The current activity of a line, a reader in PRODUCTION mode (spec 012). Owns the "effective current activity" rule
- * shared by the scan, the kiosk and the midnight reset: an activity chosen before today, station time, counts as
- * none (FR-008a, research R3). Every change is logged with its author (FR-012).
+ * shared by the scan, the kiosk and the midnight reset: a state dated before today, station time, counts as the
+ * line's default activity, its only associated active activity, else none (FR-008a, research R3, R16). Every change
+ * is logged with its author (FR-012).
  */
 @Service
 @RequiredArgsConstructor
@@ -54,13 +56,29 @@ public class LineActivityService {
     private final StationProperties stationProperties;
     private final Clock clock;
 
-    /** The reader's current activity if it was chosen today (station time), else null. */
+    /**
+     * The reader's current activity if its state is today's (station time), possibly none; otherwise the day's
+     * default activity, which the midnight job writes shortly after (Clarifications 2026-09-28, research R16).
+     */
     public ActivityEntity effectiveActivity(ReaderEntity reader) {
-        OffsetDateTime setAt = reader.getCurrentActivitySetAt();
-        if (reader.getCurrentActivity() == null || setAt == null || setAt.isBefore(startOfToday())) {
+        return isToday(reader) ? reader.getCurrentActivity() : defaultActivity(reader);
+    }
+
+    /** The line's only associated and active activity, or null if it has none or several, or is not a line. */
+    public ActivityEntity defaultActivity(ReaderEntity reader) {
+        if (reader.getMode() != ReaderMode.PRODUCTION) {
             return null;
         }
-        return reader.getCurrentActivity();
+        List<ActivityEntity> active = activityRepository.findAllByLine(reader.getId()).stream()
+                .filter(ActivityEntity::isActive)
+                .toList();
+        return active.size() == 1 ? active.get(0) : null;
+    }
+
+    /** Whether the line's state, activity or none, was set today (station time); never for an undated state. */
+    boolean isToday(ReaderEntity reader) {
+        OffsetDateTime setAt = reader.getCurrentActivitySetAt();
+        return setAt != null && !setAt.isBefore(startOfToday());
     }
 
     public OffsetDateTime startOfToday() {
@@ -116,23 +134,53 @@ public class LineActivityService {
     }
 
     /**
-     * Clears every current activity chosen before today and logs each reset at the midnight it was due. Called at
-     * midnight and at startup by {@link ActivityDailyReset}; the row locks need this transaction (analysis C1).
+     * The line's current activity was taken away by an Administrateur (dissociated or disabled): it gets its default
+     * activity instead, or none, logged as one change (FR-007, FR-008b). The caller holds the row lock and has flushed
+     * its change.
+     */
+    public void replaceWithDefault(ReaderEntity lockedReader, UserEntity author) {
+        change(lockedReader, defaultActivity(lockedReader), ActivityChangeAuthorType.USER, author, null);
+    }
+
+    /**
+     * Gives every line whose state predates today its default activity, logging each change at the midnight it was
+     * due. Called at midnight and at startup by {@link ActivityDailyReset}; the row locks need this transaction
+     * (analysis C1). Returns the number of lines whose activity changed.
      */
     @Transactional
-    public int resetStaleActivities() {
-        int reset = 0;
-        for (UUID readerId : readerRepository.findIdsByCurrentActivitySetAtBefore(startOfToday())) {
+    public int startNewDayForAllLines() {
+        int changed = 0;
+        for (UUID readerId : readerRepository.findIdsWithStaleState(startOfToday())) {
             ReaderEntity reader = readerRepository.findWithLockById(readerId).orElse(null);
-            if (reader != null && resetIfStale(reader)) {
-                reset++;
+            if (reader != null && startNewDay(reader)) {
+                changed++;
             }
         }
-        return reset;
+        return changed;
+    }
+
+    /**
+     * FR-008b: a line left without current activity by an Administrateur change gets its default activity, if it has
+     * one, with the Administrateur as author. Never changes a line that has a current activity. The caller holds the
+     * row lock and has flushed its change of associations or activation, so the default sees it. The author is only
+     * looked up when a change is written.
+     */
+    public void applyDefaultIfNone(ReaderEntity lockedReader, Supplier<UserEntity> author) {
+        startNewDay(lockedReader);
+        if (lockedReader.getCurrentActivity() != null) {
+            return;
+        }
+        ActivityEntity defaultActivity = defaultActivity(lockedReader);
+        if (defaultActivity != null) {
+            change(lockedReader, defaultActivity, ActivityChangeAuthorType.USER, author.get(), null);
+        }
     }
 
     public LineActivity describe(ReaderEntity reader) {
         ActivityEntity current = effectiveActivity(reader);
+        // A default not written yet by the midnight job counts from midnight.
+        OffsetDateTime setAt = current == null ? null
+                : isToday(reader) ? reader.getCurrentActivitySetAt() : startOfToday();
         List<ActivityRef> available = activityRepository.findAllByLine(reader.getId()).stream()
                 .filter(ActivityEntity::isActive)
                 .map(LineActivityService::toRef)
@@ -143,7 +191,7 @@ public class LineActivityService {
         LineActivity lineActivity = new LineActivity();
         lineActivity.setReaderUid(reader.getName());
         lineActivity.setCurrentActivity(current == null ? null : toRef(current));
-        lineActivity.setSetAt(current == null ? null : reader.getCurrentActivitySetAt());
+        lineActivity.setSetAt(setAt);
         lineActivity.setAvailableActivities(available);
         lineActivity.setRecordsWithoutActivityToday(Math.toIntExact(withoutActivity));
         return lineActivity;
@@ -158,19 +206,19 @@ public class LineActivityService {
     }
 
     /**
-     * Sets the line's current activity, first logging a reset still due from a previous day, so the history never
-     * skips one. Choosing the current value again writes nothing.
+     * Sets the line's current activity, first logging the start of a day still due, so the history never skips one.
+     * Choosing the current value again writes nothing. The state is dated even when it becomes none (research R15).
      */
     private void change(ReaderEntity lockedReader, ActivityEntity newActivity, ActivityChangeAuthorType authorType,
             UserEntity authorUser, ReaderEntity authorReader) {
-        resetIfStale(lockedReader);
+        startNewDay(lockedReader);
         ActivityEntity previous = lockedReader.getCurrentActivity();
         if (Objects.equals(idOf(previous), idOf(newActivity))) {
             return;
         }
         OffsetDateTime now = OffsetDateTime.now(clock);
         lockedReader.setCurrentActivity(newActivity);
-        lockedReader.setCurrentActivitySetAt(newActivity == null ? null : now);
+        lockedReader.setCurrentActivitySetAt(now);
         lineActivityChangeRepository.save(LineActivityChangeEntity.builder()
                 .reader(lockedReader)
                 .previousActivity(previous)
@@ -182,21 +230,30 @@ public class LineActivityService {
                 .build());
     }
 
-    /** Clears a current activity chosen before today, logged by the system at the following midnight. */
-    boolean resetIfStale(ReaderEntity lockedReader) {
-        ActivityEntity current = lockedReader.getCurrentActivity();
+    /**
+     * Brings a state from a previous day, or never dated, to today: the line gets its default activity and the state
+     * is dated today's midnight. The system logs it at the midnight that followed the old state, only if the activity
+     * changes (research R16). Returns whether it changed. The caller holds the row lock.
+     */
+    public boolean startNewDay(ReaderEntity lockedReader) {
+        if (isToday(lockedReader)) {
+            return false;
+        }
+        ActivityEntity previous = lockedReader.getCurrentActivity();
         OffsetDateTime setAt = lockedReader.getCurrentActivitySetAt();
-        if (current == null || (setAt != null && !setAt.isBefore(startOfToday()))) {
+        ActivityEntity next = defaultActivity(lockedReader);
+        lockedReader.setCurrentActivity(next);
+        lockedReader.setCurrentActivitySetAt(startOfToday());
+        if (Objects.equals(idOf(previous), idOf(next))) {
             return false;
         }
         ZoneId zone = stationProperties.timeZone();
         OffsetDateTime dueMidnight = setAt == null ? startOfToday()
                 : setAt.atZoneSameInstant(zone).toLocalDate().plusDays(1).atStartOfDay(zone).toOffsetDateTime();
-        lockedReader.setCurrentActivity(null);
-        lockedReader.setCurrentActivitySetAt(null);
         lineActivityChangeRepository.save(LineActivityChangeEntity.builder()
                 .reader(lockedReader)
-                .previousActivity(current)
+                .previousActivity(previous)
+                .newActivity(next)
                 .changedAt(dueMidnight)
                 .authorType(ActivityChangeAuthorType.SYSTEM)
                 .build());

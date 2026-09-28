@@ -76,6 +76,7 @@ public class ApiExceptionHandler {
         LinesLosingActivity body = new LinesLosingActivity();
         body.setMessage(exception.getMessage());
         body.setReaderUids(exception.getReaderUids());
+        body.setLines(exception.getLines());
         return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
     }
 }

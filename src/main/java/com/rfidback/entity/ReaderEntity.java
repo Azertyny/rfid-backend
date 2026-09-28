@@ -53,8 +53,10 @@ public class ReaderEntity {
     @Column(nullable = false, length = 20)
     private ReaderMode mode = ReaderMode.PRODUCTION;
 
-    // The line's current activity and when it was chosen. A choice made before today, station time, counts as none
-    // (spec 012, research R1/R3): read it through LineActivityService.effectiveActivity.
+    // The line's current activity, and the instant of the last change of that state, kept when the state is "no
+    // activity". A state dated before today, station time, or not dated counts as the line's default activity: its
+    // only associated active activity, else none (spec 012, research R1/R3/R15/R16). Read it through
+    // LineActivityService.effectiveActivity.
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "current_activity_id")
     private ActivityEntity currentActivity;

@@ -83,3 +83,21 @@ order by c.changed_at;
 ```
 
 Every change made in sections 4–6 appears once, with its author.
+
+## 8. Single activity applied by default (amendment 2026-09-28, FR-008a exception, FR-008b)
+
+Automated: `mvn clean test -Dtest='LineActivityServiceTest,ActivityDailyResetTest,ActivityServiceTest,ActivityApiTest,ReaderServiceTest,TagScanApiTest'`
+(cases in [research.md](research.md) R19). Manual, on a dev database with L1 and L2 in `PRODUCTION`, no activity
+associated, the kiosk of L1 open (`front/reader.html#reader=L1&token=<L1 token>`):
+
+1. On `front/activities.html`, tick "Fraise" only for L1 → no modal; within 5 s the kiosk of L1 shows "Fraise" and
+   the banner disappears. `line_activity_change` has a `USER` row none → Fraise by `admin`.
+2. Tick "Framboise" too for L1 → L1 keeps "Fraise".
+3. Untick "Fraise" for L1 → the modal reads "L1 → Framboise"; confirm → the kiosk shows "Framboise".
+4. At the kiosk, choose "Aucune activité" → the banner comes back and stays (the kiosk never re-selects it).
+5. Midnight: stop the application, set L1's `current_activity_set_at` to yesterday in the H2 console, start it again →
+   L1 shows "Framboise", with a `SYSTEM` row none → Framboise at today 00:00 station time; a scan on L1 carries
+   "Framboise". Do the same with two activities on L2 → L2 starts the day with no activity, as before.
+6. Restart the application during the day after step 4 without touching the database → L1 stays on "aucune activité"
+   (its state is today's).
+7. Switch L1 to `ENREGISTREMENT` then back to `PRODUCTION` on `front/readers.html` → L1 gets "Framboise" again.

@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -155,6 +156,29 @@ class ReaderServiceTest {
         readerService.updateReader(line.getId(), new UpdateReader().mode(ReaderMode.ENREGISTREMENT));
 
         verify(lineActivityService).clear(line, admin);
+        verify(lineActivityService, never()).applyDefaultIfNone(any(), any());
+    }
+
+    @Test
+    void updateReader_switchBackToProduction_appliesTheLinesDefaultActivity() {
+        ReaderEntity line = reader("Ligne 1", true);
+        line.setMode(com.rfidback.entity.ReaderMode.ENREGISTREMENT);
+        when(readerRepository.findWithLockById(line.getId())).thenReturn(Optional.of(line));
+
+        readerService.updateReader(line.getId(), new UpdateReader().mode(ReaderMode.PRODUCTION));
+
+        // FR-008b: its only associated active activity, if any, decided by LineActivityService.
+        verify(lineActivityService).applyDefaultIfNone(eq(line), any());
+    }
+
+    @Test
+    void updateReader_alreadyInProduction_doesNotApplyTheDefault() {
+        ReaderEntity line = reader("Ligne 1", true);
+        when(readerRepository.findWithLockById(line.getId())).thenReturn(Optional.of(line));
+
+        readerService.updateReader(line.getId(), new UpdateReader().mode(ReaderMode.PRODUCTION));
+
+        verify(lineActivityService, never()).applyDefaultIfNone(any(), any());
     }
 
     @Test

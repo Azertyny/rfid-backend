@@ -9,9 +9,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * Every line starts the day without activity: at midnight, station time, and at startup in case the server was down
- * then (spec 012, FR-008a, research R3). Both entry points call the transactional
- * {@link LineActivityService#resetStaleActivities()} in another bean; never call one method of this class from the
+ * Every line starts the day with its default activity, its only associated active activity, else none: at midnight,
+ * station time, and at startup in case the server was down then (spec 012, FR-008a, research R3, R16). Both entry
+ * points call the transactional {@link LineActivityService#startNewDayForAllLines()} in another bean; never call one method of this class from the
  * other, the transaction the row locks need would be skipped.
  */
 @Slf4j
@@ -23,17 +23,17 @@ public class ActivityDailyReset {
 
     @Scheduled(cron = "0 0 0 * * *", zone = "${app.station.time-zone}")
     public void resetAtMidnight() {
-        report(lineActivityService.resetStaleActivities());
+        report(lineActivityService.startNewDayForAllLines());
     }
 
     @EventListener(ApplicationReadyEvent.class)
     public void catchUpOnStartup() {
-        report(lineActivityService.resetStaleActivities());
+        report(lineActivityService.startNewDayForAllLines());
     }
 
-    private static void report(int reset) {
-        if (reset > 0) {
-            log.info("Current activity reset on {} line(s) at the start of the day", reset);
+    private static void report(int changed) {
+        if (changed > 0) {
+            log.info("Current activity set to the day's default on {} line(s)", changed);
         }
     }
 }
