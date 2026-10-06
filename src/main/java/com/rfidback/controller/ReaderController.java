@@ -43,6 +43,12 @@ public class ReaderController implements ReaderApiDelegate {
     }
 
     @Override
+    public ResponseEntity<Void> deleteReader(UUID readerId) throws Exception {
+        readerService.deleteReader(readerId);
+        return ResponseEntity.noContent().build();
+    }
+
+    @Override
     public ResponseEntity<Reader> rotateReaderToken(UUID readerId) throws Exception {
         return ResponseEntity.ok(readerService.rotateToken(readerId));
     }

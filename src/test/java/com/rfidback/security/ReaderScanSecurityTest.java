@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -89,6 +91,19 @@ class ReaderScanSecurityTest {
         reader.setActive(true);
         readerRepository.saveAndFlush(reader);
         mockMvc.perform(scan().header("x-api-token", readerToken)).andExpect(status().isOk());
+    }
+
+    @Test
+    void scan_withDeletedReader_returns401() throws Exception {
+        // Deleted through the API, so the reader is in the state a real deletion leaves (spec 002, FR-008).
+        mockMvc.perform(patch("/api/readers/" + reader.getId()).with(user("admin").roles("ADMINISTRATEUR"))
+                        .with(csrf()).contentType(MediaType.APPLICATION_JSON).content("{\"active\":false}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(delete("/api/readers/" + reader.getId()).with(user("admin").roles("ADMINISTRATEUR"))
+                        .with(csrf()))
+                .andExpect(status().isNoContent());
+
+        mockMvc.perform(scan().header("x-api-token", readerToken)).andExpect(status().isUnauthorized());
     }
 
     @Test

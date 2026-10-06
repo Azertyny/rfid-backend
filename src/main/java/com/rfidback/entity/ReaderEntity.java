@@ -72,11 +72,19 @@ public class ReaderEntity {
     @Column(nullable = false)
     private OffsetDateTime updateDate;
 
+    // Set by a soft delete, never cleared: the row stays for the records that point to it (spec 002, FR-008).
+    @Column(name = "deleted_at")
+    private OffsetDateTime deletedAt;
+
     @PrePersist
     public void prePersist() {
         if (apitoken == null || apitoken.isEmpty()) {
             apitoken = newApitoken();
         }
+    }
+
+    public boolean isDeleted() {
+        return deletedAt != null;
     }
 
     public static String newApitoken() {

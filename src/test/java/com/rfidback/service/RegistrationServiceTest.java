@@ -138,6 +138,15 @@ class RegistrationServiceTest {
     }
 
     @Test
+    void start_deletedReader_throwsNotFound() {
+        reader.setActive(false);
+        reader.setDeletedAt(OffsetDateTime.now());
+
+        assertThrows(ReaderNotFoundException.class, () -> registrationService.start(reader.getId()));
+        verify(sessionRepository, never()).saveAndFlush(any());
+    }
+
+    @Test
     void start_readerDisabled_throws400() {
         reader.setActive(false);
 

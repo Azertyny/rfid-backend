@@ -9,6 +9,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -28,6 +29,7 @@ import com.rfidback.entity.ReaderMode;
 import com.rfidback.entity.UserEntity;
 import com.rfidback.exception.ActivityAlreadyExistsException;
 import com.rfidback.exception.LinesLosingActivityException;
+import com.rfidback.exception.ReaderNotFoundException;
 import com.rfidback.generated.model.CreateActivity;
 import com.rfidback.generated.model.SetReaderActivities;
 import com.rfidback.generated.model.UpdateActivity;
@@ -182,6 +184,17 @@ class ActivityServiceTest {
         when(readerRepository.findWithLockById(reader.getId())).thenReturn(Optional.of(reader));
 
         assertStatus(HttpStatus.BAD_REQUEST, () -> activityService.setReaderActivities(reader.getId(),
+                new SetReaderActivities(Set.of())));
+    }
+
+    @Test
+    void setReaderActivities_deletedReader_throwsNotFound() {
+        ReaderEntity reader = reader("L1", ReaderMode.PRODUCTION);
+        reader.setActive(false);
+        reader.setDeletedAt(OffsetDateTime.now());
+        when(readerRepository.findWithLockById(reader.getId())).thenReturn(Optional.of(reader));
+
+        assertThrows(ReaderNotFoundException.class, () -> activityService.setReaderActivities(reader.getId(),
                 new SetReaderActivities(Set.of())));
     }
 

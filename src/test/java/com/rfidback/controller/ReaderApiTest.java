@@ -6,9 +6,11 @@ import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.hasSize;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -36,6 +38,7 @@ import com.rfidback.entity.UserEntity;
 import com.rfidback.repository.ReaderRepository;
 import com.rfidback.repository.RegistrationSessionRepository;
 import com.rfidback.repository.UserRepository;
+import com.rfidback.support.ReferenceTagUids;
 
 /** HTTP-level checks of the reader routes (spec 002). */
 @SpringBootTest
@@ -217,6 +220,94 @@ class ReaderApiTest {
         patchReader(reader.getId().toString(), "{\"active\":false}").andExpect(status().isOk());
 
         assertThat(registrationSessionRepository.findByReader(reader)).isEmpty();
+    }
+
+    // --- deletion (FR-008, User Story 5) ---
+
+    @Test
+    void delete_activeReader_returns409AndKeepsIt() throws Exception {
+        String readerId = createReader(unique("DelActive")).get("id").asText();
+
+        deleteReader(readerId).andExpect(status().isConflict());
+
+        mockMvc.perform(get("/api/readers").with(admin()))
+                .andExpect(jsonPath("$.readers[?(@.id == '" + readerId + "')]", hasSize(1)));
+    }
+
+    @Test
+    void delete_disabledReader_returns204AndHidesItFromEveryRole() throws Exception {
+        String readerId = createReader(unique("DelOff")).get("id").asText();
+        patchReader(readerId, "{\"active\":false}").andExpect(status().isOk());
+
+        deleteReader(readerId).andExpect(status().isNoContent());
+
+        for (RequestPostProcessor caller : new RequestPostProcessor[] { admin(), operator() }) {
+            mockMvc.perform(get("/api/readers").with(caller))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.readers[?(@.id == '" + readerId + "')]", empty()));
+        }
+        assertThat(readerRepository.findById(UUID.fromString(readerId))).get()
+                .satisfies(reader -> assertThat(reader.isDeleted()).isTrue());
+    }
+
+    @Test
+    void delete_twiceOrUnknown_returns404() throws Exception {
+        String readerId = deletedReaderId(unique("DelTwice"));
+
+        deleteReader(readerId).andExpect(status().isNotFound());
+        deleteReader(UUID.randomUUID().toString()).andExpect(status().isNotFound());
+    }
+
+    @Test
+    void deletedReader_managementRoutesReturn404() throws Exception {
+        String readerId = deletedReaderId(unique("DelRoutes"));
+
+        patchReader(readerId, "{\"active\":true}").andExpect(status().isNotFound());
+        rotate(readerId).andExpect(status().isNotFound());
+        mockMvc.perform(put("/api/readers/" + readerId + "/activities").with(admin()).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"activityIds\":[]}"))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(post("/api/tags/registration-sessions").with(admin()).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"readerId\":\"" + readerId + "\"}"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void deletedReader_uidStaysTakenIgnoringCase() throws Exception {
+        String uid = unique("DelUid");
+        deletedReaderId(uid);
+
+        postReader(uid.toUpperCase()).andExpect(status().isConflict());
+    }
+
+    @Test
+    void deletedReader_recordsStillReadableWithItsUid() throws Exception {
+        String uid = unique("DelHistory");
+        JsonNode created = createReader(uid);
+        String tagUid = ReferenceTagUids.nextInList();
+        mockMvc.perform(post("/api/tags/scan").header("x-api-token", created.get("apitoken").asText())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"uid\":\"" + tagUid + "\",\"isCompliant\":true}"))
+                .andExpect(status().isOk());
+        String readerId = created.get("id").asText();
+        patchReader(readerId, "{\"active\":false}").andExpect(status().isOk());
+        deleteReader(readerId).andExpect(status().isNoContent());
+
+        mockMvc.perform(get("/api/records/readers/" + uid).with(operator()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.records", hasSize(1)))
+                .andExpect(jsonPath("$.records[0].tagUid").value(tagUid));
+    }
+
+    private String deletedReaderId(String uid) throws Exception {
+        String readerId = createReader(uid).get("id").asText();
+        patchReader(readerId, "{\"active\":false}").andExpect(status().isOk());
+        deleteReader(readerId).andExpect(status().isNoContent());
+        return readerId;
+    }
+
+    private ResultActions deleteReader(String readerId) throws Exception {
+        return mockMvc.perform(delete("/api/readers/" + readerId).with(admin()).with(csrf()));
     }
 
     private ReaderEntity readerWithOpenSession(String prefix) {

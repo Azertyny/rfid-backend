@@ -88,7 +88,9 @@ H2 by default (dev), file-based at `./data/rfidbackdb.mv.db`; production (`prod`
 and before every deployment to external storage (`deploy/vps/backup.sh`). `spring.jpa.hibernate.ddl-auto: update` — there is no migration tool (Flyway/Liquibase) yet, so schema
 changes happen by editing entities and letting Hibernate update the schema at boot. `ddl-auto` never relaxes an existing
 constraint: the one such change so far (`author_id` nullable, spec 008 kiosk) is run at startup by
-`configuration/ConformityAuthorSchemaUpgrade`. One-off data changes also run at startup, recorded in table
+`configuration/ConformityAuthorSchemaUpgrade`. Readers are never physically deleted: `DELETE /api/readers/{id}` (a disabled reader only) sets `reader.deleted_at`,
+which hides the reader from every list and line but keeps its uid taken and its records (spec 002, FR-008).
+One-off data changes also run at startup, recorded in table
 `data_upgrade` so they run once (`configuration/OffListTagPurge`: deleted the tags not in the reference list stored
 before spec 010's revision).
 `APP_STATION_TIME_ZONE` (default `Europe/Paris`) is the zone of the dashboard's days and hours (`GET /api/records/stats`,

@@ -102,6 +102,7 @@ public class RegistrationService {
 
     public RegistrationSession start(UUID readerId) {
         ReaderEntity reader = readerRepository.findById(readerId)
+                .filter(found -> !found.isDeleted())
                 .orElseThrow(() -> new ReaderNotFoundException("Reader %s not found".formatted(readerId)));
         if (!reader.isActive() || reader.getMode() != ReaderMode.ENREGISTREMENT) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
