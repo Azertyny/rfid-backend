@@ -48,10 +48,10 @@ public interface ReaderRepository extends JpaRepository<ReaderEntity, UUID> {
 
     /**
      * Readers whose state belongs to a previous day, or was never dated, for the start of the day (research R15,
-     * R16).
+     * R16). Deleted readers are no longer lines (spec 002, FR-008).
      */
-    @Query("select r.id from ReaderEntity r where r.currentActivitySetAt is null or r.currentActivitySetAt < :instant"
-            + " order by r.id")
+    @Query("select r.id from ReaderEntity r where r.deletedAt is null"
+            + " and (r.currentActivitySetAt is null or r.currentActivitySetAt < :instant) order by r.id")
     List<UUID> findIdsWithStaleState(@Param("instant") OffsetDateTime instant);
 
     @Query("select r.id from ReaderEntity r where r.currentActivity = :activity order by r.id")
@@ -62,6 +62,8 @@ public interface ReaderRepository extends JpaRepository<ReaderEntity, UUID> {
     List<UUID> findIdsByActivity(@Param("activity") ActivityEntity activity);
 
     Optional<ReaderEntity> findByApitoken(String apitoken);
+
+    List<ReaderEntity> findAllByDeletedAtIsNull();
 
     Optional<ReaderEntity> findByName(String name);
 

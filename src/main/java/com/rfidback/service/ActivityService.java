@@ -146,6 +146,7 @@ public class ActivityService {
     @Transactional
     public LineActivity setReaderActivities(UUID readerId, SetReaderActivities request) {
         ReaderEntity reader = readerRepository.findWithLockById(readerId)
+                .filter(found -> !found.isDeleted())
                 .orElseThrow(() -> new ReaderNotFoundException("Reader %s not found".formatted(readerId)));
         if (reader.getMode() != ReaderMode.PRODUCTION) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,

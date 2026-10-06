@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -135,6 +136,27 @@ class RecordStatsApiTest {
         assertCounts(stats.get("hours").get(10), 2, 0);
         assertCounts(stats.get("hours").get(16), 2, 1);
         assertInvariants(stats);
+    }
+
+    // --- deleted reader (spec 002, FR-008) ---
+
+    @Test
+    void deletedReadersRecordsStillCountAndStayFilterable() throws Exception {
+        record(reader, diallo, dialloTag, true, "2031-04-02T08:00:00Z");
+        record(otherReader, moreau, moreauTag, false, "2031-04-02T09:00:00Z");
+        String day = "period=CUSTOM&from=2031-04-02&to=2031-04-02";
+        JsonNode before = stats(day, asOperator());
+
+        mockMvc.perform(patch("/api/readers/" + otherReader.getId()).with(asAdmin()).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"active\":false}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(delete("/api/readers/" + otherReader.getId()).with(asAdmin()).with(csrf()))
+                .andExpect(status().isNoContent());
+
+        JsonNode after = stats(day, asOperator());
+        assertEquals(before.get("summary"), after.get("summary"));
+        assertCounts(after.get("summary"), 2, 1);
+        assertCounts(stats(day + "&readerId=" + otherReader.getId(), asOperator()).get("summary"), 1, 1);
     }
 
     // --- station time zone (FR-007) ---

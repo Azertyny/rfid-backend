@@ -90,6 +90,7 @@ public class LineActivityService {
     public LineActivity getLineActivity(String readerUid) {
         checkKioskLine(readerUid);
         ReaderEntity reader = readerRepository.findWithCurrentActivityByName(readerUid)
+                .filter(found -> !found.isDeleted())
                 .orElseThrow(() -> readerNotFound(readerUid));
         checkProduction(reader);
         return describe(reader);
@@ -100,6 +101,7 @@ public class LineActivityService {
     public LineActivity setLineActivity(String readerUid, SetLineActivity request) {
         ReaderEntity kioskReader = checkKioskLine(readerUid);
         ReaderEntity reader = readerRepository.findWithLockByName(readerUid)
+                .filter(found -> !found.isDeleted())
                 .orElseThrow(() -> readerNotFound(readerUid));
         checkProduction(reader);
 

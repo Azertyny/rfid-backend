@@ -3,6 +3,7 @@ package com.rfidback.controller;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -44,6 +45,7 @@ import com.rfidback.repository.ReaderRepository;
 import com.rfidback.repository.RecordRepository;
 import com.rfidback.repository.TagRepository;
 import com.rfidback.repository.UserRepository;
+import com.rfidback.service.LineActivityService;
 
 /** Choosing a line's current activity at its kiosk or when logged in (spec 012, User Story 2). */
 @SpringBootTest
@@ -75,6 +77,9 @@ class LineActivityApiTest {
 
     @Autowired
     private PasswordEncoder passwordEncoder;
+
+    @Autowired
+    private LineActivityService lineActivityService;
 
     private ReaderEntity lineOne;
     private ReaderEntity lineTwo;
@@ -260,6 +265,54 @@ class LineActivityApiTest {
         List<LineActivityChangeEntity> changes = changesOf(lineTwo);
         assertThat(changes).extracting(LineActivityChangeEntity::getAuthorType)
                 .containsExactly(ActivityChangeAuthorType.SYSTEM, ActivityChangeAuthorType.READER);
+    }
+
+    // --- deleting a line's reader (spec 002, FR-008, User Story 5 scenario 3) ---
+
+    @Test
+    void deletingTheReader_dissociatesItAndClearsTodaysActivity_creditedToTheAdministrateur() throws Exception {
+        mockMvc.perform(put(path(lineOne)).with(asOperator()).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"activityId\":\"" + fraise.getId() + "\"}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(patch("/api/readers/" + lineOne.getId()).with(asAdmin()).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"active\":false}"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(delete("/api/readers/" + lineOne.getId()).with(asAdmin()).with(csrf()))
+                .andExpect(status().isNoContent());
+
+        assertThat(activityRepository.findAllByLine(lineOne.getId())).isEmpty();
+        assertThat(readerRepository.findById(lineOne.getId())).get()
+                .satisfies(reader -> assertThat(reader.getCurrentActivity()).isNull());
+        // The choice is from today, so the line still had it: the Administrateur's change ends the history.
+        List<LineActivityChangeEntity> changes = changesOf(lineOne);
+        LineActivityChangeEntity last = changes.get(changes.size() - 1);
+        assertThat(last.getNewActivity()).isNull();
+        assertThat(last.getPreviousActivity().getId()).isEqualTo(fraise.getId());
+        assertThat(last.getAuthorType()).isEqualTo(ActivityChangeAuthorType.USER);
+        assertThat(last.getAuthorUser().getUsername()).isEqualTo("line-admin");
+
+        mockMvc.perform(get(path(lineOne)).with(asOperator())).andExpect(status().isNotFound());
+        mockMvc.perform(put(path(lineOne)).with(asOperator()).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"activityId\":null}"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void midnightReset_skipsDeletedReaders() {
+        // Still associated and with yesterday's activity: only the deletion keeps the reset away from it.
+        lineOne.setCurrentActivity(fraise);
+        lineOne.setCurrentActivitySetAt(OffsetDateTime.now().minusDays(2));
+        lineOne.setActive(false);
+        lineOne.setDeletedAt(OffsetDateTime.now());
+        readerRepository.saveAndFlush(lineOne);
+
+        lineActivityService.startNewDayForAllLines();
+
+        assertThat(changesOf(lineOne)).isEmpty();
+        assertThat(readerRepository.findById(lineOne.getId())).get()
+                .satisfies(reader -> assertThat(reader.getCurrentActivity().getId()).isEqualTo(fraise.getId()));
     }
 
     private ActivityEntity activity(String name, ReaderEntity line) {

@@ -79,6 +79,7 @@ class AccessMatrixSecurityTest {
                         "{\"uid\":\"Matrix reader " + UUID.randomUUID() + "\"}", ADMIN_ONLY),
                 new Route(HttpMethod.PATCH, "/api/readers/" + ID, "{\"active\":true}", ADMIN_ONLY),
                 new Route(HttpMethod.POST, "/api/readers/" + ID + "/token", null, ADMIN_ONLY),
+                new Route(HttpMethod.DELETE, "/api/readers/" + ID, null, ADMIN_ONLY),
                 new Route(HttpMethod.PUT, "/api/readers/" + ID + "/activities", "{\"activityIds\":[]}", ADMIN_ONLY),
                 new Route(HttpMethod.GET, "/api/activities", null, LOGGED_IN),
                 new Route(HttpMethod.POST, "/api/activities",

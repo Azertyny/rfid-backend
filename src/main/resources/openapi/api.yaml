@@ -24,6 +24,7 @@ paths:
   /readers:
     get:
       summary: List all readers
+      description: Every reader except deleted ones, active or disabled.
       operationId: listReaders
       tags: [Reader]
       responses:
@@ -38,6 +39,7 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
     post:
       summary: Create a new reader
+      description: 409 when a reader, deleted ones included, already has this uid ignoring case.
       operationId: createReader
       tags: [Reader]
       requestBody:
@@ -71,7 +73,8 @@ paths:
       summary: Enable or disable a reader, or change its mode
       description: >
         A reader switched to ENREGISTREMENT loses its current activity. A reader switched to PRODUCTION without current
-        activity and with exactly one associated active activity gets it as current activity (spec 012).
+        activity and with exactly one associated active activity gets it as current activity (spec 012). 404 for an
+        unknown or deleted reader.
       operationId: updateReader
       tags: [Reader]
       requestBody:
@@ -91,6 +94,21 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      summary: Delete a deactivated reader
+      description: >
+        Soft delete: the reader no longer appears in GET /readers nor as a line, and every route naming it answers
+        404. Its records, conformity changes and activity changes are kept, and its uid stays taken. The line is
+        removed from its activities, its current activity is cleared and an open registration session is discarded.
+        Refused with 409 while the reader is active: deactivate it first.
+      operationId: deleteReader
+      tags: [Reader]
+      responses:
+        "204": { $ref: "#/components/responses/Deleted" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
 
   /readers/{readerId}/token:
     parameters:
@@ -102,7 +120,7 @@ paths:
           format: uuid
     post:
       summary: Generate a new API token for a reader
-      description: The previous token is refused on /tags/scan from the next request on.
+      description: The previous token is refused on /tags/scan from the next request on. 404 for an unknown or deleted reader.
       operationId: rotateReaderToken
       tags: [Reader]
       responses:
@@ -131,7 +149,7 @@ paths:
         unknown activity id is refused with 400. Removing the line's current activity needs confirmed=true; otherwise
         the answer is 409 naming the line, and the activity it would get, and nothing changes. A line left without
         current activity and with exactly one associated active activity gets it as current activity; otherwise it
-        has none.
+        has none. 404 for an unknown or deleted reader.
       operationId: setReaderActivities
       tags: [Reader]
       requestBody:
@@ -268,7 +286,7 @@ paths:
         Opérateur or Administrateur session, or the token of this reader (line kiosk); another reader's token gets 403.
         An activity chosen before today (station time zone) is not reported: from midnight, a line with exactly one
         associated active activity has it as current activity until someone changes it, any other line has none. A
-        reader in ENREGISTREMENT mode gets 400.
+        reader in ENREGISTREMENT mode gets 400; an unknown or deleted reader gets 404.
       operationId: getLineActivity
       tags: [Activity]
       security:
@@ -291,7 +309,7 @@ paths:
         activityId null clears it. The activity must be associated with the line and active (400 otherwise); the
         reader must be in PRODUCTION mode. Records scanned from now on carry it, until the next change or midnight
         (station time). A change is logged with the user or the kiosk's reader as author; choosing the current value
-        again writes nothing.
+        again writes nothing. An unknown or deleted reader gets 404.
       operationId: setLineActivity
       tags: [Activity]
       security:
@@ -509,7 +527,7 @@ paths:
       description: >
         The reader must be active and in ENREGISTREMENT mode. From now on, its scans are kept as
         temporary reads of this session. One session per reader; it expires after a period
-        without activity.
+        without activity. 404 for an unknown or deleted reader.
       operationId: startRegistrationSession
       tags: [Registration]
       requestBody:

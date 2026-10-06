@@ -15,7 +15,7 @@ Not in this feature: the `mode` field (`PRODUCTION` / `ENREGISTREMENT`) belongs 
 
 ### Relationships
 
-- `Record.reader` → `Reader` (`RecordEntity.java`, `reader_id` not null). This link is why readers are never deleted (FR-006): deactivating a reader keeps its records.
+- `Record.reader` → `Reader` (`RecordEntity.java`, `reader_id` not null). This link is why readers are never physically deleted (FR-006, FR-008): deactivating or deleting a reader keeps its records.
 
 ### Repository
 
@@ -54,3 +54,45 @@ old token → 401 from the next request on.
 ```
 
 Setting a reader to the state it already has is a no-op that still answers `200`.
+
+---
+
+## Amendment 2026-10-06: deleted state (FR-008)
+
+### New field
+
+| Field | Type | Constraints | Change |
+|---|---|---|---|
+| `deletedAt` (`deleted_at`) | timestamp with time zone | nullable; `null` = not deleted | **new** (FR-008, research R9). Set once by `DELETE /readers/{id}`, never cleared. `ReaderEntity.isDeleted()` |
+
+Other tables pointing to a reader, and what the delete does to them (research R11, R13):
+
+| Table / link | On delete |
+|---|---|
+| `record.reader_id`, `record_conformity_change.author_reader_id`, `line_activity_change.reader_id` / `author_reader_id` | kept as is (history) |
+| `reader_activity` (activity ↔ line) | the reader's rows are removed |
+| `reader.current_activity_id` | cleared, with one `line_activity_change` to "no activity" authored by the Administrateur, if it was set |
+| `registration_session.reader_id` (and its reads) | an open session is deleted (normally already closed at deactivation) |
+
+### Repository
+
+- `findAllByDeletedAtIsNull()`: **new**, for `GET /api/readers`.
+- `findIdsWithStaleState`: **changed**, skips deleted readers (midnight reset).
+- `existsByNameIgnoreCase`, `findByName`, `findById`, `findByApitoken`: unchanged, they still see deleted readers (uid stays taken, records and stats still reachable, token refused because the reader is deactivated).
+
+### Validation rules (added)
+
+| Rule | Where | Response |
+|---|---|---|
+| reader exists and is not deleted, on `DELETE`/`PATCH /readers/{id}`, `POST /readers/{id}/token`, `PUT /readers/{id}/activities`, `POST /tags/registration-sessions`, `GET`/`PUT /lines/{uid}/current-activity` | `ReaderService`, `ActivityService`, `RegistrationService`, `LineActivityService` | `404` |
+| reader is deactivated before deletion | `ReaderService.deleteReader` → `ReaderStillActiveException` | `409` |
+
+### State (with deletion)
+
+```text
+ACTIVE ⇄ DISABLED ──DELETE──► DELETED (final)
+  │                              - not in GET /readers, not a line, not reset at midnight
+  └──DELETE──► 409               - token refused (it stays DISABLED)
+                                 - uid stays taken; records, stats and history kept
+                                 - every management route by id → 404
+```

@@ -12,6 +12,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -132,6 +133,16 @@ class KioskReaderTokenSecurityTest {
     @Test
     void disabledReader_returns401() throws Exception {
         lineOne.setActive(false);
+        readerRepository.saveAndFlush(lineOne);
+
+        mockMvc.perform(get("/api/records/readers/{readerId}", "Kiosk L1").header("x-api-token", lineOne.getApitoken()))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void deletedReader_returns401() throws Exception {
+        lineOne.setActive(false);
+        lineOne.setDeletedAt(OffsetDateTime.now());
         readerRepository.saveAndFlush(lineOne);
 
         mockMvc.perform(get("/api/records/readers/{readerId}", "Kiosk L1").header("x-api-token", lineOne.getApitoken()))
