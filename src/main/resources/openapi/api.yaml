@@ -434,6 +434,66 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
 
   # -----------------------------------------------------------------------------------------------
+  # Work hours section (spec 014)
+  # -----------------------------------------------------------------------------------------------
+  /work-hours:
+    get:
+      summary: Work hours of every picker for one day
+      description: >
+        Every picker, by lastname then firstname, with the hours entered for the day (null when none), the number of
+        records attributed to the picker that day on all readers, and missingHours when there are records but no
+        hours. The day is a day of the station time zone; today by default, a future day is refused. Administrateur.
+      operationId: getWorkDay
+      tags: [WorkHours]
+      parameters:
+        - in: query
+          name: day
+          required: false
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: The day's hours
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkDay"
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    put:
+      summary: Set the work hours of several pickers for one day
+      description: >
+        For each entry, sets the picker's hours for the day (replacing the previous value) or, with hours null,
+        removes them. Pickers not listed are unchanged. All or nothing: an invalid entry (hours not a multiple of
+        0.25 between 0.25 and 24, a picker listed twice) answers 400, an unknown picker 404, and nothing is saved.
+        A day after today in the station time zone is refused (400). The session's user and the current time are
+        stored as the last change of each written entry. Administrateur.
+      operationId: saveWorkDay
+      tags: [WorkHours]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveWorkDayRequest"
+      responses:
+        "200":
+          description: The day after the change, as returned by GET
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkDay"
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  # -----------------------------------------------------------------------------------------------
   # Tag section
   # -----------------------------------------------------------------------------------------------
   /tags/buckets/{bucketNumber}:
@@ -675,8 +735,9 @@ paths:
         Totals of the records created in a period, computed by the server: summary, one row per picker (records
         without a picker form one row with a null pickerId, last) and one entry per hour of day. Days and hours
         are in the station time zone (app.station.time-zone). Conformity is the current value of each record,
-        after manual corrections. The picker rows, and the hour entries, each add up to the summary.
-        Administrateur and Opérateur.
+        after manual corrections. The picker rows, and the hour entries, each add up to the summary. Each picker
+        row's activities add up to its total. Hours are the hours entered by the Administrateur (spec 014), summed
+        over the period, and only given without a reader. Administrateur and Opérateur.
       operationId: getRecordStats
       tags: [Record]
       parameters:
@@ -1745,6 +1806,20 @@ components:
             lastname:
               type: string
               nullable: true
+            activities:
+              type: array
+              description: Records of the picker per activity, non-zero entries only; they add up to total.
+              items:
+                $ref: "#/components/schemas/ActivityCount"
+            workHours:
+              type: number
+              format: double
+              nullable: true
+              description: >
+                Sum of the picker's hours over the period. Null when none were entered, for the null-picker row,
+                and whenever readerId is set (hours are not per line).
+          required:
+            - activities
 
     HourStats:
       allOf:
@@ -1768,6 +1843,8 @@ components:
         - summary
         - pickers
         - hours
+        - activities
+        - includesToday
       properties:
         from:
           type: string
@@ -1788,7 +1865,9 @@ components:
           $ref: "#/components/schemas/RecordCounts"
         pickers:
           type: array
-          description: Pickers with at least one record, by lastname then firstname; the null-picker row last.
+          description: >
+            Pickers with at least one record and, when readerId is not set, pickers with hours in the period
+            (zero counts); by lastname then firstname; the null-picker row last.
           items:
             $ref: "#/components/schemas/PickerStats"
         hours:
@@ -1796,6 +1875,124 @@ components:
           description: Always 24 entries, hour 0 to 23, summed over the days of the period.
           items:
             $ref: "#/components/schemas/HourStats"
+        activities:
+          type: array
+          description: >
+            The activities carried by at least one record of the period (and reader), by name, then a null entry
+            when some records carry no activity.
+          items:
+            $ref: "#/components/schemas/ActivityColumn"
+        workHours:
+          type: number
+          format: double
+          nullable: true
+          description: Sum of the hours of all pickers over the period; null when readerId is set.
+        includesToday:
+          type: boolean
+          description: The period contains today in the station time zone.
+
+    ActivityColumn:
+      type: object
+      properties:
+        activityId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Null for the records without activity ("Sans activité")
+        name:
+          type: string
+          nullable: true
+
+    ActivityCount:
+      type: object
+      required: [total]
+      properties:
+        activityId:
+          type: string
+          format: uuid
+          nullable: true
+        total:
+          type: integer
+          format: int64
+          minimum: 1
+
+    WorkDay:
+      type: object
+      required: [day, today, pickers]
+      properties:
+        day:
+          type: string
+          format: date
+        today:
+          type: boolean
+          description: The day is today in the station time zone
+        pickers:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkDayPicker"
+
+    WorkDayPicker:
+      type: object
+      required: [pickerId, firstname, lastname, records, missingHours]
+      properties:
+        pickerId:
+          type: string
+          format: uuid
+        firstname:
+          type: string
+        lastname:
+          type: string
+        hours:
+          type: number
+          format: double
+          nullable: true
+          description: Hours entered for the day, a multiple of 0.25; null when none
+        records:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Records attributed to the picker that day, all readers
+        missingHours:
+          type: boolean
+          description: records > 0 and hours is null
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+        updatedBy:
+          type: string
+          nullable: true
+          description: Username of the Administrateur who last changed the hours
+
+    SaveWorkDayRequest:
+      type: object
+      required: [day, entries]
+      properties:
+        day:
+          type: string
+          format: date
+        entries:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            $ref: "#/components/schemas/WorkHoursEntry"
+
+    WorkHoursEntry:
+      type: object
+      required: [pickerId]
+      properties:
+        pickerId:
+          type: string
+          format: uuid
+        hours:
+          type: number
+          format: double
+          nullable: true
+          minimum: 0.25
+          maximum: 24
+          multipleOf: 0.25
+          description: Null removes the picker's hours for the day
 
     UpdateRecordConformityRequest:
       type: object

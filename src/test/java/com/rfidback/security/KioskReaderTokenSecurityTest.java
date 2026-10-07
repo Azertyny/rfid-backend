@@ -189,6 +189,13 @@ class KioskReaderTokenSecurityTest {
     }
 
     @Test
+    void workHours_withAKioskToken_returns403() throws Exception {
+        // Hours are Administrateur data (spec 014, FR-006): the line's kiosk never sees nor changes them.
+        mockMvc.perform(get("/api/work-hours").header("x-api-token", lineOne.getApitoken()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     void lineActivity_disabledReader_returns401() throws Exception {
         lineOne.setActive(false);
         readerRepository.saveAndFlush(lineOne);

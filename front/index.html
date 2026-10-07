@@ -37,6 +37,9 @@
                 <a href="pickers.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
                     <i class="fas fa-users me-1"></i>Cueilleurs
                 </a>
+                <a href="work-hours.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-clock me-1"></i>Heures
+                </a>
                 <a href="readers.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
                     <i class="fas fa-satellite-dish me-1"></i>Lecteurs
                 </a>
@@ -173,29 +176,30 @@
             </div>
 
             <div class="row g-3">
-                <!-- PAR CUEILLEUR -->
-                <div class="col-lg-6">
+                <!-- PAR CUEILLEUR (heures et caisses par activité, spec 014) -->
+                <div class="col-12">
                     <div class="card h-100 p-3">
                         <h5 class="fw-bold mb-3">Par cueilleur</h5>
                         <div class="table-responsive" style="max-height: 420px;">
                             <table id="pickersTable" class="table table-sm table-hover align-middle mb-0">
                                 <thead class="table-light">
-                                    <tr>
-                                        <th>Cueilleur</th>
-                                        <th class="num">Lectures</th>
-                                        <th class="num">Non conformes</th>
-                                        <th class="num">Taux de conformité</th>
-                                    </tr>
+                                    <tr id="pickersHeadRow"></tr>
                                 </thead>
                                 <tbody id="pickersBody"></tbody>
                                 <tfoot id="pickersFoot" class="fw-bold table-light"></tfoot>
                             </table>
                         </div>
+                        <div id="hoursHint" class="small text-muted mt-2 d-none">
+                            Choisir « Tous les lecteurs » pour voir les heures : elles sont saisies par cueilleur, pas par ligne.
+                        </div>
+                        <div id="todayNotice" class="small text-muted mt-2 d-none">
+                            Journée en cours : les heures couvrent toute la journée, les caisses s'ajoutent jusqu'au soir.
+                        </div>
                     </div>
                 </div>
 
                 <!-- PAR HEURE -->
-                <div class="col-lg-6">
+                <div class="col-12">
                     <div class="card h-100 p-3">
                         <h5 class="fw-bold mb-3">Lectures par heure</h5>
                         <div style="position: relative; height: 380px; width: 100%;">
@@ -216,6 +220,7 @@
         const MAX_DAYS = 31;
         const REFRESH_MS = 60000;
         const NON_ATTRIBUE = 'Non attribué';
+        const SANS_ACTIVITE = 'Sans activité';
 
         let lastStats = null;
         // Only the latest request may render: an older answer arriving late must not replace newer figures.
@@ -346,7 +351,8 @@
 
         function render(stats) {
             document.getElementById('periodLabel').textContent = periodLabel(stats);
-            if (stats.summary.total === 0) {
+            // Pickers with hours and no record still make a table (spec 014).
+            if (stats.summary.total === 0 && stats.pickers.length === 0) {
                 showState('empty');
                 return;
             }
@@ -393,26 +399,96 @@
                 : `${picker.firstname || ''} ${picker.lastname || ''}`.trim();
         }
 
-        function renderPickers(stats) {
-            const body = document.getElementById('pickersBody');
-            body.replaceChildren();
-            stats.pickers.forEach(picker => {
-                const row = pickerRow(pickerName(picker), picker);
-                if (picker.pickerId === null || picker.pickerId === undefined) {
-                    row.cells[0].classList.add('fst-italic', 'text-muted');
-                }
-                body.appendChild(row);
-            });
-            document.getElementById('pickersFoot').replaceChildren(pickerRow('Total', stats.summary));
+        // Hours are entered per picker and day, not per line: no hours column for one reader (spec 014, FR-011).
+        function showsHours(stats) {
+            return !stats.readerId;
         }
 
-        function pickerRow(name, counts) {
+        function activityLabel(column) {
+            return column.activityId === null || column.activityId === undefined ? SANS_ACTIVITE : column.name;
+        }
+
+        // The picker's crates in each activity column, 0 where it has none.
+        function activityTotals(stats, picker) {
+            return stats.activities.map(column => {
+                const count = (picker.activities || []).find(c => (c.activityId ?? null) === (column.activityId ?? null));
+                return count ? count.total : 0;
+            });
+        }
+
+        function isUnassigned(picker) {
+            return picker.pickerId === null || picker.pickerId === undefined;
+        }
+
+        function formatHours(value) {
+            return value.toLocaleString('fr-FR', { minimumFractionDigits: 0, maximumFractionDigits: 2 }) + ' h';
+        }
+
+        function renderPickers(stats) {
+            const head = document.getElementById('pickersHeadRow');
+            head.replaceChildren();
+            const headers = ['Cueilleur'];
+            if (showsHours(stats)) headers.push('Heures');
+            stats.activities.forEach(column => headers.push(activityLabel(column)));
+            headers.push('Total caisses', 'Non conformes', 'Taux de conformité');
+            headers.forEach((text, i) => {
+                const th = document.createElement('th');
+                th.textContent = text;
+                if (i > 0) th.classList.add('num');
+                head.appendChild(th);
+            });
+
+            const body = document.getElementById('pickersBody');
+            body.replaceChildren();
+            stats.pickers.forEach(picker => body.appendChild(pickerRow(stats, picker)));
+            document.getElementById('pickersFoot').replaceChildren(totalRow(stats));
+            document.getElementById('hoursHint').classList.toggle('d-none', showsHours(stats));
+            document.getElementById('todayNotice').classList.toggle('d-none', !(stats.includesToday && showsHours(stats)));
+        }
+
+        function pickerRow(stats, picker) {
+            const cells = [{ text: pickerName(picker) }];
+            if (showsHours(stats)) {
+                if (isUnassigned(picker)) {
+                    cells.push({ text: '—' });
+                } else if (picker.workHours === null || picker.workHours === undefined) {
+                    cells.push({ text: 'non saisi', muted: true });
+                } else {
+                    cells.push({ text: formatHours(picker.workHours) });
+                }
+            }
+            activityTotals(stats, picker).forEach(total => cells.push({ text: formatInt(total) }));
+            cells.push({ text: formatInt(picker.total) }, { text: formatInt(picker.nonCompliant) },
+                { text: formatRate(picker) });
+            const row = tableRow(cells);
+            if (isUnassigned(picker)) row.cells[0].classList.add('fst-italic', 'text-muted');
+            return row;
+        }
+
+        // Column sums of the rows; the crates total is the summary's, which the rows add up to (spec 007, FR-009).
+        function totalRow(stats) {
+            const cells = [{ text: 'Total' }];
+            if (showsHours(stats)) cells.push({ text: formatHours(stats.workHours || 0) });
+            columnSums(stats).forEach(total => cells.push({ text: formatInt(total) }));
+            cells.push({ text: formatInt(stats.summary.total) }, { text: formatInt(stats.summary.nonCompliant) },
+                { text: formatRate(stats.summary) });
+            return tableRow(cells);
+        }
+
+        function columnSums(stats) {
+            const sums = stats.activities.map(() => 0);
+            stats.pickers.forEach(picker => activityTotals(stats, picker).forEach((total, i) => { sums[i] += total; }));
+            return sums;
+        }
+
+        function tableRow(cells) {
             const row = document.createElement('tr');
-            [name, formatInt(counts.total), formatInt(counts.nonCompliant), formatRate(counts)].forEach((text, i) => {
-                const cell = document.createElement('td');
-                cell.textContent = text;
-                if (i > 0) cell.classList.add('num');
-                row.appendChild(cell);
+            cells.forEach((cell, i) => {
+                const td = document.createElement('td');
+                td.textContent = cell.text;
+                if (i > 0) td.classList.add('num');
+                if (cell.muted) td.classList.add('text-muted', 'fst-italic');
+                row.appendChild(td);
             });
             return row;
         }
@@ -462,9 +538,15 @@
         // CSV for Excel (French settings): UTF-8 with BOM, ";" separator, decimal comma (research R10).
         function exportCsv() {
             if (!lastStats) return;
-            const lines = [['Cueilleur', 'Lectures', 'Conformes', 'Non conformes', 'Taux de conformité (%)']];
-            lastStats.pickers.forEach(picker => lines.push(csvCounts(pickerName(picker), picker)));
-            lines.push(csvCounts('Total', lastStats.summary));
+            const stats = lastStats;
+            const header = ['Cueilleur'];
+            if (showsHours(stats)) header.push('Heures');
+            stats.activities.forEach(column => header.push(activityLabel(column)));
+            header.push('Total caisses', 'Conformes', 'Non conformes', 'Taux de conformité (%)');
+            const lines = [header];
+            stats.pickers.forEach(picker => lines.push(csvRow(stats, pickerName(picker),
+                isUnassigned(picker) ? null : picker.workHours, activityTotals(stats, picker), picker)));
+            lines.push(csvRow(stats, 'Total', stats.workHours, columnSums(stats), stats.summary));
             const csv = lines.map(line => line.map(csvField).join(';')).join('\r\n') + '\r\n';
 
             const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
@@ -478,9 +560,20 @@
             URL.revokeObjectURL(url);
         }
 
-        function csvCounts(name, counts) {
+        // Hours empty when not entered; decimal comma for Excel FR.
+        function csvRow(stats, name, workHours, activityCounts, counts) {
+            const row = [name];
+            if (showsHours(stats)) {
+                row.push(workHours === null || workHours === undefined ? ''
+                    : workHours.toLocaleString('fr-FR', { maximumFractionDigits: 2, useGrouping: false }));
+            }
+            activityCounts.forEach(total => row.push(String(total)));
+            return row.concat(csvCounts(counts));
+        }
+
+        function csvCounts(counts) {
             const rate = complianceRate(counts);
-            return [name, String(counts.total), String(counts.total - counts.nonCompliant),
+            return [String(counts.total), String(counts.total - counts.nonCompliant),
                 String(counts.nonCompliant),
                 rate === null ? '' : rate.toLocaleString('fr-FR',
                     { minimumFractionDigits: 1, maximumFractionDigits: 1, useGrouping: false })];

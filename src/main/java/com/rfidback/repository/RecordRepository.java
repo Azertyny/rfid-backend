@@ -59,6 +59,10 @@ public interface RecordRepository extends JpaRepository<RecordEntity, UUID> {
     // each one to its hour in the station zone (spec 007, research R4).
     String UTC_HOUR = "floor(extract(epoch from r.creationDate) / 3600)";
     String BY_UTC_HOUR = "select " + UTC_HOUR + " as hourIndex," + COUNTS + "from RecordEntity r where" + IN_RANGE;
+    // Records per picker and activity (spec 014): the activity a record carries, null for none.
+    String BY_PICKER_ACTIVITY = "select p.id as pickerId, a.id as activityId, a.name as activityName,"
+            + " count(r) as total from RecordEntity r left join r.picker p left join r.activity a where" + IN_RANGE;
+    String PICKER_ACTIVITY_GROUP = " group by p.id, a.id, a.name";
 
     /** Record and non-compliant counts created in {@code [start, end)} (spec 007, FR-002). */
     @Query("select" + COUNTS + "from RecordEntity r where" + IN_RANGE)
@@ -74,6 +78,15 @@ public interface RecordRepository extends JpaRepository<RecordEntity, UUID> {
 
     @Query(BY_PICKER + "and r.reader = :reader" + PICKER_GROUP)
     List<PickerCountsView> countByPickerForReader(@Param("start") OffsetDateTime start,
+            @Param("end") OffsetDateTime end, @Param("reader") ReaderEntity reader);
+
+    /** Records per picker and activity created in {@code [start, end)} (spec 014, FR-008). */
+    @Query(BY_PICKER_ACTIVITY + PICKER_ACTIVITY_GROUP)
+    List<PickerActivityCountsView> countByPickerAndActivity(@Param("start") OffsetDateTime start,
+            @Param("end") OffsetDateTime end);
+
+    @Query(BY_PICKER_ACTIVITY + "and r.reader = :reader" + PICKER_ACTIVITY_GROUP)
+    List<PickerActivityCountsView> countByPickerAndActivityForReader(@Param("start") OffsetDateTime start,
             @Param("end") OffsetDateTime end, @Param("reader") ReaderEntity reader);
 
     /** Counts per UTC hour, as the number of hours since 1970-01-01T00:00Z (spec 007, research R4). */
@@ -107,5 +120,15 @@ public interface RecordRepository extends JpaRepository<RecordEntity, UUID> {
 
     interface HourCountsView extends CountsView {
         Number getHourIndex();
+    }
+
+    interface PickerActivityCountsView {
+        UUID getPickerId();
+
+        UUID getActivityId();
+
+        String getActivityName();
+
+        Number getTotal();
     }
 }

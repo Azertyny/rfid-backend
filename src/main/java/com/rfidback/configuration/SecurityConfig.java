@@ -159,6 +159,7 @@ public class SecurityConfig {
                             .requestMatchers(path(HttpMethod.GET, "/api/pickers")).hasAnyRole(ADMINISTRATEUR, OPERATEUR)
                             .requestMatchers(path(HttpMethod.GET, "/api/pickers/*")).hasAnyRole(ADMINISTRATEUR, OPERATEUR)
                             .requestMatchers(path(null, "/api/pickers/**")).hasRole(ADMINISTRATEUR)
+                            .requestMatchers(path(null, "/api/work-hours")).hasRole(ADMINISTRATEUR)
                             .requestMatchers(path(HttpMethod.GET, "/api/readers")).hasAnyRole(ADMINISTRATEUR, OPERATEUR)
                             .requestMatchers(path(null, "/api/readers/**")).hasRole(ADMINISTRATEUR)
                             .requestMatchers(path(null, "/api/tags/**")).hasRole(ADMINISTRATEUR)

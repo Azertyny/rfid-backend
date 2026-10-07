@@ -31,28 +31,38 @@ import org.springframework.web.server.ResponseStatusException;
 import com.rfidback.configuration.StationProperties;
 import com.rfidback.entity.ReaderEntity;
 import com.rfidback.exception.ReaderNotFoundException;
+import com.rfidback.generated.model.ActivityColumn;
+import com.rfidback.generated.model.ActivityCount;
 import com.rfidback.generated.model.HourStats;
 import com.rfidback.generated.model.PickerStats;
 import com.rfidback.generated.model.RecordStats;
 import com.rfidback.generated.model.StatsPeriod;
+import com.rfidback.repository.PickerWorkDayRepository;
+import com.rfidback.repository.PickerWorkDayRepository.PickerMinutesView;
 import com.rfidback.repository.ReaderRepository;
 import com.rfidback.repository.RecordRepository;
 import com.rfidback.repository.RecordRepository.CountsView;
 import com.rfidback.repository.RecordRepository.HourCountsView;
+import com.rfidback.repository.RecordRepository.PickerActivityCountsView;
 import com.rfidback.repository.RecordRepository.PickerCountsView;
 
-/** Period resolution, validation and hour mapping of the dashboard statistics (spec 007). */
+/**
+ * Period resolution, validation and hour mapping of the dashboard statistics (spec 007); activity columns and work
+ * hours per picker (spec 014).
+ */
 class RecordStatsServiceTest {
 
     private static final ZoneId PARIS = ZoneId.of("Europe/Paris");
 
     private RecordRepository recordRepository;
     private ReaderRepository readerRepository;
+    private PickerWorkDayRepository workDayRepository;
 
     @BeforeEach
     void setUp() {
         recordRepository = Mockito.mock(RecordRepository.class);
         readerRepository = Mockito.mock(ReaderRepository.class);
+        workDayRepository = Mockito.mock(PickerWorkDayRepository.class);
         when(recordRepository.countSummary(any(), any())).thenReturn(counts(0, 0));
         when(recordRepository.countByPicker(any(), any())).thenReturn(List.of());
         when(recordRepository.countByUtcHour(any(), any())).thenReturn(List.of());
@@ -235,9 +245,141 @@ class RecordStatsServiceTest {
         assertThat(stats.getHours()).hasSize(24).allMatch(hour -> hour.getTotal() == 0);
     }
 
+    // --- activity columns and work hours (spec 014) ---
+
+    @Test
+    void activityColumnsAreSortedByNameWithoutActivityLast() {
+        UUID fraise = UUID.randomUUID();
+        UUID ecole = UUID.randomUUID();
+        UUID picker = UUID.randomUUID();
+        when(recordRepository.countByPicker(any(), any())).thenReturn(List.of(pickerRow(picker, "A", "Diallo", 6, 0)));
+        when(recordRepository.countByPickerAndActivity(any(), any())).thenReturn(List.of(
+                activityRow(picker, null, null, 1),
+                activityRow(picker, fraise, "Fraise", 3),
+                activityRow(picker, ecole, "Échalote", 2)));
+
+        RecordStats stats = serviceAt("2026-09-25T10:00:00Z").getStats(null, null, null, null);
+
+        assertThat(stats.getActivities()).extracting(ActivityColumn::getName).containsExactly("Échalote", "Fraise", null);
+        assertThat(stats.getActivities()).extracting(ActivityColumn::getActivityId).containsExactly(ecole, fraise, null);
+        List<ActivityCount> counts = stats.getPickers().get(0).getActivities();
+        assertThat(counts).extracting(ActivityCount::getActivityId).containsExactly(ecole, fraise, null);
+        assertThat(counts).extracting(ActivityCount::getTotal).containsExactly(2L, 3L, 1L);
+        assertEquals(stats.getPickers().get(0).getTotal(),
+                counts.stream().mapToLong(ActivityCount::getTotal).sum());
+    }
+
+    @Test
+    void noSansActiviteColumnWhenEveryRecordHasAnActivity() {
+        UUID fraise = UUID.randomUUID();
+        UUID picker = UUID.randomUUID();
+        when(recordRepository.countByPicker(any(), any())).thenReturn(List.of(pickerRow(picker, "A", "Diallo", 3, 0)));
+        when(recordRepository.countByPickerAndActivity(any(), any()))
+                .thenReturn(List.of(activityRow(picker, fraise, "Fraise", 3)));
+
+        RecordStats stats = serviceAt("2026-09-25T10:00:00Z").getStats(null, null, null, null);
+
+        assertThat(stats.getActivities()).extracting(ActivityColumn::getActivityId).containsExactly(fraise);
+    }
+
+    @Test
+    void theUnassignedRowGetsItsActivitiesButNoHours() {
+        UUID fraise = UUID.randomUUID();
+        when(recordRepository.countByPicker(any(), any())).thenReturn(List.of(pickerRow(null, null, null, 2, 0)));
+        when(recordRepository.countByPickerAndActivity(any(), any()))
+                .thenReturn(List.of(activityRow(null, fraise, "Fraise", 2)));
+
+        PickerStats unassigned = serviceAt("2026-09-25T10:00:00Z").getStats(null, null, null, null)
+                .getPickers().get(0);
+
+        assertThat(unassigned.getActivities()).extracting(ActivityCount::getTotal).containsExactly(2L);
+        assertThat(unassigned.getWorkHours()).isNull();
+    }
+
+    @Test
+    void hoursAreSummedOverThePeriodAndAddUpToTheTotal() {
+        UUID diallo = UUID.randomUUID();
+        UUID moreau = UUID.randomUUID();
+        when(recordRepository.countByPicker(any(), any())).thenReturn(List.of(
+                pickerRow(diallo, "Amadou", "Diallo", 60, 0), pickerRow(moreau, "Valérie", "Moreau", 4, 0)));
+        // 240 + 480 minutes over two days, summed by the query.
+        when(workDayRepository.sumMinutesByPicker(LocalDate.of(2026, 9, 19), LocalDate.of(2026, 9, 25)))
+                .thenReturn(List.of(minutesRow(diallo, "Amadou", "Diallo", 720L)));
+
+        RecordStats stats = serviceAt("2026-09-25T10:00:00Z").getStats(StatsPeriod.LAST_7_DAYS, null, null, null);
+
+        assertEquals(12.0, stats.getPickers().get(0).getWorkHours());
+        assertThat(stats.getPickers().get(1).getWorkHours()).isNull();
+        assertEquals(12.0, stats.getWorkHours());
+    }
+
+    @Test
+    void aPickerWithHoursAndNoRecordJoinsTheRowsInOrder() {
+        UUID diallo = UUID.randomUUID();
+        UUID ecole = UUID.randomUUID();
+        UUID moreau = UUID.randomUUID();
+        when(recordRepository.countByPicker(any(), any())).thenReturn(List.of(
+                pickerRow(null, null, null, 1, 0),
+                pickerRow(moreau, "Valérie", "Moreau", 4, 0),
+                pickerRow(diallo, "Amadou", "Diallo", 3, 0)));
+        when(workDayRepository.sumMinutesByPicker(any(), any())).thenReturn(List.of(
+                minutesRow(ecole, "Anne", "École", 450L), minutesRow(diallo, "Amadou", "Diallo", 480L)));
+
+        RecordStats stats = serviceAt("2026-09-25T10:00:00Z").getStats(null, null, null, null);
+
+        List<PickerStats> pickers = stats.getPickers();
+        assertThat(pickers).extracting(PickerStats::getPickerId).containsExactly(diallo, ecole, moreau, null);
+        PickerStats hoursOnly = pickers.get(1);
+        assertEquals(0L, hoursOnly.getTotal());
+        assertEquals(0L, hoursOnly.getNonCompliant());
+        assertThat(hoursOnly.getActivities()).isEmpty();
+        assertEquals(7.5, hoursOnly.getWorkHours());
+        assertEquals(15.5, stats.getWorkHours());
+        // The rows still add up to the summary: the added row counts nothing.
+        assertEquals(8L, pickers.stream().mapToLong(PickerStats::getTotal).sum());
+    }
+
+    @Test
+    void withoutAnyHoursTheTotalIsZero() {
+        assertEquals(0.0, serviceAt("2026-09-25T10:00:00Z").getStats(null, null, null, null).getWorkHours());
+    }
+
+    @Test
+    void aReaderGivesNoHoursAndUsesTheReaderActivityQuery() {
+        UUID readerId = UUID.randomUUID();
+        UUID picker = UUID.randomUUID();
+        when(readerRepository.findById(readerId))
+                .thenReturn(Optional.of(ReaderEntity.builder().id(readerId).name("Reader 1").build()));
+        when(recordRepository.countSummaryForReader(any(), any(), any())).thenReturn(counts(2, 0));
+        when(recordRepository.countByPickerForReader(any(), any(), any()))
+                .thenReturn(List.of(pickerRow(picker, "A", "Diallo", 2, 0)));
+
+        RecordStats stats = serviceAt("2026-09-25T10:00:00Z").getStats(null, null, null, readerId);
+
+        assertThat(stats.getWorkHours()).isNull();
+        assertThat(stats.getPickers()).hasSize(1).allMatch(row -> row.getWorkHours() == null);
+        verify(workDayRepository, never()).sumMinutesByPicker(any(), any());
+        verify(recordRepository).countByPickerAndActivityForReader(any(), any(), any());
+        verify(recordRepository, never()).countByPickerAndActivity(any(), any());
+    }
+
+    @Test
+    void includesTodayFollowsThePeriod() {
+        RecordStatsService service = serviceAt("2026-09-25T10:00:00Z");
+
+        assertThat(service.getStats(StatsPeriod.TODAY, null, null, null).getIncludesToday()).isTrue();
+        assertThat(service.getStats(StatsPeriod.LAST_7_DAYS, null, null, null).getIncludesToday()).isTrue();
+        assertThat(service.getStats(StatsPeriod.YESTERDAY, null, null, null).getIncludesToday()).isFalse();
+        assertThat(service.getStats(StatsPeriod.CUSTOM, LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 24), null)
+                .getIncludesToday()).isFalse();
+        assertThat(service.getStats(StatsPeriod.CUSTOM, LocalDate.of(2026, 9, 20), LocalDate.of(2026, 9, 25), null)
+                .getIncludesToday()).isTrue();
+    }
+
     private RecordStatsService serviceAt(String instant) {
         Clock clock = Clock.fixed(Instant.parse(instant), ZoneOffset.UTC);
-        return new RecordStatsService(recordRepository, readerRepository, clock, new StationProperties(PARIS));
+        return new RecordStatsService(recordRepository, readerRepository, workDayRepository, clock,
+                new StationProperties(PARIS));
     }
 
     private static void assertBadRequest(Executable call) {
@@ -306,6 +448,55 @@ class RecordStatsServiceTest {
             @Override
             public Number getNonCompliant() {
                 return nonCompliant;
+            }
+        };
+    }
+
+    private static PickerActivityCountsView activityRow(UUID pickerId, UUID activityId, String activityName,
+            long total) {
+        return new PickerActivityCountsView() {
+            @Override
+            public UUID getPickerId() {
+                return pickerId;
+            }
+
+            @Override
+            public UUID getActivityId() {
+                return activityId;
+            }
+
+            @Override
+            public String getActivityName() {
+                return activityName;
+            }
+
+            @Override
+            public Number getTotal() {
+                return total;
+            }
+        };
+    }
+
+    private static PickerMinutesView minutesRow(UUID pickerId, String firstname, String lastname, Number minutes) {
+        return new PickerMinutesView() {
+            @Override
+            public UUID getPickerId() {
+                return pickerId;
+            }
+
+            @Override
+            public String getFirstname() {
+                return firstname;
+            }
+
+            @Override
+            public String getLastname() {
+                return lastname;
+            }
+
+            @Override
+            public Number getMinutes() {
+                return minutes;
             }
         };
     }

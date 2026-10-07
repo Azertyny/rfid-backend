@@ -14,6 +14,8 @@ RFID Back — a Spring Boot 3.5.7 (Java 21) backend for tracking fruit-harvest l
 - **Record** — a scan event linking tag/bucket/picker, carries a conformity flag that can be revised later
 - **Activity** (activité) — product type a production line runs; the Administrateur associates activities with lines,
   the line's kiosk chooses the current one, and each record carries the one current at scan time (spec 012)
+- **Work hours** (heures de travail) — hours a picker worked on a station day, entered by the Administrateur on
+  `front/work-hours.html` (`GET/PUT /api/work-hours`, spec 014)
 
 ## Commands
 
@@ -90,6 +92,9 @@ changes happen by editing entities and letting Hibernate update the schema at bo
 constraint: the one such change so far (`author_id` nullable, spec 008 kiosk) is run at startup by
 `configuration/ConformityAuthorSchemaUpgrade`. Readers are never physically deleted: `DELETE /api/readers/{id}` (a disabled reader only) sets `reader.deleted_at`,
 which hides the reader from every list and line but keeps its uid taken and its records (spec 002, FR-008).
+Work hours live in `picker_work_day`, one row per picker and station day in whole minutes (no row = not entered);
+`GET /api/records/stats` sums them per picker next to the crates per activity, only without a reader (hours are not
+per line). Deleting a picker deletes their hours.
 One-off data changes also run at startup, recorded in table
 `data_upgrade` so they run once (`configuration/OffListTagPurge`: deleted the tags not in the reference list stored
 before spec 010's revision).
