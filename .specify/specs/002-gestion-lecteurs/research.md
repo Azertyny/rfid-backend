@@ -69,3 +69,58 @@ The 2026-09-24 clarification sessions left no open `NEEDS CLARIFICATION` item th
   - `ReaderScanSecurityTest` gets two cases: the old token after a rotation → `401`, a deactivated reader → `401`, then `200` again after reactivation.
   - `AccessMatrixSecurityTest` gets rows for `PATCH /api/readers/{id}` and `POST /api/readers/{id}/token` (ADMIN_ONLY).
 - **Rationale**: this covers every acceptance rule in FR-001a, FR-006 and FR-007 at the level where it is enforced.
+
+---
+
+# Amendment 2026-10-06: deleting a reader (FR-008)
+
+The four clarifications of 2026-10-06 settle the behaviour. One point stayed open after them: what the other management routes answer for a deleted reader. R12 settles it (`404`), as the clarify report suggested.
+
+## R9. How "deleted" is stored
+
+- **Decision**: a nullable `deleted_at` timestamp (`OffsetDateTime deletedAt`) on `ReaderEntity`, plus a helper `isDeleted()`. `null` means not deleted.
+- **Rationale**: `ddl-auto: update` adds a nullable column over existing rows with no default (unlike `active`, research R4). The timestamp also tells when the reader was deleted, which matters when someone later wonders where a line went. Readers are never physically removed, so the foreign keys from `record`, `record_conformity_change`, `line_activity_change` stay valid.
+- **Alternatives considered**:
+  - A `deleted boolean not null default false`. Rejected: it works, but loses the date for no gain.
+  - Hibernate `@SQLRestriction("deleted_at is null")` on the entity, so deleted readers vanish from every query. Rejected: records still reference a deleted reader by `@ManyToOne`, and spec answers 2 and 3 need the row to stay visible to `existsByNameIgnoreCase`, `GET /records/readers/{uid}` and the stats filter. A global restriction would break all three.
+  - A physical delete. Rejected by the spec (Clarifications 2026-10-06, Q1).
+
+## R10. Route and refusal
+
+- **Decision**: `DELETE /readers/{readerId}` (UUID, as R1) → `204` with no body, `404` (`ReaderNotFoundException`) for an unknown or already deleted reader, `409` (new `ReaderStillActiveException`, `@ResponseStatus(CONFLICT)`, response `Conflict`) for an active reader.
+- **Rationale**: it mirrors `DELETE /pickers/{pickerId}` (`204`, `409` `Conflict` when the picker still has buckets, `PickerHasBucketsException`). Requiring deactivation first (Clarifications Q4) means the device is already shut off before anything is cleaned up, so the delete itself can't cut a working line.
+- **Alternatives considered**: `PATCH { deleted: true }`. Rejected: deleting can't be undone (no `deleted: false`), and `DELETE` is what the API uses for pickers, buckets and activities.
+
+## R11. What the delete cleans up, and in which order
+
+- **Decision**: `ReaderService.deleteReader`, in one transaction:
+  1. Lock the reader with `findWithLockById` (as `updateReader` does, spec 012 research R9). Missing or `isDeleted()` → `404`; `active` → `409`.
+  2. Remove the reader from every activity returned by `activityRepository.findAllByLine(readerId)` (`activity.getLines().removeIf(...)`, as `setReaderActivities` does), then flush.
+  3. `lineActivityService.startNewDay(reader)` first, as `setReaderActivities` does: a state from a previous day is brought to today (with the associations already removed, its default is none, logged by the system at the due midnight). Then, if the reader still has a current activity, `lineActivityService.clear(reader, currentUser())`: one `line_activity_change` row to "no activity", authored by the Administrateur. Either way the line's activity history ends with an explicit entry to "no activity"; it is the Administrateur's only when the line still had an activity today. Checking the current activity before `startNewDay` would read a stale value.
+  4. `registrationService.closeForReader(reader)`: deletes an open registration session and its reads. Deactivation already does this (`updateReader`), so this call normally finds nothing and no API scenario can reach it (spec User Story 5, scenario 3). It stays as a guard for sessions left by data from before that rule, tested only in `ReaderServiceTest` with mocks.
+  5. Set `deletedAt = OffsetDateTime.now(clock)` and save. `ReaderService` gets the `Clock` bean, as `LineActivityService` and `RecordStatsService` have.
+- **Rationale**: these are the existing primitives of specs 011 and 012, so the delete adds no new way to change a line's activity. Only one reader is locked, and the activities are not locked, which is the same pattern as `setReaderActivities`, so it can't deadlock with `ActivityService.updateActivity`/`deleteActivity`, which lock readers in id order.
+- **Alternatives considered**: delegating to `activityService.setReaderActivities(readerId, {activityIds: [], confirmed: true})`. Rejected: that method refuses readers not in PRODUCTION mode (a registration reader can be deleted too), and it would give the line a default activity rather than none.
+
+## R12. A deleted reader on the other routes
+
+- **Decision**:
+  - `GET /api/readers`: `readerRepository.findAllByDeletedAtIsNull()` instead of `findAll()`, for every role.
+  - Management routes that name a reader by `id`, `PATCH /readers/{id}`, `POST /readers/{id}/token`, `PUT /readers/{id}/activities`, `DELETE /readers/{id}`, `POST /tags/registration-sessions` (`RegistrationService.start`, which today answers `400` because the reader is deactivated): a deleted reader → `404`, as if unknown.
+  - `GET`/`PUT /lines/{uid}/current-activity` (logged-in user): deleted → `404`. The line no longer exists for the front.
+  - Midnight reset: `findIdsWithStaleState` adds `r.deletedAt is null`, so a deleted line never gets a "new day" change logged.
+  - Token routes (scan, registration reads, kiosk): no change. A deleted reader is always deactivated, because the delete requires `active = false` and `PATCH` (the only way back to active) answers `404` once it is deleted. `ReaderApiTokenAuthenticationFilter` already refuses a deactivated reader with `401`. A test pins this invariant.
+- **Rationale**: "disappears from every list" (Q1) plus "no longer offered as a line" (Q3). `404` keeps the routes simple, since nothing can be done to a deleted reader.
+- **Alternatives considered**: `410 Gone` for deleted readers. Rejected: no client handles it, and it would tell apart "deleted" from "never existed" for no use.
+
+## R13. What stays as it is
+
+- `existsByNameIgnoreCase` keeps counting deleted readers, so a deleted reader's `uid` stays taken (Q2) with no code change. The database unique constraint on `name` stays as well.
+- `RecordService` (`findByName`, `GET /records/readers/{uid}`) and `RecordStatsService` (`findById`, `?readerId=`) keep finding deleted readers, and the stats totals keep their records (Q3). Conformity changes authored by a deleted reader's kiosk keep their `author_reader_id`.
+- `PATCH /records/{id}/conformity` on a deleted reader's record by a logged-in user keeps working: the record is history, and correcting its conformity is still allowed.
+
+## R14. Front
+
+- **Decision**: `front/readers.html` shows a "Supprimer" button only on deactivated rows. It asks for confirmation ("Le lecteur X disparaîtra de toutes les listes. Ses lectures sont conservées. Son nom ne pourra pas être réutilisé."), calls `DELETE /readers/{id}` with `apiFetch`, then reloads the list. A `409` (reader reactivated meanwhile) shows the API message.
+- **Rationale**: the button matches the backend rule, so the common path never hits `409`. The confirm text states the two consequences the Administrateur might not expect: no undo, and the name stays taken.
+- **No other page changes**: `index.html`, `reader.html`, `activities.html` and `tags.html` build their lists from `GET /api/readers`, which no longer returns deleted readers. The dashboard's "all lines" totals come from `GET /api/records/stats` and keep the deleted reader's records.

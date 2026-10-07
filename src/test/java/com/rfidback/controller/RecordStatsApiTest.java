@@ -4,13 +4,16 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -28,15 +31,19 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.rfidback.entity.ActivityEntity;
 import com.rfidback.entity.BucketEntity;
 import com.rfidback.entity.PickerEntity;
+import com.rfidback.entity.PickerWorkDayEntity;
 import com.rfidback.entity.ReaderEntity;
 import com.rfidback.entity.RecordEntity;
 import com.rfidback.entity.Role;
 import com.rfidback.entity.TagEntity;
 import com.rfidback.entity.UserEntity;
+import com.rfidback.repository.ActivityRepository;
 import com.rfidback.repository.BucketRepository;
 import com.rfidback.repository.PickerRepository;
+import com.rfidback.repository.PickerWorkDayRepository;
 import com.rfidback.repository.ReaderRepository;
 import com.rfidback.repository.RecordRepository;
 import com.rfidback.repository.TagRepository;
@@ -83,6 +90,14 @@ class RecordStatsApiTest {
     @Autowired
     private PasswordEncoder passwordEncoder;
 
+    @Autowired
+    private ActivityRepository activityRepository;
+
+    @Autowired
+    private PickerWorkDayRepository workDayRepository;
+
+    private UserEntity admin;
+
     private ReaderEntity reader;
     private ReaderEntity otherReader;
     private PickerEntity diallo;
@@ -93,7 +108,7 @@ class RecordStatsApiTest {
 
     @BeforeEach
     void setUp() {
-        userRepository.save(appUser("stats-admin", Role.ADMINISTRATEUR));
+        admin = userRepository.save(appUser("stats-admin", Role.ADMINISTRATEUR));
         userRepository.save(appUser("stats-op", Role.OPERATEUR));
         reader = readerRepository.save(ReaderEntity.builder().name("Reader stats test").build());
         otherReader = readerRepository.save(ReaderEntity.builder().name("Reader stats test 2").build());
@@ -135,6 +150,27 @@ class RecordStatsApiTest {
         assertCounts(stats.get("hours").get(10), 2, 0);
         assertCounts(stats.get("hours").get(16), 2, 1);
         assertInvariants(stats);
+    }
+
+    // --- deleted reader (spec 002, FR-008) ---
+
+    @Test
+    void deletedReadersRecordsStillCountAndStayFilterable() throws Exception {
+        record(reader, diallo, dialloTag, true, "2031-04-02T08:00:00Z");
+        record(otherReader, moreau, moreauTag, false, "2031-04-02T09:00:00Z");
+        String day = "period=CUSTOM&from=2031-04-02&to=2031-04-02";
+        JsonNode before = stats(day, asOperator());
+
+        mockMvc.perform(patch("/api/readers/" + otherReader.getId()).with(asAdmin()).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"active\":false}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(delete("/api/readers/" + otherReader.getId()).with(asAdmin()).with(csrf()))
+                .andExpect(status().isNoContent());
+
+        JsonNode after = stats(day, asOperator());
+        assertEquals(before.get("summary"), after.get("summary"));
+        assertCounts(after.get("summary"), 2, 1);
+        assertCounts(stats(day + "&readerId=" + otherReader.getId(), asOperator()).get("summary"), 1, 1);
     }
 
     // --- station time zone (FR-007) ---
@@ -221,6 +257,81 @@ class RecordStatsApiTest {
         assertEquals(diallo.getId().toString(), stats.get("pickers").get(0).get("pickerId").asText());
     }
 
+    // --- activity columns and work hours (spec 014) ---
+
+    @Test
+    void pickerRowsCarryTheirHoursAndCratesPerActivity() throws Exception {
+        ActivityEntity fraise = activityRepository.save(ActivityEntity.builder().name("Fraise stats 014").build());
+        ActivityEntity framboise = activityRepository.save(
+                ActivityEntity.builder().name("Framboise stats 014").build());
+        PickerEntity bernard = pickerRepository.save(PickerEntity.builder().firstname("Lucie").lastname("Bernard")
+                .build());
+        record(reader, diallo, dialloTag, true, "2031-08-04T07:00:00Z", fraise);
+        record(reader, diallo, dialloTag, false, "2031-08-04T08:00:00Z", fraise);
+        record(otherReader, diallo, dialloTag, true, "2031-08-05T08:00:00Z", framboise);
+        record(reader, moreau, moreauTag, true, "2031-08-05T09:00:00Z", null);
+        record(reader, null, looseTag, true, "2031-08-05T10:00:00Z", fraise);
+        hours(diallo, "2031-08-04", 240);
+        hours(diallo, "2031-08-05", 480);
+        hours(bernard, "2031-08-05", 450);
+        hours(diallo, "2031-08-06", 600); // outside the period
+
+        JsonNode stats = stats("period=CUSTOM&from=2031-08-04&to=2031-08-05", asOperator());
+
+        JsonNode columns = stats.get("activities");
+        assertEquals(3, columns.size());
+        assertEquals(fraise.getId().toString(), columns.get(0).get("activityId").asText());
+        assertEquals(framboise.getId().toString(), columns.get(1).get("activityId").asText());
+        assertThat(columns.get(2).get("activityId").isNull()).isTrue();
+        assertEquals(19.5, stats.get("workHours").asDouble());
+        assertThat(stats.get("includesToday").asBoolean()).isFalse();
+
+        JsonNode pickers = stats.get("pickers");
+        assertEquals(List.of("Bernard", "Diallo", "Moreau"), List.of(pickers.get(0).get("lastname").asText(),
+                pickers.get(1).get("lastname").asText(), pickers.get(2).get("lastname").asText()));
+        assertCounts(pickers.get(0), 0, 0);
+        assertEquals(7.5, pickers.get(0).get("workHours").asDouble());
+        assertEquals(0, pickers.get(0).get("activities").size());
+        assertEquals(12.0, pickers.get(1).get("workHours").asDouble());
+        assertEquals(2, pickers.get(1).get("activities").get(0).get("total").asLong());
+        assertEquals(1, pickers.get(1).get("activities").get(1).get("total").asLong());
+        assertThat(pickers.get(2).get("workHours").isNull()).isTrue();
+        assertThat(pickers.get(2).get("activities").get(0).get("activityId").isNull()).isTrue();
+        assertThat(pickers.get(3).get("pickerId").isNull()).isTrue();
+        assertThat(pickers.get(3).get("workHours").isNull()).isTrue();
+        assertInvariants(stats);
+
+        // The same figures for an Opérateur and an Administrateur (spec 014, FR-006).
+        assertEquals(stats, stats("period=CUSTOM&from=2031-08-04&to=2031-08-05", asAdmin()));
+    }
+
+    @Test
+    void aReaderGivesNoHoursAndItsOwnActivityColumns() throws Exception {
+        ActivityEntity fraise = activityRepository.save(ActivityEntity.builder().name("Fraise stats 014 b").build());
+        ActivityEntity framboise = activityRepository.save(
+                ActivityEntity.builder().name("Framboise stats 014 b").build());
+        record(reader, diallo, dialloTag, true, "2031-08-11T07:00:00Z", fraise);
+        record(otherReader, diallo, dialloTag, true, "2031-08-11T08:00:00Z", framboise);
+        hours(diallo, "2031-08-11", 480);
+        hours(moreau, "2031-08-11", 480);
+
+        JsonNode stats = stats("period=CUSTOM&from=2031-08-11&to=2031-08-11&readerId=" + reader.getId(),
+                asOperator());
+
+        assertThat(stats.get("workHours").isNull()).isTrue();
+        assertEquals(1, stats.get("activities").size());
+        assertEquals(fraise.getId().toString(), stats.get("activities").get(0).get("activityId").asText());
+        // Moreau has hours but no record on this reader: no row for hours alone.
+        assertEquals(1, stats.get("pickers").size());
+        assertThat(stats.get("pickers").get(0).get("workHours").isNull()).isTrue();
+        assertInvariants(stats);
+    }
+
+    @Test
+    void todayIsFlagged() throws Exception {
+        assertThat(stats("", asOperator()).get("includesToday").asBoolean()).isTrue();
+    }
+
     // --- validation and access ---
 
     @Test
@@ -282,10 +393,30 @@ class RecordStatsApiTest {
         long nonCompliant = stats.get("summary").get("nonCompliant").asLong();
         long pickerTotal = 0;
         long pickerNonCompliant = 0;
+        double pickerHours = 0;
+        long[] columnTotals = new long[stats.get("activities").size()];
         for (JsonNode picker : stats.get("pickers")) {
-            assertThat(picker.get("total").asLong()).isPositive();
+            // A row without record only exists for a picker with hours (spec 014, FR-009).
+            if (picker.get("total").asLong() == 0) {
+                assertThat(picker.get("workHours").isNull()).isFalse();
+            }
             pickerTotal += picker.get("total").asLong();
             pickerNonCompliant += picker.get("nonCompliant").asLong();
+            long activityTotal = 0;
+            for (JsonNode count : picker.get("activities")) {
+                activityTotal += count.get("total").asLong();
+                columnTotals[columnIndex(stats, count.get("activityId"))] += count.get("total").asLong();
+            }
+            assertEquals(picker.get("total").asLong(), activityTotal, "activities add up to the picker's total");
+            if (picker.hasNonNull("workHours")) {
+                pickerHours += picker.get("workHours").asDouble();
+            }
+        }
+        if (stats.hasNonNull("workHours")) {
+            assertEquals(stats.get("workHours").asDouble(), pickerHours, 1e-9);
+        }
+        for (long columnTotal : columnTotals) {
+            assertThat(columnTotal).isPositive();
         }
         long hourTotal = 0;
         long hourNonCompliant = 0;
@@ -301,6 +432,26 @@ class RecordStatsApiTest {
         assertEquals(nonCompliant, hourNonCompliant);
     }
 
+    private static int columnIndex(JsonNode stats, JsonNode activityId) {
+        JsonNode columns = stats.get("activities");
+        for (int i = 0; i < columns.size(); i++) {
+            if (columns.get(i).get("activityId").equals(activityId)) {
+                return i;
+            }
+        }
+        throw new AssertionError("No column for activity " + activityId);
+    }
+
+    private void hours(PickerEntity picker, String day, int minutes) {
+        workDayRepository.save(PickerWorkDayEntity.builder()
+                .picker(picker)
+                .workDate(LocalDate.parse(day))
+                .minutes(minutes)
+                .updatedAt(OffsetDateTime.parse("2031-01-01T06:00:00Z"))
+                .updatedBy(admin)
+                .build());
+    }
+
     private TagEntity tagInBucket(String uid, int bucketNumber, PickerEntity picker) {
         BucketEntity bucket = bucketRepository.save(BucketEntity.builder().number(bucketNumber).picker(picker).build());
         return tagRepository.save(TagEntity.builder().uid(uid).bucket(bucket).build());
@@ -309,11 +460,17 @@ class RecordStatsApiTest {
     // @CreationTimestamp overwrites a date given on insert, so the date is set afterwards in SQL.
     private RecordEntity record(ReaderEntity from, PickerEntity picker, TagEntity tag, boolean compliant,
             String createdAt) {
+        return record(from, picker, tag, compliant, createdAt, null);
+    }
+
+    private RecordEntity record(ReaderEntity from, PickerEntity picker, TagEntity tag, boolean compliant,
+            String createdAt, ActivityEntity activity) {
         RecordEntity saved = recordRepository.saveAndFlush(RecordEntity.builder()
                 .reader(from)
                 .picker(picker)
                 .tag(tag)
                 .compliant(compliant)
+                .activity(activity)
                 .build());
         setCreationDate(saved, createdAt);
         return saved;

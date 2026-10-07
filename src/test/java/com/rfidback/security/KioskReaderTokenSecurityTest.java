@@ -12,6 +12,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -139,6 +140,16 @@ class KioskReaderTokenSecurityTest {
     }
 
     @Test
+    void deletedReader_returns401() throws Exception {
+        lineOne.setActive(false);
+        lineOne.setDeletedAt(OffsetDateTime.now());
+        readerRepository.saveAndFlush(lineOne);
+
+        mockMvc.perform(get("/api/records/readers/{readerId}", "Kiosk L1").header("x-api-token", lineOne.getApitoken()))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
     void operatorSession_stillWorks_withoutToken() throws Exception {
         mockMvc.perform(get("/api/records/readers/{readerId}", "Kiosk L2").with(user("op").roles("OPERATEUR")))
                 .andExpect(status().isOk());
@@ -174,6 +185,13 @@ class KioskReaderTokenSecurityTest {
                         .header("x-api-token", lineOne.getApitoken())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"activityId\":null}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void workHours_withAKioskToken_returns403() throws Exception {
+        // Hours are Administrateur data (spec 014, FR-006): the line's kiosk never sees nor changes them.
+        mockMvc.perform(get("/api/work-hours").header("x-api-token", lineOne.getApitoken()))
                 .andExpect(status().isForbidden());
     }
 

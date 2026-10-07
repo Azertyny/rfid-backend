@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Heures - Admin</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        body { background-color: #f0f2f5; font-family: 'Segoe UI', sans-serif; }
+        .table-hover tbody tr:hover { background-color: #f1f1f1; }
+        #hoursTable td.num, #hoursTable th.num { text-align: right; font-variant-numeric: tabular-nums; }
+        #hoursTable input.hours { width: 7rem; text-align: right; }
+        #hoursTable tr.changed input.hours { border-color: #0d6efd; background-color: #e7f1ff; }
+    </style>
+</head>
+<body class="d-flex flex-column h-100">
+
+    <!-- MENU DE NAVIGATION HARMONISÉ -->
+    <nav class="navbar navbar-expand navbar-dark bg-dark shadow-sm">
+        <div class="container-fluid max-w-7xl mx-auto px-4">
+            <a class="navbar-brand fw-bold" href="index.html">
+                <i class="fas fa-wifi me-2"></i>RFID Admin
+            </a>
+            <div class="navbar-nav ms-auto gap-2">
+                <a href="index.html" class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-chart-line me-1"></i>Dashboard
+                </a>
+                <a href="pickers.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-users me-1"></i>Cueilleurs
+                </a>
+                <a href="work-hours.html" data-admin-only class="btn btn-sm btn-primary">
+                    <i class="fas fa-clock me-1"></i>Heures
+                </a>
+                <a href="readers.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-satellite-dish me-1"></i>Lecteurs
+                </a>
+                <a href="activities.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-seedling me-1"></i>Activités
+                </a>
+                <a href="tags.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-tags me-1"></i>Tags
+                </a>
+                <a href="buckets.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-fill me-1"></i>Seaux
+                </a>
+                <a href="users.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-user-shield me-1"></i>Utilisateurs
+                </a>
+                <button class="btn btn-sm btn-outline-light border-0" onclick="logout()">
+                    <i class="fas fa-sign-out-alt me-1"></i>Déconnexion
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid max-w-7xl mx-auto py-4">
+
+        <!-- En-tête -->
+        <div class="mb-4">
+            <h3 class="fw-bold text-primary mb-0">Heures de travail</h3>
+            <small class="text-muted">Les heures de chaque cueilleur pour la journée, à renseigner le matin et à corriger si la journée réelle diffère.</small>
+        </div>
+
+        <div id="alertArea"></div>
+
+        <div class="card shadow-sm border-0">
+            <div class="card-header bg-white d-flex flex-wrap align-items-center gap-3">
+                <div class="d-flex align-items-center gap-2">
+                    <label for="dayInput" class="fw-bold mb-0">Jour</label>
+                    <input type="date" id="dayInput" class="form-control form-control-sm" style="width: auto">
+                    <span id="todayBadge" class="badge bg-primary d-none">Aujourd'hui</span>
+                </div>
+                <form class="d-flex align-items-center gap-2" onsubmit="fillEmpty(event)">
+                    <label for="fillValue" class="mb-0 small text-nowrap">Remplir les cases vides avec</label>
+                    <input type="number" id="fillValue" class="form-control form-control-sm" style="width: 6rem"
+                           min="0.25" max="24" step="0.25" required>
+                    <span class="small">h</span>
+                    <button type="submit" class="btn btn-sm btn-outline-secondary">Remplir</button>
+                </form>
+                <div class="form-check form-switch mb-0">
+                    <input class="form-check-input" type="checkbox" id="missingOnly" onchange="renderRows()">
+                    <label class="form-check-label small" for="missingOnly">Afficher seulement les heures manquantes</label>
+                </div>
+                <button id="saveButton" class="btn btn-sm btn-success ms-auto" onclick="save()" disabled>
+                    <i class="fas fa-save me-1"></i>Enregistrer
+                </button>
+            </div>
+            <div id="missingSummary" class="alert alert-warning rounded-0 mb-0 py-2 small d-none"></div>
+            <div id="unsavedWarning" class="alert alert-info rounded-0 mb-0 py-2 small d-none"></div>
+            <div class="card-body p-0 table-responsive">
+                <table id="hoursTable" class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Cueilleur</th>
+                            <th class="num">Caisses du jour</th>
+                            <th>Heures</th>
+                            <th>Dernière modification</th>
+                        </tr>
+                    </thead>
+                    <tbody id="hoursBody">
+                        <tr><td colspan="4" class="text-center py-4 text-muted">Chargement...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="card-footer bg-white small text-muted">
+                Par pas d'un quart d'heure (7,25 = 7 h 15), 24 h au plus. Une case vidée efface les heures du cueilleur pour ce jour.
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="config.js"></script>
+    <script src="auth.js"></script>
+    <script>
+        let workDay = null;
+        // Values typed but not saved yet, per picker id ('' = empty field).
+        const edits = new Map();
+        // The day kept in the selector while a change of day waits for the user's choice.
+        let pendingDay = null;
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            await requireRole('ADMINISTRATEUR');
+            document.getElementById('dayInput').addEventListener('change', onDayChange);
+            window.addEventListener('beforeunload', event => {
+                if (edits.size > 0) {
+                    event.preventDefault();
+                    event.returnValue = '';
+                }
+            });
+            load(null);
+        });
+
+        async function load(day) {
+            try {
+                const response = await apiFetch('/work-hours' + (day ? `?day=${day}` : ''));
+                const body = await readBody(response);
+                if (!response.ok) {
+                    showAlert('danger', body.detail || `Impossible de charger les heures (code ${response.status}).`);
+                    if (workDay) document.getElementById('dayInput').value = workDay.day;
+                    return;
+                }
+                edits.clear();
+                hideUnsavedWarning();
+                showDay(body);
+            } catch (e) {
+                console.error(e);
+                showAlert('danger', 'Erreur réseau');
+            }
+        }
+
+        function showDay(day) {
+            workDay = day;
+            const input = document.getElementById('dayInput');
+            input.value = day.day;
+            // The first answer is today in the station's time zone: no later day can be chosen.
+            if (day.today) input.max = day.day;
+            document.getElementById('todayBadge').classList.toggle('d-none', !day.today);
+            renderRows();
+        }
+
+        // Changing the day with unsaved values asks first, in the page (no browser dialog).
+        function onDayChange() {
+            const day = document.getElementById('dayInput').value;
+            if (!day) return;
+            if (edits.size === 0) {
+                clearAlert();
+                load(day);
+                return;
+            }
+            pendingDay = day;
+            document.getElementById('dayInput').value = workDay.day;
+            const warning = document.getElementById('unsavedWarning');
+            warning.innerHTML = `${edits.size} modification(s) non enregistrée(s).
+                <button class="btn btn-sm btn-link p-0 ms-2" onclick="discardAndGo()">Abandonner et changer de jour</button>
+                <button class="btn btn-sm btn-link p-0 ms-2" onclick="hideUnsavedWarning()">Rester</button>`;
+            warning.classList.remove('d-none');
+        }
+
+        function discardAndGo() {
+            const day = pendingDay;
+            hideUnsavedWarning();
+            edits.clear();
+            clearAlert();
+            load(day);
+        }
+
+        function hideUnsavedWarning() {
+            pendingDay = null;
+            document.getElementById('unsavedWarning').classList.add('d-none');
+        }
+
+        function renderRows() {
+            const body = document.getElementById('hoursBody');
+            body.replaceChildren();
+            const missingOnly = document.getElementById('missingOnly').checked;
+            const rows = workDay.pickers.filter(p => !missingOnly || p.missingHours);
+            if (rows.length === 0) {
+                const row = body.insertRow();
+                const cell = row.insertCell();
+                cell.colSpan = 4;
+                cell.className = 'text-center py-4 text-muted';
+                cell.textContent = missingOnly ? 'Aucune heure manquante ce jour-là.' : 'Aucun cueilleur.';
+            }
+            rows.forEach(picker => body.appendChild(pickerRow(picker)));
+
+            const missing = workDay.pickers.filter(p => p.missingHours).length;
+            const summary = document.getElementById('missingSummary');
+            summary.textContent = `${missing} cueilleur${missing > 1 ? 's' : ''} avec des caisses sans heures ce jour-là.`;
+            summary.classList.toggle('d-none', missing === 0);
+            updateSaveButton();
+        }
+
+        function pickerRow(picker) {
+            const row = document.createElement('tr');
+            row.dataset.pickerId = picker.pickerId;
+
+            const name = row.insertCell();
+            name.textContent = `${picker.firstname} ${picker.lastname}`.trim();
+            if (picker.missingHours) {
+                const badge = document.createElement('span');
+                badge.className = 'badge bg-danger ms-2';
+                badge.textContent = 'Heures manquantes';
+                name.appendChild(badge);
+            }
+
+            const records = row.insertCell();
+            records.className = 'num';
+            records.textContent = picker.records.toLocaleString('fr-FR');
+
+            const hoursCell = row.insertCell();
+            const input = document.createElement('input');
+            input.type = 'number';
+            input.className = 'form-control form-control-sm hours';
+            input.min = '0.25';
+            input.max = '24';
+            input.step = '0.25';
+            input.value = edits.has(picker.pickerId) ? edits.get(picker.pickerId) : savedValue(picker);
+            input.addEventListener('input', () => onEdit(picker, input.value, row));
+            hoursCell.appendChild(input);
+            row.classList.toggle('changed', edits.has(picker.pickerId));
+
+            const updated = row.insertCell();
+            updated.className = 'small text-muted';
+            updated.textContent = picker.updatedAt
+                ? `${picker.updatedBy}, ${new Date(picker.updatedAt).toLocaleString('fr-FR')}`
+                : '';
+            return row;
+        }
+
+        function savedValue(picker) {
+            return picker.hours === null || picker.hours === undefined ? '' : String(picker.hours);
+        }
+
+        function onEdit(picker, value, row) {
+            if (value === savedValue(picker)) {
+                edits.delete(picker.pickerId);
+            } else {
+                edits.set(picker.pickerId, value);
+            }
+            row.classList.toggle('changed', edits.has(picker.pickerId));
+            updateSaveButton();
+        }
+
+        function fillEmpty(event) {
+            event.preventDefault();
+            const value = document.getElementById('fillValue').value;
+            if (!value) return;
+            workDay.pickers.forEach(picker => {
+                const current = edits.has(picker.pickerId) ? edits.get(picker.pickerId) : savedValue(picker);
+                if (current === '') edits.set(picker.pickerId, value);
+            });
+            renderRows();
+        }
+
+        function updateSaveButton() {
+            document.getElementById('saveButton').disabled = edits.size === 0;
+        }
+
+        // Same rule as the server (a quarter hour, at most 24 h), checked first to name the picker in the message.
+        function invalidEdit() {
+            for (const [pickerId, value] of edits) {
+                if (value === '') continue;
+                const hours = Number(value);
+                if (!(hours >= 0.25 && hours <= 24 && Number.isInteger(hours * 4))) {
+                    return workDay.pickers.find(p => p.pickerId === pickerId);
+                }
+            }
+            return null;
+        }
+
+        async function save() {
+            if (edits.size === 0) return;
+            const invalid = invalidEdit();
+            if (invalid) {
+                showAlert('danger', `Heures de ${invalid.firstname} ${invalid.lastname} : un multiple de 0,25 entre 0,25 et 24 (ex. 7,25 pour 7 h 15). Rien n'a été enregistré.`);
+                document.querySelector(`tr[data-picker-id="${invalid.pickerId}"] input.hours`)?.focus();
+                return;
+            }
+            const entries = [...edits].map(([pickerId, value]) => ({
+                pickerId,
+                hours: value === '' ? null : Number(value)
+            }));
+            try {
+                const response = await apiFetch('/work-hours', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ day: workDay.day, entries })
+                });
+                const body = await readBody(response);
+                if (!response.ok) {
+                    // The typed values stay in place so they can be corrected.
+                    showAlert('danger', body.detail || `Enregistrement impossible (code ${response.status}).`);
+                    return;
+                }
+                edits.clear();
+                showDay(body);
+                showAlert('success', `${entries.length} cueilleur${entries.length > 1 ? 's' : ''} enregistré${entries.length > 1 ? 's' : ''}.`);
+            } catch (e) {
+                console.error(e);
+                showAlert('danger', 'Erreur réseau');
+            }
+        }
+
+        // --- UTILITAIRES ---
+
+        async function readBody(response) {
+            try {
+                return await response.json();
+            } catch (e) {
+                return {};
+            }
+        }
+
+        function showAlert(type, message) {
+            document.getElementById('alertArea').innerHTML =
+                `<div class="alert alert-${type} alert-dismissible fade show" role="alert">${escapeHtml(message)}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`;
+        }
+
+        function clearAlert() {
+            document.getElementById('alertArea').innerHTML = '';
+        }
+
+        function escapeHtml(text) {
+            return String(text).replace(/[&<>"']/g, c =>
+                ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
+    </script>
+</body>
+</html>

@@ -13,6 +13,7 @@ import org.springframework.data.domain.Sort.Direction;
 import org.springframework.data.domain.Sort.Order;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -28,6 +29,7 @@ import com.rfidback.generated.model.PickersPage;
 import com.rfidback.generated.model.UpdatePicker;
 import com.rfidback.repository.BucketRepository;
 import com.rfidback.repository.PickerRepository;
+import com.rfidback.repository.PickerWorkDayRepository;
 
 import lombok.RequiredArgsConstructor;
 
@@ -45,6 +47,7 @@ public class PickerService {
 
     private final PickerRepository pickerRepository;
     private final BucketRepository bucketRepository;
+    private final PickerWorkDayRepository pickerWorkDayRepository;
 
     public PickersPage listPickers(int page, int size, String sort) {
         Pageable pageable = PageRequest.of(page, size, toSort(sort));
@@ -122,12 +125,15 @@ public class PickerService {
         return picker;
     }
 
+    @Transactional
     public void deletePicker(UUID pickerId) {
         PickerEntity entity = loadPicker(pickerId);
         if (bucketRepository.existsByPicker(entity)) {
             throw new PickerHasBucketsException(
                     "Picker %s still has at least one bucket assigned; unassign it first".formatted(pickerId));
         }
+        // No hours without their picker (spec 014); the foreign key would block the deletion otherwise.
+        pickerWorkDayRepository.deleteByPicker(entity);
         pickerRepository.delete(entity);
     }
 

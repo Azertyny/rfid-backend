@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
@@ -12,7 +13,10 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -20,6 +24,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mockito;
 import org.mockito.stubbing.Answer;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -32,23 +37,31 @@ import com.rfidback.entity.UserEntity;
 import com.rfidback.generated.model.ReaderMode;
 import com.rfidback.exception.ReaderAlreadyExistsException;
 import com.rfidback.exception.ReaderNotFoundException;
+import com.rfidback.exception.ReaderStillActiveException;
 import com.rfidback.generated.model.CreateReader;
 import com.rfidback.generated.model.Reader;
 import com.rfidback.generated.model.UpdateReader;
+import com.rfidback.repository.ActivityRepository;
 import com.rfidback.repository.ReaderRepository;
 
 class ReaderServiceTest {
 
+    private static final Clock CLOCK = Clock.fixed(Instant.parse("2026-10-06T08:00:00Z"), ZoneOffset.UTC);
+
     private ReaderRepository readerRepository;
     private LineActivityService lineActivityService;
+    private RegistrationService registrationService;
+    private ActivityRepository activityRepository;
     private ReaderService readerService;
 
     @BeforeEach
     void setUp() {
         readerRepository = Mockito.mock(ReaderRepository.class);
         lineActivityService = Mockito.mock(LineActivityService.class);
-        readerService = new ReaderService(readerRepository, Mockito.mock(RegistrationService.class),
-                lineActivityService);
+        registrationService = Mockito.mock(RegistrationService.class);
+        activityRepository = Mockito.mock(ActivityRepository.class);
+        readerService = new ReaderService(readerRepository, registrationService, lineActivityService,
+                activityRepository, CLOCK);
         // Stand in for JPA: saving assigns an id, the timestamps and (through @PrePersist) the token.
         Answer<ReaderEntity> persist = invocation -> {
             ReaderEntity entity = invocation.getArgument(0);
@@ -67,7 +80,7 @@ class ReaderServiceTest {
     @Test
     void getReaders_mapsIdAndActive() {
         ReaderEntity disabled = reader("Poste B", false);
-        when(readerRepository.findAll()).thenReturn(List.of(disabled));
+        when(readerRepository.findAllByDeletedAtIsNull()).thenReturn(List.of(disabled));
 
         Reader reader = readerService.getReaders().getReaders().get(0);
 
@@ -214,6 +227,110 @@ class ReaderServiceTest {
         when(readerRepository.findById(readerId)).thenReturn(Optional.empty());
 
         assertThrows(ReaderNotFoundException.class, () -> readerService.rotateToken(readerId));
+    }
+
+    @Test
+    void getReaders_leavesOutDeletedReaders() {
+        when(readerRepository.findAllByDeletedAtIsNull()).thenReturn(List.of());
+
+        assertTrue(readerService.getReaders().getReaders().isEmpty());
+        verify(readerRepository, never()).findAll();
+    }
+
+    @Test
+    void updateReader_deletedReader_throwsNotFound() {
+        ReaderEntity deleted = deletedReader("Poste A");
+        when(readerRepository.findWithLockById(deleted.getId())).thenReturn(Optional.of(deleted));
+
+        assertThrows(ReaderNotFoundException.class,
+                () -> readerService.updateReader(deleted.getId(), new UpdateReader().active(true)));
+        verify(readerRepository, never()).save(any());
+    }
+
+    @Test
+    void rotateToken_deletedReader_throwsNotFound() {
+        ReaderEntity deleted = deletedReader("Poste A");
+        when(readerRepository.findById(deleted.getId())).thenReturn(Optional.of(deleted));
+
+        assertThrows(ReaderNotFoundException.class, () -> readerService.rotateToken(deleted.getId()));
+        verify(readerRepository, never()).save(any());
+    }
+
+    @Test
+    void deleteReader_activeReader_throwsConflictAndChangesNothing() {
+        ReaderEntity active = reader("Poste A", true);
+        when(readerRepository.findWithLockById(active.getId())).thenReturn(Optional.of(active));
+
+        assertThrows(ReaderStillActiveException.class, () -> readerService.deleteReader(active.getId()));
+        assertNull(active.getDeletedAt());
+        verify(readerRepository, never()).save(any());
+        verify(registrationService, never()).closeForReader(any());
+    }
+
+    @Test
+    void deleteReader_unknownId_throwsNotFound() {
+        UUID readerId = UUID.randomUUID();
+        when(readerRepository.findWithLockById(readerId)).thenReturn(Optional.empty());
+
+        assertThrows(ReaderNotFoundException.class, () -> readerService.deleteReader(readerId));
+    }
+
+    @Test
+    void deleteReader_alreadyDeleted_throwsNotFound() {
+        ReaderEntity deleted = deletedReader("Poste A");
+        when(readerRepository.findWithLockById(deleted.getId())).thenReturn(Optional.of(deleted));
+
+        assertThrows(ReaderNotFoundException.class, () -> readerService.deleteReader(deleted.getId()));
+        verify(readerRepository, never()).save(any());
+    }
+
+    @Test
+    void deleteReader_disabledLine_dissociatesClearsClosesAndMarksDeleted() {
+        ReaderEntity line = reader("Ligne 1", false);
+        ActivityEntity fraise = ActivityEntity.builder().id(UUID.randomUUID()).name("Fraise").build();
+        ActivityEntity framboise = ActivityEntity.builder().id(UUID.randomUUID()).name("Framboise").build();
+        fraise.getLines().add(line);
+        framboise.getLines().add(line);
+        line.setCurrentActivity(fraise);
+        UserEntity admin = UserEntity.builder().username("admin").build();
+        when(readerRepository.findWithLockById(line.getId())).thenReturn(Optional.of(line));
+        when(activityRepository.findAllByLine(line.getId())).thenReturn(List.of(fraise, framboise));
+        when(lineActivityService.currentUser()).thenReturn(admin);
+
+        readerService.deleteReader(line.getId());
+
+        assertTrue(fraise.getLines().isEmpty());
+        assertTrue(framboise.getLines().isEmpty());
+        // The state is brought to today before the current activity is read (research R11 step 3).
+        InOrder inOrder = Mockito.inOrder(activityRepository, lineActivityService);
+        inOrder.verify(activityRepository).flush();
+        inOrder.verify(lineActivityService).startNewDay(line);
+        inOrder.verify(lineActivityService).clear(line, admin);
+        // The guard of research R11 step 4: deactivation normally closed the session already.
+        verify(registrationService).closeForReader(line);
+        ArgumentCaptor<ReaderEntity> captor = ArgumentCaptor.forClass(ReaderEntity.class);
+        verify(readerRepository).save(captor.capture());
+        assertEquals(OffsetDateTime.now(CLOCK), captor.getValue().getDeletedAt());
+        assertTrue(captor.getValue().isDeleted());
+    }
+
+    @Test
+    void deleteReader_lineWithoutCurrentActivity_logsNoChange() {
+        ReaderEntity line = reader("Ligne 1", false);
+        when(readerRepository.findWithLockById(line.getId())).thenReturn(Optional.of(line));
+        when(activityRepository.findAllByLine(line.getId())).thenReturn(List.of());
+
+        readerService.deleteReader(line.getId());
+
+        verify(lineActivityService).startNewDay(line);
+        verify(lineActivityService, never()).clear(any(), any());
+        assertTrue(line.isDeleted());
+    }
+
+    private static ReaderEntity deletedReader(String name) {
+        ReaderEntity reader = reader(name, false);
+        reader.setDeletedAt(OffsetDateTime.now(CLOCK).minusDays(1));
+        return reader;
     }
 
     private static ReaderEntity reader(String name, boolean active) {

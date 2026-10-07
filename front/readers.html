@@ -43,6 +43,9 @@
                 <a href="pickers.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
                     <i class="fas fa-users me-1"></i>Cueilleurs
                 </a>
+                <a href="work-hours.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-clock me-1"></i>Heures
+                </a>
                 <a href="readers.html" data-admin-only class="btn btn-sm btn-primary">
                     <i class="fas fa-satellite-dish me-1"></i>Lecteurs
                 </a>
@@ -169,6 +172,9 @@
             fetchReaders();
         });
 
+        // Dernière liste chargée : les actions la consultent par id pour afficher un nom.
+        let currentReaders = [];
+
         // 1. LISTER LES LECTEURS (GET /readers)
         async function fetchReaders() {
             try {
@@ -178,6 +184,7 @@
                     const data = await response.json();
                     // Selon ReaderApiDelegate.java, la réponse est un objet ReadersList contenant une liste "readers"
                     const list = data.readers || [];
+                    currentReaders = list;
                     renderTable(list);
                 } else {
                     showError("Impossible de charger les lecteurs");
@@ -228,6 +235,9 @@
                             <button class="btn btn-sm btn-outline-warning" onclick="rotateToken('${r.id}')">
                                 Régénérer la clé
                             </button>
+                            ${r.active === false
+                                ? `<button class="btn btn-sm btn-outline-danger" onclick="deleteReader('${r.id}')">Supprimer</button>`
+                                : ''}
                         </td>
                     </tr>`;
                 tbody.innerHTML += html;
@@ -324,6 +334,25 @@
                     successModal.show();
                 } else {
                     alert(`Erreur de régénération (code ${response.status}).`);
+                }
+                fetchReaders();
+            } catch (e) {
+                alert("Erreur réseau");
+            }
+        }
+
+        // 6. SUPPRIMER UN LECTEUR DÉSACTIVÉ (DELETE /readers/{id})
+        // Suppression logique : ses lectures restent, son nom reste pris (spec 002, FR-008).
+        async function deleteReader(id) {
+            const reader = currentReaders.find(r => r.id === id);
+            if (!reader) return;
+            if (!confirm(`Supprimer le lecteur ${reader.uid} ? Il disparaîtra de toutes les listes. Ses lectures sont conservées. Son nom ne pourra pas être réutilisé.`)) return;
+            try {
+                const response = await apiFetch(`/readers/${id}`, { method: 'DELETE' });
+                if (response.status === 409) {
+                    alert("Le lecteur doit être désactivé avant d'être supprimé.");
+                } else if (!response.ok) {
+                    alert(`Erreur de suppression (code ${response.status}).`);
                 }
                 fetchReaders();
             } catch (e) {

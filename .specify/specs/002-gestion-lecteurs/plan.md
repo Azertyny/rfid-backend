@@ -1,6 +1,6 @@
 # Implementation Plan: Gestion des lecteurs RFID (Reader management)
 
-**Branch**: `feature/002-gestion-lecteurs` | **Date**: 2026-09-24 | **Spec**: [spec.md](spec.md)
+**Branch**: `feature/002-gestion-lecteurs` | **Date**: 2026-09-24, amended 2026-10-06 (reader deletion) | **Spec**: [spec.md](spec.md)
 
 **Input**: Feature specification from `.specify/specs/002-gestion-lecteurs/spec.md`
 
@@ -59,9 +59,9 @@ No violations, so Complexity Tracking stays empty.
 
 ```text
 .specify/specs/002-gestion-lecteurs/
-├── spec.md              # As-is spec + 2026-09-24 clarifications
+├── spec.md              # As-is spec + 2026-09-24 and 2026-10-06 clarifications
 ├── plan.md              # This file
-├── research.md          # Phase 0: decisions R0-R8
+├── research.md          # Phase 0: decisions R0-R8, amendment R9-R14
 ├── data-model.md        # Phase 1: Reader, validation rules, active/disabled states
 ├── quickstart.md        # Phase 1: validation guide
 ├── contracts/
@@ -101,7 +101,72 @@ No Constitution Check violations.
 
 ## Follow-ups outside this plan
 
-- Spec `008`, access-matrix row "`POST /api/readers` (et futures routes de rotation/suppression, changement de mode)": replace "suppression" with "désactivation". Readers are never deleted (spec `002` FR-006).
+- Spec `008`, access-matrix row "`POST /api/readers` (et futures routes de rotation/suppression, changement de mode)": replace "suppression" with "désactivation". Readers are never deleted (spec `002` FR-006). *(Superseded by the 2026-10-06 amendment below: the row gains `DELETE /api/readers/{id}`.)*
 - Spec `002` itself: FR-003 and FR-005 still describe the unauthenticated state as current, and the third Drift row still reads as open. Spec `008` delivered both. Mark them delivered, as the 001 follow-up did for its FR-008.
 - After deploying, rotate the token formerly hard-coded in `front/index.html` ([quickstart.md](quickstart.md), "After deploying").
 - Spec `003` adds `mode` to `UpdateReader` and `ReaderEntity`. The `PATCH` route here is shaped for it (research R2).
+
+---
+
+## Amendment 2026-10-06: deleting a reader (FR-008, User Story 5)
+
+### Summary
+
+An Administrateur can delete a reader that is already deactivated. The delete is logical (soft): the row stays, so the records, conformity changes and activity changes that point to it keep working and keep showing its `uid`. Spec Clarifications 2026-10-06 set four rules:
+
+1. `DELETE /api/readers/{readerId}` → `204`. It answers `409` while the reader is active, and `404` for an unknown or already deleted reader (research R9, R10).
+2. The delete removes the line from all its activities, clears its current activity (logged as an activity change by the Administrateur), and discards any open registration session (research R11).
+3. A deleted reader disappears from `GET /api/readers` for every role. Every route that names a reader by `id` for management answers `404` for it. Its token stays refused, because it is deactivated and can no longer be reactivated (research R12).
+4. The deleted reader's `uid` stays taken: `existsByNameIgnoreCase` still sees the row, so creation answers `409` without any change. Its records still count in `GET /api/records/stats` and stay reachable by `GET /api/records/stats?readerId=` and `GET /api/records/readers/{uid}` (research R13).
+
+### Technical Context (changes only)
+
+**Storage**: one new nullable column, `reader.deleted_at timestamp with time zone`, added by `ddl-auto: update` with no default needed (research R9). No row is ever physically deleted.
+
+**Performance Goals**: unchanged. `GET /api/readers` filters in the query, and the midnight reset query gains a `deleted_at is null` condition.
+
+**Scale/Scope**: 1 route added, 1 column, 1 exception, 2 repository methods changed or added, 4 services touched (`ReaderService`, `ActivityService`, `LineActivityService`, `RegistrationService`), 1 front page (`readers.html`), tests extended in 5 classes.
+
+### Constitution Check (amendment)
+
+| Gate | Pre-design | Post-design |
+|---|---|---|
+| Layering | Pass | Pass: the delete goes in `ReaderService`, which reuses `LineActivityService.clear` and `RegistrationService.closeForReader` |
+| API-first | Pass | Pass: `DELETE /readers/{readerId}` in [contracts/openapi-readers.md](contracts/openapi-readers.md) §5, implemented through `ReaderApiDelegate.deleteReader` |
+| Spec `008` access matrix | Pass | Pass: `/api/readers/**` is already Administrateur-only for every method (`SecurityConfig.java:163`), so no change; one new row in `AccessMatrixSecurityTest` |
+| Reader devices stay on the token chain | Pass | Pass: no filter change; a deleted reader is always deactivated (research R12) |
+| Schema through entities, `ddl-auto: update` | Pass | Pass: a nullable column needs no default and no `ConformityAuthorSchemaUpgrade`-style step |
+| `mvn clean test` / `mvn clean install` | Pass | Pass (planned) |
+
+No violations.
+
+### Source Code (amendment)
+
+```text
+src/main/resources/openapi/api.yaml             # + DELETE /readers/{readerId}; 404 wording for deleted readers
+src/main/java/com/rfidback/
+├── entity/ReaderEntity.java                    # + deletedAt (nullable), isDeleted()
+├── repository/ReaderRepository.java            # + findAllByDeletedAtIsNull; findIdsWithStaleState skips deleted readers
+├── exception/ReaderStillActiveException.java   # new, @ResponseStatus(CONFLICT)
+├── service/ReaderService.java                  # + deleteReader; listing, PATCH and rotation treat deleted as 404
+├── service/ActivityService.java                # setReaderActivities: deleted reader → 404
+├── service/LineActivityService.java            # GET/PUT /lines/{uid}/current-activity: deleted reader → 404
+├── service/RegistrationService.java            # start (POST /tags/registration-sessions): deleted reader → 404
+└── controller/ReaderController.java            # + deleteReader
+src/test/java/com/rfidback/
+├── service/ReaderServiceTest.java              # delete: active → 409, cleanup, already deleted → 404
+├── controller/ReaderApiTest.java               # 204/404/409, hidden from GET, uid still taken, routes → 404
+├── controller/RecordStatsApiTest.java          # deleted reader's records still counted, readerId filter still answers
+├── controller/RecordApiTest.java               # GET /records/readers/{uid} still answers for a deleted reader
+├── controller/LineActivityApiTest.java         # /lines/{uid}/current-activity → 404 for a deleted reader
+├── security/ReaderScanSecurityTest.java        # deleted reader's token → 401 on scan and kiosk routes
+└── security/AccessMatrixSecurityTest.java      # + DELETE /api/readers/{id} (ADMIN_ONLY)
+front/readers.html                              # "Supprimer" on deactivated rows, with a confirm
+```
+
+Other pages (`index.html`, `reader.html`, `activities.html`, `tags.html`) need no change: they build their selectors from `GET /api/readers`, which no longer returns deleted readers (research R14).
+
+### Follow-ups
+
+- Spec `008`, access-matrix row for `/api/readers/{id}`: add `DELETE /api/readers/{id}` (suppression logique, spec `002` FR-008).
+- `CLAUDE.md`, Persistence: mention that readers are soft-deleted (`reader.deleted_at`) and never physically removed.

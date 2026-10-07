@@ -125,3 +125,38 @@ State-changing calls need the CSRF header (`front/auth.js` `apiFetch` already se
 
 - `readers.html` reads `id` and `active`, and calls the two new routes with `apiFetch` (research R7).
 - `index.html` skips readers with `active === false`. `reader.html` shows them with a label.
+
+## 5. Amendment 2026-10-06: deleting a reader (FR-008)
+
+Add to `/readers/{readerId}` (after `patch`). `ReaderApiDelegate` gains `deleteReader`.
+
+```yaml
+    delete:
+      summary: Delete a deactivated reader
+      description: >
+        Soft delete: the reader no longer appears in GET /readers nor as a line, and every route naming it answers
+        404. Its records, conformity changes and activity changes are kept, and its uid stays taken. The line is
+        removed from its activities, its current activity is cleared and an open registration session is discarded.
+        Refused with 409 while the reader is active: deactivate it first.
+      operationId: deleteReader
+      tags: [Reader]
+      responses:
+        "204": { $ref: "#/components/responses/Deleted" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+```
+
+Descriptions to update in `api.yaml`: `GET /readers` ("deleted readers are not listed"), the `404` of `PATCH /readers/{readerId}`, `POST /readers/{readerId}/token`, `PUT /readers/{readerId}/activities`, `POST /tags/registration-sessions` and `GET`/`PUT /lines/{readerUid}/current-activity` ("unknown or deleted reader"), and `POST /readers` `409` ("also when a deleted reader had this uid").
+
+| Route | Anonymous | Opérateur | Administrateur |
+|---|---|---|---|
+| `DELETE /api/readers/{id}` | 401 | 403 | 204 (deactivated) / 409 (active) / 404 (unknown, already deleted) / 400 (bad UUID) |
+| `GET /api/readers` | 401 | 200, no deleted reader | 200, no deleted reader |
+| any other route naming a deleted reader by `id`, and `/lines/{uid}/current-activity` | 401 | 403 or 404 | 404 |
+| `POST /api/readers` with a deleted reader's `uid` (ignoring case) | 401 | 403 | 409 |
+| `GET /api/records/readers/{uid}`, `GET /api/records/stats?readerId=` for a deleted reader | 401 | 200 | 200 |
+| token routes with a deleted reader's token | 401 | — | — |
+
+Front: `readers.html` shows "Supprimer" on deactivated rows only and calls `DELETE /readers/{id}` with `apiFetch` (research R14).
