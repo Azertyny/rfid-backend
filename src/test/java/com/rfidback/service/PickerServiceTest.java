@@ -20,6 +20,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mockito;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
@@ -39,18 +40,21 @@ import com.rfidback.generated.model.Picker;
 import com.rfidback.generated.model.UpdatePicker;
 import com.rfidback.repository.BucketRepository;
 import com.rfidback.repository.PickerRepository;
+import com.rfidback.repository.PickerWorkDayRepository;
 
 class PickerServiceTest {
 
     private PickerRepository pickerRepository;
     private BucketRepository bucketRepository;
+    private PickerWorkDayRepository pickerWorkDayRepository;
     private PickerService pickerService;
 
     @BeforeEach
     void setUp() {
         pickerRepository = Mockito.mock(PickerRepository.class);
         bucketRepository = Mockito.mock(BucketRepository.class);
-        pickerService = new PickerService(pickerRepository, bucketRepository);
+        pickerWorkDayRepository = Mockito.mock(PickerWorkDayRepository.class);
+        pickerService = new PickerService(pickerRepository, bucketRepository, pickerWorkDayRepository);
     }
 
     @Test
@@ -159,6 +163,19 @@ class PickerServiceTest {
         pickerService.deletePicker(entity.getId());
 
         verify(pickerRepository).delete(entity);
+    }
+
+    @Test
+    void deletePicker_withoutBucket_deletesTheHoursFirst() {
+        PickerEntity entity = picker("Dupont", "Jean");
+        when(pickerRepository.findById(entity.getId())).thenReturn(Optional.of(entity));
+        when(bucketRepository.existsByPicker(entity)).thenReturn(false);
+
+        pickerService.deletePicker(entity.getId());
+
+        InOrder inOrder = Mockito.inOrder(pickerWorkDayRepository, pickerRepository);
+        inOrder.verify(pickerWorkDayRepository).deleteByPicker(entity);
+        inOrder.verify(pickerRepository).delete(entity);
     }
 
     @Test

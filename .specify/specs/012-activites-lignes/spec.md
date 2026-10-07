@@ -24,7 +24,7 @@ elles l'activité en cours, et la change quand la ligne change de produit.
 ### Session 2026-09-26
 
 - Q: L'activité doit-elle être enregistrée sur chaque lecture, ou seulement affichée comme état de la ligne ? → A: Enregistrée sur chaque lecture au moment du scan, et figée ensuite (traçabilité et statistiques par produit possibles).
-- Q: Le filtre par activité du tableau de bord (spec `007`) et de son export CSV fait-il partie de cette fonctionnalité ? → A: Non, reporté à une fonctionnalité ultérieure ; les lectures portent déjà l'activité, donc rien n'est perdu d'ici là.
+- Q: Le filtre par activité du tableau de bord (spec `007`) et de son export CSV fait-il partie de cette fonctionnalité ? → A: Non, reporté à une fonctionnalité ultérieure ; les lectures portent déjà l'activité, donc rien n'est perdu d'ici là. *Livré en partie par la spec `014` : colonnes par activité dans le tableau par cueilleur ; le filtre par activité reste à faire.*
 - Q: Si l'Opérateur a oublié de changer d'activité, peut-on corriger après coup l'activité des lectures déjà faites ? → A: Non : l'activité d'une lecture est figée à sa création, aucune correction n'est prévue dans cette fonctionnalité.
 - Q: L'activité en cours d'une ligne doit-elle persister d'un jour à l'autre, ou repartir de « aucune activité » chaque jour ? → A: Remise à zéro chaque jour à minuit (fuseau de la station) : toutes les lignes repassent à « aucune activité », l'Opérateur choisit l'activité en début de poste.
 - Q: Quand une ligne n'a pas d'activité en cours, comment le kiosque doit-il le signaler à l'Opérateur ? → A: Bandeau d'alerte bien visible en haut du kiosque, tant qu'aucune activité n'est choisie, avec le nombre de lectures faites sans activité depuis minuit ; aucun blocage.
