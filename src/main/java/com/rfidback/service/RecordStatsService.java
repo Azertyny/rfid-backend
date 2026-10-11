@@ -5,6 +5,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.YearMonth;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -126,6 +127,11 @@ public class RecordStatsService {
                 case TODAY -> new LocalDate[] { today, today };
                 case YESTERDAY -> new LocalDate[] { today.minusDays(1), today.minusDays(1) };
                 case LAST_7_DAYS -> new LocalDate[] { today.minusDays(6), today };
+                case CURRENT_MONTH -> new LocalDate[] { today.withDayOfMonth(1), today };
+                case LAST_MONTH -> {
+                    YearMonth lastMonth = YearMonth.from(today).minusMonths(1);
+                    yield new LocalDate[] { lastMonth.atDay(1), lastMonth.atEndOfMonth() };
+                }
                 default -> throw new IllegalStateException("Unexpected period " + period);
             };
         }

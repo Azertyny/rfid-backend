@@ -333,12 +333,24 @@ class RecordStatsApiTest {
         assertThat(stats("", asOperator()).get("includesToday").asBoolean()).isTrue();
     }
 
+    @Test
+    void monthPeriodsStartOnTheFirst() throws Exception {
+        JsonNode currentMonth = stats("period=CURRENT_MONTH", asOperator());
+        JsonNode lastMonth = stats("period=LAST_MONTH", asOperator());
+
+        assertThat(currentMonth.get("from").asText()).endsWith("-01");
+        assertThat(currentMonth.get("includesToday").asBoolean()).isTrue();
+        assertThat(lastMonth.get("from").asText()).endsWith("-01");
+        assertThat(lastMonth.get("includesToday").asBoolean()).isFalse();
+    }
+
     // --- validation and access ---
 
     @Test
     void invalidPeriodsAreBadRequests() throws Exception {
         for (String query : new String[] { "period=CUSTOM&from=2031-01-01&to=2031-02-01", "period=CUSTOM",
-                "period=CUSTOM&from=2031-01-02&to=2031-01-01", "period=TODAY&from=2031-01-01", "period=FOO",
+                "period=CUSTOM&from=2031-01-02&to=2031-01-01", "period=TODAY&from=2031-01-01",
+                "period=CURRENT_MONTH&from=2031-01-01", "period=LAST_MONTH&from=2031-01-01", "period=FOO",
                 "period=CUSTOM&from=2031-13-01&to=2031-13-02", "readerId=not-a-uuid" }) {
             mockMvc.perform(get("/api/records/stats?" + query).with(asOperator()))
                     .andExpect(status().isBadRequest());

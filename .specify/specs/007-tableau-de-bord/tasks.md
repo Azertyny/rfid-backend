@@ -57,7 +57,7 @@ description: "Task list for 007 — Tableau de bord"
 
 **Goal**: an Opérateur or Administrateur opens `index.html`, picks a period and optionally a reader, and sees exact totals: summary, table per picker (with "Non attribué"), scans per hour, CSV export (FR-002, FR-005, FR-007 to FR-009).
 
-**Independent test**: spec US1 acceptance scenarios 3-8; backend — `mvn clean test -Dtest='RecordStatsServiceTest,RecordStatsApiTest,AccessMatrixSecurityTest'` passes and `curl` on `/api/records/stats` returns the contract's shape; front — scenarios 1-9 of [quickstart.md](quickstart.md).
+**Independent test**: spec US1 acceptance scenarios 3-9; backend — `mvn clean test -Dtest='RecordStatsServiceTest,RecordStatsApiTest,AccessMatrixSecurityTest'` passes and `curl` on `/api/records/stats` returns the contract's shape; front — scenarios 1-9 of [quickstart.md](quickstart.md).
 
 ### Tests for User Story 1 (write first, they must fail) ⚠️
 
@@ -174,3 +174,32 @@ Commit after each checkpoint. Open the PR with `--base dev`.
 - [X] T020 [US1] In `front/index.html` `loadStats()`, number each request (`const requestId = ++statsRequestSeq`) and ignore any response whose `requestId` is no longer the latest, so a slow response or the 60 s auto-refresh can never overwrite the figures of a newer period/reader selection per FR-005(d), FR-008 (partial)
 - [X] T021 Map `ResponseStatusException` to a `ProblemDetail` carrying its reason as `detail` (status kept) in `src/main/java/com/rfidback/controller/ApiExceptionHandler.java`, and assert `$.detail` on one `400` case in `src/test/java/com/rfidback/controller/RecordStatsApiTest.java`, so the page shows the server's message next to the dates per tasks T013 (partial)
 - [X] T022 [US1] In `front/index.html` `onPeriodChange()`, when "Personnalisée" is chosen without both dates, clear the figures (`lastStats = null`, hide results, disable export) and show "Choisissez une date de début et une date de fin." instead of leaving the previous period's figures per US1 scenario 6 (partial)
+
+## Phase 6: Amendment 2026-10-11 — périodes « Le mois en cours » et « Le mois dernier » (US1)
+
+**Goal**: add the two month periods to the dashboard's period filter (FR-007, Clarifications 2026-10-11, research R12,
+plan "Amendment 2026-10-11"). `CURRENT_MONTH` = the 1st of the station's current month → today; `LAST_MONTH` = the whole
+previous calendar month. Both resolved by the server in the station zone; both refuse `from`/`to` (400).
+
+**Independent test**: `GET /api/records/stats?period=CURRENT_MONTH` on 11/10/2026 (Paris) answers `from=2026-10-01`,
+`to=2026-10-11`; `period=LAST_MONTH` answers `from=2026-09-01`, `to=2026-09-30`; the page offers both options and shows
+those dates (spec US1 scenario 8).
+
+- [X] T023 [US1] In `src/main/resources/openapi/api.yaml`, schema `StatsPeriod`: enum → `[TODAY, YESTERDAY, LAST_7_DAYS, CURRENT_MONTH, LAST_MONTH, CUSTOM]`, description → the block form from `contracts/openapi-dashboard.md` ("In the station time zone. LAST_7_DAYS is today and the 6 days before; CURRENT_MONTH is the 1st of the current month to today; LAST_MONTH is the whole previous calendar month."); run `mvn generate-sources` and check `StatsPeriod.CURRENT_MONTH` / `StatsPeriod.LAST_MONTH` exist under `target/generated-sources/openapi`
+- [X] T024 [P] [US1] In `src/test/java/com/rfidback/service/RecordStatsServiceTest.java` (write first, must fail until T025), after `yesterdayAndLastSevenDays`, add tests using the existing `serviceAt(...)` helper and `assertEquals` on `getFrom()`/`getTo()`:
+  - `currentMonthRunsFromTheFirstToToday`: at `2026-10-11T10:00:00Z` → `2026-10-01` … `2026-10-11`;
+  - `currentMonthOnTheFirstIsOnlyToday`: at `2026-10-01T10:00:00Z` → `2026-10-01` … `2026-10-01`;
+  - `lastMonthIsTheWholePreviousCalendarMonth`: at `2026-10-11T10:00:00Z` → `2026-09-01` … `2026-09-30`; at `2026-03-15T10:00:00Z` → `2026-02-01` … `2026-02-28`; at `2028-03-15T10:00:00Z` → `2028-02-01` … `2028-02-29` (leap year);
+  - `lastMonthInJanuaryIsDecemberOfThePreviousYear`: at `2027-01-05T10:00:00Z` → `2026-12-01` … `2026-12-31`;
+  - `monthsFollowTheStationZoneNotUtc`: at `2026-09-30T22:30:00Z` (= 01/10 00:30 Paris) `CURRENT_MONTH` → `2026-10-01` … `2026-10-01` and `LAST_MONTH` → `2026-09-01` … `2026-09-30`;
+  - extend `datesAreRefusedWithANamedPeriod` with `CURRENT_MONTH` and `LAST_MONTH` each given a `from` (`assertBadRequest`);
+  - extend `includesTodayFollowsThePeriod` (clock `2026-09-25T10:00:00Z`): `CURRENT_MONTH` → `true`, `LAST_MONTH` → `false`
+- [X] T025 [US1] In `src/main/java/com/rfidback/service/RecordStatsService.java` `resolveDays`, add to the `switch` (before `default`): `case CURRENT_MONTH -> new LocalDate[] { today.withDayOfMonth(1), today };` and `case LAST_MONTH -> { YearMonth last = YearMonth.from(today).minusMonths(1); yield new LocalDate[] { last.atDay(1), last.atEndOfMonth() }; }` (import `java.time.YearMonth`). The existing `from`/`to` refusal for non-`CUSTOM` periods already covers them; the 31-day check stays `CUSTOM`-only (a month is at most 31 days, data-model "Validation rules")
+- [X] T026 [US1] In `src/test/java/com/rfidback/controller/RecordStatsApiTest.java`, add `"period=CURRENT_MONTH&from=2031-01-01"` and `"period=LAST_MONTH&from=2031-01-01"` to the query strings of `invalidPeriodsAreBadRequests`, next to `"period=TODAY&from=2031-01-01"`; and add a test `monthPeriodsStartOnTheFirst` using the file's helpers: `assertThat(stats("period=CURRENT_MONTH", asOperator()).get("from").asText()).endsWith("-01")` and the same for `period=LAST_MONTH`, plus `get("includesToday").asBoolean()` true for `CURRENT_MONTH` and false for `LAST_MONTH` (the clock is real here; exact dates are covered by T024)
+- [X] T027 [P] [US1] In `front/index.html`, `#periodSelect`: add `<option value="CURRENT_MONTH">Le mois en cours</option>` and `<option value="LAST_MONTH">Le mois dernier</option>` between `LAST_7_DAYS` and `CUSTOM`. No other front change: `buildStatsQuery` sends `period` only for non-`CUSTOM` values, `periodLabel` shows the server's `from`/`to`, `shouldAutoRefresh` refreshes only while `to` ≥ today, and the CSV file name uses `from`/`to`
+- [ ] T028 [US1] Run `mvn clean test -Dtest='RecordStatsServiceTest,RecordStatsApiTest'` and fix until green, then `mvn clean install`; check `quickstart.md` scenario 4b by hand (both options, dates shown, auto-refresh only for the current month in the Network tab)
+- [X] T029 [P] Update `.specify/specs/007-tableau-de-bord/spec.md`: remove "Amendment 2026-10-11 (…) not yet implemented" from `Status` (say "Amendment 2026-10-11 delivered"); `CLAUDE.md` needs no change (it does not list the dashboard periods)
+
+**Dependencies (Phase 6)**: T023 first (generated enum). Then T024 ‖ T027 (different files); T025 after T024 (see the
+tests fail first); T026 after T025; T028 after T025-T027; T029 after T028.
+**MVP of the amendment**: T023-T025 (endpoint answers both months, unit-tested); T027 makes it visible.

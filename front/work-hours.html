@@ -194,7 +194,7 @@
             const body = document.getElementById('hoursBody');
             body.replaceChildren();
             const missingOnly = document.getElementById('missingOnly').checked;
-            const rows = workDay.pickers.filter(p => !missingOnly || p.missingHours);
+            const rows = shownPickers();
             if (rows.length === 0) {
                 const row = body.insertRow();
                 const cell = row.insertCell();
@@ -209,6 +209,12 @@
             summary.textContent = `${missing} cueilleur${missing > 1 ? 's' : ''} avec des caisses sans heures ce jour-là.`;
             summary.classList.toggle('d-none', missing === 0);
             updateSaveButton();
+        }
+
+        // The pickers listed, i.e. only those flagged "Heures manquantes" while the filter is on.
+        function shownPickers() {
+            const missingOnly = document.getElementById('missingOnly').checked;
+            return workDay.pickers.filter(p => !missingOnly || p.missingHours);
         }
 
         function pickerRow(picker) {
@@ -266,7 +272,8 @@
             event.preventDefault();
             const value = document.getElementById('fillValue').value;
             if (!value) return;
-            workDay.pickers.forEach(picker => {
+            // Hidden pickers are left alone: they may not have worked that day (spec 014, FR-004).
+            shownPickers().forEach(picker => {
                 const current = edits.has(picker.pickerId) ? edits.get(picker.pickerId) : savedValue(picker);
                 if (current === '') edits.set(picker.pickerId, value);
             });

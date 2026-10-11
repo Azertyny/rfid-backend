@@ -42,6 +42,12 @@ Tableau visé (exemple) :
 - Q: Faut-il une colonne « caisses à l'heure » calculée ? → A: Non : le tableau donne les heures et les caisses par
   activité, sans colonne de caisses à l'heure.
 
+### Session 2026-10-11
+
+- Q: Quand le filtre « Afficher seulement les heures manquantes » est coché, quelles cases doit remplir « Remplir les
+  cases vides avec … h » ? → A: Seulement les lignes affichées : avec le filtre, les cueilleurs signalés « Heures
+  manquantes » ; sans le filtre, toutes les cases vides.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Saisir les heures de travail des cueilleurs (Priority: P1)
@@ -121,6 +127,9 @@ repère ceux qui ont des lectures sans heures pour les compléter.
    ouvre la journée du 2026-10-06, **Then** les 3 cueilleurs sont listés et les 2 sans heures sont signalés.
 2. **Given** un cueilleur avec des heures mais sans lecture ce jour-là, **When** l'Administrateur ouvre la journée,
    **Then** il est listé aussi, avec 0 caisse.
+3. **Given** la liste du jour limitée aux heures manquantes, dont un cueilleur masqué sans heures ni lecture, **When**
+   l'Administrateur remplit les cases vides avec 8 h puis enregistre, **Then** seuls les cueilleurs signalés reçoivent
+   8 h et le cueilleur masqué reste sans heures.
 
 ---
 
@@ -159,6 +168,8 @@ repère ceux qui ont des lectures sans heures pour les compléter.
   jour même ou un jour suivant, et de saisir après coup celles d'un jour passé oublié. Une saisie pour un jour futur
   DOIT être refusée.
 - **FR-004** : le système DOIT permettre de saisir en une fois les heures de plusieurs cueilleurs pour un même jour.
+  Le remplissage en une fois des cases vides avec une même durée NE DOIT toucher que les cueilleurs affichés : quand
+  la liste est limitée aux heures manquantes (FR-014), les cueilleurs masqués restent sans heures.
 - **FR-005** : le système DOIT conserver l'auteur et la date de la dernière modification de chaque saisie d'heures.
 - **FR-006** : la création, la correction et la suppression d'heures DOIVENT être réservées à l'Administrateur ; un
   Opérateur et le kiosque d'une ligne DOIVENT être refusés. La consultation du tableau de bord, heures comprises,

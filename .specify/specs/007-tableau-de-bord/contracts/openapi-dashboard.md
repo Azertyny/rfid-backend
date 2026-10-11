@@ -58,9 +58,11 @@ Changes to `src/main/resources/openapi/api.yaml`, made before any Java code (API
 ```yaml
     StatsPeriod:
       type: string
-      enum: [TODAY, YESTERDAY, LAST_7_DAYS, CUSTOM]
+      enum: [TODAY, YESTERDAY, LAST_7_DAYS, CURRENT_MONTH, LAST_MONTH, CUSTOM]
       default: TODAY
-      description: LAST_7_DAYS is today and the 6 days before, in the station time zone.
+      description: >
+        In the station time zone. LAST_7_DAYS is today and the 6 days before; CURRENT_MONTH is the 1st of the
+        current month to today; LAST_MONTH is the whole previous calendar month.
 
     RecordCounts:
       type: object
@@ -119,7 +121,7 @@ Changes to `src/main/resources/openapi/api.yaml`, made before any Java code (API
 | `period=CUSTOM` without `from` or `to` | 400 |
 | `from` after `to` | 400 |
 | `to − from + 1 > 31` days | 400 |
-| `from` or `to` with `TODAY`, `YESTERDAY` or `LAST_7_DAYS` | 400 |
+| `from` or `to` with `TODAY`, `YESTERDAY`, `LAST_7_DAYS`, `CURRENT_MONTH` or `LAST_MONTH` | 400 |
 | Unknown `period` value, badly formatted date or UUID | 400 |
 | `readerId` of no reader | 404 |
 | Not logged in | 401 |
@@ -151,6 +153,7 @@ Covered by the existing rule `/api/records/**` → Administrateur, Opérateur (`
 
 - Calls only `GET /api/readers` (reader selector) and `GET /api/records/stats`, through `apiFetch`. No call to
   `/api/tags` or `/api/pickers`, no token, no hardcoded URL.
+- Period select: Aujourd'hui, Hier, 7 derniers jours, Le mois en cours, Le mois dernier, Personnalisée.
 - Query built from the filter bar: `period`, plus `from`/`to` for `CUSTOM`, plus `readerId` unless "Tous les lecteurs".
 - Displays `from`, `to` and `timeZone` from the response, not dates computed by the browser.
 - CSV export as described in [research.md](../research.md) R10.

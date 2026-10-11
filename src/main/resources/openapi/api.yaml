@@ -1795,9 +1795,11 @@ components:
 
     StatsPeriod:
       type: string
-      enum: [TODAY, YESTERDAY, LAST_7_DAYS, CUSTOM]
+      enum: [TODAY, YESTERDAY, LAST_7_DAYS, CURRENT_MONTH, LAST_MONTH, CUSTOM]
       default: TODAY
-      description: LAST_7_DAYS is today and the 6 days before, in the station time zone.
+      description: >
+        In the station time zone. LAST_7_DAYS is today and the 6 days before; CURRENT_MONTH is the 1st of the
+        current month to today; LAST_MONTH is the whole previous calendar month.
 
     RecordCounts:
       type: object
