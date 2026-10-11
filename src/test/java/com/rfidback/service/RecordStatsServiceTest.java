@@ -102,6 +102,37 @@ class RecordStatsServiceTest {
     }
 
     @Test
+    void currentMonthRunsFromTheFirstToToday() {
+        assertPeriod(serviceAt("2026-10-11T10:00:00Z"), StatsPeriod.CURRENT_MONTH, "2026-10-01", "2026-10-11");
+    }
+
+    @Test
+    void currentMonthOnTheFirstIsOnlyToday() {
+        assertPeriod(serviceAt("2026-10-01T10:00:00Z"), StatsPeriod.CURRENT_MONTH, "2026-10-01", "2026-10-01");
+    }
+
+    @Test
+    void lastMonthIsTheWholePreviousCalendarMonth() {
+        assertPeriod(serviceAt("2026-10-11T10:00:00Z"), StatsPeriod.LAST_MONTH, "2026-09-01", "2026-09-30");
+        assertPeriod(serviceAt("2026-03-15T10:00:00Z"), StatsPeriod.LAST_MONTH, "2026-02-01", "2026-02-28");
+        assertPeriod(serviceAt("2028-03-15T10:00:00Z"), StatsPeriod.LAST_MONTH, "2028-02-01", "2028-02-29");
+    }
+
+    @Test
+    void lastMonthInJanuaryIsDecemberOfThePreviousYear() {
+        assertPeriod(serviceAt("2027-01-05T10:00:00Z"), StatsPeriod.LAST_MONTH, "2026-12-01", "2026-12-31");
+    }
+
+    @Test
+    void monthsFollowTheStationZoneNotUtc() {
+        // 30/09 22:30 UTC is already 01/10 00:30 in Paris.
+        RecordStatsService service = serviceAt("2026-09-30T22:30:00Z");
+
+        assertPeriod(service, StatsPeriod.CURRENT_MONTH, "2026-10-01", "2026-10-01");
+        assertPeriod(service, StatsPeriod.LAST_MONTH, "2026-09-01", "2026-09-30");
+    }
+
+    @Test
     void customPeriodIsKeptAndQueriedFromMidnightToTheNextMidnightInParis() {
         RecordStats stats = serviceAt("2026-09-25T10:00:00Z")
                 .getStats(StatsPeriod.CUSTOM, LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 30), null);
@@ -153,8 +184,12 @@ class RecordStatsServiceTest {
 
     @Test
     void datesAreRefusedWithANamedPeriod() {
-        assertBadRequest(() -> serviceAt("2026-09-25T10:00:00Z")
-                .getStats(StatsPeriod.TODAY, LocalDate.of(2026, 1, 1), null, null));
+        RecordStatsService service = serviceAt("2026-09-25T10:00:00Z");
+
+        for (StatsPeriod period : new StatsPeriod[] { StatsPeriod.TODAY, StatsPeriod.CURRENT_MONTH,
+                StatsPeriod.LAST_MONTH }) {
+            assertBadRequest(() -> service.getStats(period, LocalDate.of(2026, 1, 1), null, null));
+        }
     }
 
     // --- reader filter ---
@@ -370,6 +405,8 @@ class RecordStatsServiceTest {
         assertThat(service.getStats(StatsPeriod.TODAY, null, null, null).getIncludesToday()).isTrue();
         assertThat(service.getStats(StatsPeriod.LAST_7_DAYS, null, null, null).getIncludesToday()).isTrue();
         assertThat(service.getStats(StatsPeriod.YESTERDAY, null, null, null).getIncludesToday()).isFalse();
+        assertThat(service.getStats(StatsPeriod.CURRENT_MONTH, null, null, null).getIncludesToday()).isTrue();
+        assertThat(service.getStats(StatsPeriod.LAST_MONTH, null, null, null).getIncludesToday()).isFalse();
         assertThat(service.getStats(StatsPeriod.CUSTOM, LocalDate.of(2026, 9, 1), LocalDate.of(2026, 9, 24), null)
                 .getIncludesToday()).isFalse();
         assertThat(service.getStats(StatsPeriod.CUSTOM, LocalDate.of(2026, 9, 20), LocalDate.of(2026, 9, 25), null)
@@ -380,6 +417,13 @@ class RecordStatsServiceTest {
         Clock clock = Clock.fixed(Instant.parse(instant), ZoneOffset.UTC);
         return new RecordStatsService(recordRepository, readerRepository, workDayRepository, clock,
                 new StationProperties(PARIS));
+    }
+
+    private static void assertPeriod(RecordStatsService service, StatsPeriod period, String from, String to) {
+        RecordStats stats = service.getStats(period, null, null, null);
+
+        assertEquals(LocalDate.parse(from), stats.getFrom());
+        assertEquals(LocalDate.parse(to), stats.getTo());
     }
 
     private static void assertBadRequest(Executable call) {

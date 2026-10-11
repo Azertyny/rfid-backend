@@ -50,7 +50,8 @@ What already exists (checked on 2026-09-25):
 
 ## R3. Period: a named period resolved by the server
 
-- **Decision**: query parameter `period` = `TODAY` (default) | `YESTERDAY` | `LAST_7_DAYS` | `CUSTOM`. `CUSTOM` needs
+- **Decision**: query parameter `period` = `TODAY` (default) | `YESTERDAY` | `LAST_7_DAYS` | `CUSTOM` (plus
+  `CURRENT_MONTH` and `LAST_MONTH` since 2026-10-11, R12). `CUSTOM` needs
   `from` and `to` (`YYYY-MM-DD`, inclusive). The server resolves the dates with `LocalDate.now(clock.withZone(zone))`:
   `LAST_7_DAYS` = today and the 6 days before. The range becomes
   `[from.atStartOfDay(zone), to.plusDays(1).atStartOfDay(zone))` as `OffsetDateTime`. The response echoes the resolved
@@ -174,3 +175,22 @@ What already exists (checked on 2026-09-25):
     (the generated doc's Vitest/Jest suggestion would need a `package.json` and a build step the project does not have,
     and the arithmetic now lives in the backend).
 - **Rationale**: SC-001 is proven where the numbers are computed; the SQL must run on a real database, not mocks.
+
+## R12. Month periods (amendment 2026-10-11)
+
+- **Decision**: two new `StatsPeriod` values, `CURRENT_MONTH` and `LAST_MONTH`, resolved in
+  `RecordStatsService.resolveDays` from the station's `today` (R3):
+  - `CURRENT_MONTH` = `today.withDayOfMonth(1)` → `today` (only today on the 1st of the month);
+  - `LAST_MONTH` = `YearMonth.from(today).minusMonths(1)`, `atDay(1)` → `atEndOfMonth()` (28 to 31 days, December of
+    the previous year in January).
+  Like the other named periods, they refuse `from`/`to` (400). The page adds "Le mois en cours" and "Le mois dernier"
+  between "7 derniers jours" and "Personnalisée".
+- **Rationale**: FR-007 and the 2026-10-11 clarification (calendar months, the current one up to today). Resolving on
+  the server keeps "this month" the station's month near midnight on the 1st, whatever the browser zone (same reason as
+  R3). A calendar month never exceeds the 31-day limit, so SC-002's measure (31 days, 200 000 records) covers both;
+  the page's auto-refresh rule (resolved `to` ≥ today in the station zone, `shouldAutoRefresh`) already applies to
+  `CURRENT_MONTH` and not to `LAST_MONTH`, and `periodLabel` already shows the resolved dates — no other front change.
+- **Alternatives considered**: computing the month bounds in the browser and sending `CUSTOM` (the browser's zone
+  decides the month near midnight, and the select would not say which period was chosen); the whole current month
+  including the days to come (empty days, a label that promises figures that cannot exist yet); rolling 30 days
+  (rejected in the clarification).

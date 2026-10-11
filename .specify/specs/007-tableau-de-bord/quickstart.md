@@ -42,6 +42,7 @@ done
 | 2 | In `reader.html`, mark one of the picker's scans non conforme; wait ≤ 60 s or click "Actualiser" | Summary 1 non conforme, taux 66,7 %; picker row 1 non conforme |
 | 3 | Select "Hier" | Empty state "Aucune lecture sur la période", no chart bars, no demo data; no auto-refresh (Network tab) |
 | 4 | "Personnalisée" with 01/09 → 30/09 (30 days) | Loads. With 01/08 → 30/09: the page's own message next to the dates, no figures shown, no `/records/stats` call in the Network tab (the server's `400` is covered by `RecordStatsApiTest`) |
+| 4b | "Le mois en cours", then "Le mois dernier" (amendment 2026-10-11) | Period shown "Du 01/<month>/<year> au <today>" then the whole previous month (e.g. on 11/10/2026: 01/10 → 11/10, then 01/09 → 30/09), both "heure de Europe/Paris"; auto-refresh only for the current month (Network tab) |
 | 5 | Select the reader, then another reader with no scans | Same figures, then empty state |
 | 6 | "Exporter CSV", open in Excel FR | Accents correct, columns split on `;`, rate `66,7`, last line `Total` |
 | 7 | Rename a picker to `=1+1` (pickers.html), reload, export | Name shown as text on the page; in Excel the cell shows `=1+1` as text, not `2` |
