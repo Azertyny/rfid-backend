@@ -25,6 +25,12 @@ public interface TagRepository extends JpaRepository<TagEntity, UUID> {
 
     long countByBucket(BucketEntity bucket);
 
+    /** Unlinks the tags counted by records of these tags, before those records are deleted (spec 004, research R11). */
+    @Modifying
+    @Query("update TagEntity t set t.countedRecord = null"
+            + " where t.countedRecord.id in (select r.id from RecordEntity r where r.tag.id in :tagIds)")
+    int clearCountedRecordOfTags(@Param("tagIds") Collection<UUID> tagIds);
+
     // Bulk delete for the one-off purge of off-list tags (spec 010 révision, OffListTagPurge).
     @Modifying
     @Query("delete from TagEntity t where t.id in :ids")

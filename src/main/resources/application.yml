@@ -17,8 +17,10 @@ app:
     # A tag-registration session without reads or page activity for this long is closed (spec 003).
     session-timeout: 5m
   scan:
-    # A scan of the same tag by the same reader within this time after its latest record creates no new record (spec 004, FR-008). 0s disables it.
+    # A read of a tag by the same reader less than this after the last read of the record that counted it is the same pass, no new record (spec 004, FR-008). 0s disables it.
     duplicate-window: 10s
+    # A tag of the same bucket first read by the same reader less than this after a record counted another tag of that bucket is the crate's second tag (spec 004, FR-010). 0s disables it.
+    crate-window: 2s
   tags:
     # Tags expected on buckets; any other uid is refused and never stored (spec 010). Changed only by a new version.
     reference-list: classpath:tags/rfid_tag_list.csv

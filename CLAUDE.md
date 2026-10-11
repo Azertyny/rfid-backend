@@ -92,6 +92,9 @@ changes happen by editing entities and letting Hibernate update the schema at bo
 constraint: the one such change so far (`author_id` nullable, spec 008 kiosk) is run at startup by
 `configuration/ConformityAuthorSchemaUpgrade`. Readers are never physically deleted: `DELETE /api/readers/{id}` (a disabled reader only) sets `reader.deleted_at`,
 which hides the reader from every list and line but keeps its uid taken and its records (spec 002, FR-008).
+A production scan takes the tag out of its bucket: `tag.counted_record_id` points at the record that counted it, and
+registering the tag into a bucket again clears it. The same station day, a rescan gives a non-compliant record with no
+picker, and two tags of one bucket read by one reader within `app.scan.crate-window` count as one crate (spec 004).
 Work hours live in `picker_work_day`, one row per picker and station day in whole minutes (no row = not entered);
 `GET /api/records/stats` sums them per picker next to the crates per activity, only without a reader (hours are not
 per line). Deleting a picker deletes their hours.
