@@ -921,6 +921,18 @@ paths:
                 $ref: "#/components/schemas/BucketWithTagsAndPicker"
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/InternalError" }
+    delete:
+      summary: Delete a bucket
+      description: >
+        Deletes the bucket for good, whatever its tags and picker. Its tags stay known without a bucket, the
+        records that counted them keep their picker, and its number can be used again by a tag registration.
+      operationId: deleteBucket
+      tags: [Bucket]
+      responses:
+        "204": { $ref: "#/components/responses/Deleted" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /buckets/{bucketId}/picker:
     parameters:

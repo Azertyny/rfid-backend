@@ -39,4 +39,10 @@ public class BucketController implements BucketApiDelegate {
         bucketService.unassignBucketFromPicker(bucketId);
         return ResponseEntity.noContent().build();
     }
+
+    @Override
+    public ResponseEntity<Void> deleteBucket(java.util.UUID bucketId) {
+        bucketService.deleteBucket(bucketId);
+        return ResponseEntity.noContent().build();
+    }
 }

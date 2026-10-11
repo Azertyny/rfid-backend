@@ -5,6 +5,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -27,12 +28,21 @@ import org.springframework.test.web.servlet.request.RequestPostProcessor;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.rfidback.entity.ActivityEntity;
 import com.rfidback.entity.BucketEntity;
 import com.rfidback.entity.PickerEntity;
+import com.rfidback.entity.ReaderEntity;
+import com.rfidback.entity.RecordEntity;
+import com.rfidback.entity.TagEntity;
+import com.rfidback.repository.ActivityRepository;
 import com.rfidback.repository.BucketRepository;
 import com.rfidback.repository.PickerRepository;
+import com.rfidback.repository.ReaderRepository;
+import com.rfidback.repository.RecordRepository;
+import com.rfidback.repository.TagRepository;
+import com.rfidback.support.ReferenceTagUids;
 
-/** HTTP-level checks of the bucket routes (spec 006), run as an Administrateur. */
+/** HTTP-level checks of the bucket routes (spec 006), run as an Administrateur, including the delete (FR-010). */
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
@@ -51,6 +61,18 @@ class BucketApiTest {
 
     @Autowired
     private PickerRepository pickerRepository;
+
+    @Autowired
+    private TagRepository tagRepository;
+
+    @Autowired
+    private RecordRepository recordRepository;
+
+    @Autowired
+    private ReaderRepository readerRepository;
+
+    @Autowired
+    private ActivityRepository activityRepository;
 
     @Test
     void listBuckets_returnsCreatedBucketsInNumberOrder() throws Exception {
@@ -187,6 +209,101 @@ class BucketApiTest {
 
         mockMvc.perform(delete("/api/pickers/" + picker.getId()).with(admin()).with(csrf()))
                 .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void deleteBucket_empty_returns204AndDetail404() throws Exception {
+        BucketEntity bucket = createBucket();
+
+        deleteBucket(bucket.getId()).andExpect(status().isNoContent());
+
+        mockMvc.perform(get("/api/buckets/" + bucket.getId()).with(admin())).andExpect(status().isNotFound());
+        JsonNode buckets = readJson(mockMvc.perform(get("/api/buckets").with(admin()))
+                .andExpect(status().isOk())).get("buckets");
+        buckets.forEach(listed -> assertThat(listed.get("id").asText()).isNotEqualTo(bucket.getId().toString()));
+    }
+
+    @Test
+    void deleteBucket_twice_secondReturns404() throws Exception {
+        BucketEntity bucket = createBucket();
+        deleteBucket(bucket.getId()).andExpect(status().isNoContent());
+
+        deleteBucket(bucket.getId()).andExpect(status().isNotFound());
+    }
+
+    @Test
+    void deleteBucket_unknown_returns404() throws Exception {
+        deleteBucket(UUID.randomUUID()).andExpect(status().isNotFound());
+    }
+
+    @Test
+    void deleteBucket_withTagsPickerAndRecord_freesTagsKeepsRecord() throws Exception {
+        PickerEntity picker = createPicker("Delete");
+        BucketEntity bucket = createBucket();
+        assign(bucket.getId(), picker.getId()).andExpect(status().isNoContent());
+        TagEntity counted = createTag(bucket);
+        TagEntity other = createTag(bucket);
+        ActivityEntity activity = activityRepository.save(
+                ActivityEntity.builder().name("Delete bucket " + UUID.randomUUID().toString().substring(0, 8)).build());
+        ReaderEntity reader = readerRepository.save(
+                ReaderEntity.builder().name("Reader bucket delete " + UUID.randomUUID().toString().substring(0, 8))
+                        .build());
+        RecordEntity record = recordRepository.save(RecordEntity.builder()
+                .tag(counted).reader(reader).picker(picker).bucket(bucket).activity(activity).compliant(false)
+                .build());
+        String statsBefore = stats();
+
+        deleteBucket(bucket.getId()).andExpect(status().isNoContent());
+
+        assertThat(tagRepository.findByUid(counted.getUid()).orElseThrow().getBucket()).isNull();
+        assertThat(tagRepository.findByUid(other.getUid()).orElseThrow().getBucket()).isNull();
+        RecordEntity kept = recordRepository.findById(record.getId()).orElseThrow();
+        assertThat(kept.getPicker().getId()).isEqualTo(picker.getId());
+        assertThat(kept.getActivity().getId()).isEqualTo(activity.getId());
+        assertThat(kept.isCompliant()).isFalse();
+        assertThat(kept.getBucket()).isNull();
+        JsonNode detail = readJson(mockMvc.perform(get("/api/pickers/" + picker.getId()).with(admin()))
+                .andExpect(status().isOk()));
+        assertThat(bucketNumbers(detail)).doesNotContain(bucket.getNumber());
+        assertThat(stats()).isEqualTo(statsBefore);
+    }
+
+    @Test
+    void deleteBucket_numberReusable_andPickerDeletable() throws Exception {
+        PickerEntity picker = createPicker("Reuse");
+        BucketEntity bucket = createBucket();
+        assign(bucket.getId(), picker.getId()).andExpect(status().isNoContent());
+        TagEntity tag = createTag(bucket);
+
+        deleteBucket(bucket.getId()).andExpect(status().isNoContent());
+
+        // A freed tag has no bucket, so registering it asks for no move confirmation.
+        mockMvc.perform(post("/api/tags/buckets/" + bucket.getNumber()).with(admin()).with(csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(Map.of("uids", List.of(tag.getUid())))))
+                .andExpect(status().is2xxSuccessful());
+        BucketEntity recreated = bucketRepository.findByNumber(bucket.getNumber()).orElseThrow();
+        assertThat(recreated.getId()).isNotEqualTo(bucket.getId());
+        JsonNode json = readJson(mockMvc.perform(get("/api/buckets/" + recreated.getId()).with(admin()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.tags[0]").value(tag.getUid())));
+        assertNoPicker(json);
+        mockMvc.perform(delete("/api/pickers/" + picker.getId()).with(admin()).with(csrf()))
+                .andExpect(status().isNoContent());
+    }
+
+    private ResultActions deleteBucket(UUID bucketId) throws Exception {
+        return mockMvc.perform(delete("/api/buckets/" + bucketId).with(admin()).with(csrf()));
+    }
+
+    private TagEntity createTag(BucketEntity bucket) {
+        return tagRepository.save(TagEntity.builder().uid(ReferenceTagUids.nextInList()).bucket(bucket).build());
+    }
+
+    private String stats() throws Exception {
+        return mockMvc.perform(get("/api/records/stats").with(admin()))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
     }
 
     private ResultActions assign(UUID bucketId, UUID pickerId) throws Exception {

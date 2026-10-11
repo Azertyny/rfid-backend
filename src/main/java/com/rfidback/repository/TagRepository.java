@@ -25,6 +25,11 @@ public interface TagRepository extends JpaRepository<TagEntity, UUID> {
 
     long countByBucket(BucketEntity bucket);
 
+    /** Frees the tags of a bucket being deleted (spec 006, FR-010). */
+    @Modifying
+    @Query("update TagEntity t set t.bucket = null where t.bucket = :bucket")
+    int clearBucket(@Param("bucket") BucketEntity bucket);
+
     /** Unlinks the tags counted by records of these tags, before those records are deleted (spec 004, research R11). */
     @Modifying
     @Query("update TagEntity t set t.countedRecord = null"
