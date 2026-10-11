@@ -62,6 +62,8 @@ Defined in [contracts/openapi-dashboard.md](contracts/openapi-dashboard.md).
 | `TODAY` (default) | today | today |
 | `YESTERDAY` | today − 1 | today − 1 |
 | `LAST_7_DAYS` | today − 6 | today |
+| `CURRENT_MONTH` | 1st of today's month | today |
+| `LAST_MONTH` | 1st of the previous month | last day of the previous month |
 | `CUSTOM` | `from` param | `to` param |
 
 Query range: `creationDate >= from.atStartOfDay(zone)` and `creationDate < to.plusDays(1).atStartOfDay(zone)`
@@ -70,6 +72,7 @@ Query range: `creationDate >= from.atStartOfDay(zone)` and `creationDate < to.pl
 ### Validation rules
 
 - `CUSTOM` requires `from` and `to`; other periods refuse them.
+- Every named period is at most 31 days (a calendar month included), so the limit only needs checking for `CUSTOM`.
 - `from <= to`; `ChronoUnit.DAYS.between(from, to) + 1 <= 31`.
 - `readerId`, when given, must be an existing reader (`404` otherwise).
 

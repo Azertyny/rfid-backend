@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-24
 
-**Status**: Target implemented (Clarifications 2026-09-25) — backend and page delivered, SC-001 and SC-002 verified; only the production token rotation (T019) remains
+**Status**: Target implemented (Clarifications 2026-09-25) — backend and page delivered, SC-001 and SC-002 verified; only the production token rotation (T019) remains. Amendment 2026-10-11 (periods « Le mois en cours » / « Le mois dernier », FR-007) delivered
 
 **Input**: User description: "Parcours le dépôt. Pour chaque fonctionnalité métier identifiée, crée .specify/specs/NNN-nom-feature/spec.md ... Décris le comportement ACTUEL (as-is) ... cite les fichiers ... Marque [NEEDS CLARIFICATION] ..."
 
@@ -26,6 +26,10 @@
 - Q: Which periods can the user pick, and in which time zone do "a day" and "an hour" start and end? → A: Today / Yesterday / Last 7 days / custom date range (max 31 days); days and hours computed on the server in a configurable station time zone, default `Europe/Paris`.
 - Q: When a scan's conformity was changed by hand after the scan (spec 005), which value should the dashboard count? → A: The current (corrected) value only — `record.conformity`, no join to the conformity history.
 - Q: How should the dashboard count scans that aren't linked to any picker (unknown tag or bucket unassigned at scan time)? → A: Count them in the summary and show them as a separate "Non attribué" row in the picker table, so the picker rows always add up to the summary.
+
+### Session 2026-10-11
+
+- Q: Which exact days should the new "Le mois en cours" and "Le mois dernier" period filters cover? → A: Le mois en cours = from the 1st of the current month to today inclusive; Le mois dernier = the whole previous calendar month (1st to last day). Both computed by the server in the station time zone, like the other periods.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -51,7 +55,8 @@ Un utilisateur ouvre `front/index.html` pour voir un tableau de bord : sélecteu
 5. **Given** une période sans lecture, **When** on la sélectionne, **Then** la page affiche « Aucune lecture sur la période », sans données de démonstration.
 6. **Given** une plage personnalisée de 32 jours, **When** on valide, **Then** la page affiche le message d'erreur et n'affiche pas de chiffres.
 7. **Given** un lecteur sélectionné, **When** la page se charge, **Then** seuls les chiffres de ce lecteur sont affichés.
-8. **Given** des chiffres affichés, **When** on clique « Exporter CSV », **Then** le fichier s'ouvre dans Excel FR avec les accents, une colonne par champ et une ligne Total égale à la synthèse.
+8. **Given** le 11/10/2026 dans le fuseau de la station, **When** on choisit « Le mois en cours », **Then** les chiffres couvrent les lectures du 01/10/2026 au 11/10/2026 inclus ; **When** on choisit « Le mois dernier », **Then** ils couvrent celles du 01/09/2026 au 30/09/2026 inclus (FR-007).
+9. **Given** des chiffres affichés, **When** on clique « Exporter CSV », **Then** le fichier s'ouvre dans Excel FR avec les accents, une colonne par champ et une ligne Total égale à la synthèse.
 
 ### Edge Cases
 
@@ -59,6 +64,7 @@ Un utilisateur ouvre `front/index.html` pour voir un tableau de bord : sélecteu
 - **Jeton d'API codé en dur dans une page publique** : `const API_TOKEN = "176c77ca6757494f9729784263c6022d";` (`front/index.html:155`) est un secret embarqué en clair dans un fichier HTML statique, servi tel quel via `deploy/front` (configuration nginx `deploy/front/default.conf`) et le `Dockerfile`. Ce jeton correspond au format généré par `ReaderEntity.prePersist` (`ReaderEntity.java:45-50`, UUID sans tirets) — il s'agit donc vraisemblablement d'un vrai jeton de lecteur, pas d'un placeholder. Il est envoyé sur des routes qui ne le vérifient même pas aujourd'hui (`/readers`, `/pickers` sont `permitAll()`, voir spec `001`/`002`). Le jeton est présent dans l'historique git depuis le commit `c68fb98` (2026-03-18) et absent de la base H2 locale, ce qui suggère un jeton de lecteur de production. **Résolu (2026-09-24)** : retirer le jeton de `index.html` et le considérer comme compromis — le retirer du fichier ne suffit pas puisqu'il reste dans l'historique git ; le jeton du lecteur concerné DOIT être régénéré dès que la route de révocation/rotation de la spec `002` existe.
 - **Accès à la page une fois l'authentification en place** : les deux appels qui fonctionnent aujourd'hui (`/readers`, `/pickers`) seront authentifiés (specs `001`, `002`). **Résolu (2026-09-24)** : la page est accessible à tout utilisateur connecté de rôle Opérateur ou Administrateur, en lecture seule. `GET /readers` est ouvert à ces deux rôles, mais les jetons ne sont renvoyés qu'aux Administrateurs (spec `002`) ; la page n'a pas besoin des jetons.
 - **Fuseau horaire** (Clarifications 2026-09-25) : une lecture à 00:30 heure de Paris appartient au jour de Paris, et une lecture à 07:15 heure de Paris est comptée dans la tranche 07h, y compris lors des changements d'heure (été/hiver) et si le serveur tourne en UTC.
+- **Bornes des mois** (Clarifications 2026-10-11) : le 1er du mois, « Le mois en cours » ne couvre que ce jour ; en janvier, « Le mois dernier » est décembre de l'année précédente ; le dernier jour du mois précédent suit le calendrier (28, 29, 30 ou 31). Les bornes sont celles du fuseau de la station : une lecture du 01/10 à 00:30 heure de Paris (30/09 22:30 UTC) appartient à octobre.
 - **Lectures sans cueilleur** (Clarifications 2026-09-25) : tag inconnu au scan ou seau sans cueilleur → ligne « Non attribué » (FR-009). Aucune attribution par déduction (le prototype `doc/tableau_de_bord_bi_analyses.html` attribuait les lectures par `index % nombre de cueilleurs` — interdit).
 - **Aucune lecture sur la période** : la page affiche un état vide explicite ; elle NE DOIT JAMAIS afficher de données de démonstration générées (contrairement au prototype).
 - **Pas de test** : aucun outillage de test front (pas de `package.json`, pas de suite JS) n'existe dans le dépôt pour vérifier ce fichier.
@@ -73,7 +79,7 @@ Un utilisateur ouvre `front/index.html` pour voir un tableau de bord : sélecteu
 - **FR-004** (nouveau, Clarifications 2026-09-24) : la page DOIT être accessible aux utilisateurs connectés de rôle Opérateur ou Administrateur, en lecture seule. **Livré** par la spec `008` (`/api/records/**` → Administrateur, Opérateur) et `requireRole` dans la page.
 - **FR-005** (Clarifications 2026-09-25) : la page DOIT être un tableau de bord **à structure fixe** composé de : (a) indicateurs de synthèse — nombre de lectures et taux de conformité sur la période filtrée ; (b) tableau par cueilleur — lectures, lectures non conformes, taux de conformité ; (c) répartition des lectures par tranche horaire ; (d) filtre par lecteur et par période ; (e) export CSV du tableau par cueilleur (UTF-8 avec BOM, séparateur `;`, pour Excel FR).
 - **FR-006** (Clarifications 2026-09-25) : hors périmètre de cette itération — constructeur de tableau croisé par glisser-déposer, choix libre des axes, signets/vues sauvegardées, heatmap (proposés par `doc/sp_cification_bi_pour_claude_code.md`).
-- **FR-007** (Clarifications 2026-09-25) : le filtre de période DOIT proposer Aujourd'hui, Hier, 7 derniers jours et une plage de dates personnalisée (jours de début et de fin inclus) d'au plus 31 jours. Les bornes de jour et les tranches horaires DOIVENT être calculées côté serveur dans le fuseau de la station, configurable (propriété applicative), `Europe/Paris` par défaut — indépendamment du fuseau du serveur et du navigateur. Une plage de plus de 31 jours ou dont le début est après la fin DOIT être refusée (400).
+- **FR-007** (Clarifications 2026-09-25, complété 2026-10-11) : le filtre de période DOIT proposer Aujourd'hui, Hier, 7 derniers jours, Le mois en cours (du 1er du mois courant à aujourd'hui inclus), Le mois dernier (le mois calendaire précédent entier, du 1er au dernier jour) et une plage de dates personnalisée (jours de début et de fin inclus) d'au plus 31 jours. Les bornes de jour et les tranches horaires DOIVENT être calculées côté serveur dans le fuseau de la station, configurable (propriété applicative), `Europe/Paris` par défaut — indépendamment du fuseau du serveur et du navigateur. Une plage de plus de 31 jours ou dont le début est après la fin DOIT être refusée (400).
 - **FR-008** (Clarifications 2026-09-25) : la conformité comptée DOIT être la valeur courante de la lecture (`record.conformity`), c'est-à-dire après d'éventuelles corrections manuelles (spec `005`) ; le verdict d'origine du lecteur n'est pas utilisé. Une correction faite après un premier affichage est visible au rafraîchissement suivant.
 - **FR-009** (Clarifications 2026-09-25) : une lecture est attribuée au cueilleur enregistré sur la lecture au moment du scan (`record.picker`), pas à l'affectation actuelle du seau. Les lectures sans cueilleur DOIVENT être comptées dans la synthèse et regroupées dans une ligne « Non attribué » du tableau par cueilleur ; la somme des lignes du tableau par cueilleur DOIT égaler la synthèse, et la somme des tranches horaires aussi.
 

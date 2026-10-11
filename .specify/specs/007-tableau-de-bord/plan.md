@@ -1,6 +1,6 @@
 # Implementation Plan: Tableau de bord (index.html)
 
-**Branch**: `007-tableau-de-bord` | **Date**: 2026-09-25 | **Spec**: [spec.md](spec.md)
+**Branch**: `007-tableau-de-bord` | **Date**: 2026-09-25, amended 2026-10-11 | **Spec**: [spec.md](spec.md)
 
 **Input**: Feature specification from `.specify/specs/007-tableau-de-bord/spec.md`
 
@@ -12,7 +12,8 @@ The dashboard page exists but has had no data source since `GET /api/tags` was f
 2026-09-25 clarifications it becomes a fixed dashboard fed by exact server-side totals:
 
 1. **New endpoint `GET /api/records/stats`** (FR-002, FR-007 to FR-009): defined first in `api.yaml`. For a named period
-   (`TODAY` by default, `YESTERDAY`, `LAST_7_DAYS`, `CUSTOM` ≤ 31 days) and an optional reader, it returns the summary,
+   (`TODAY` by default, `YESTERDAY`, `LAST_7_DAYS`, `CUSTOM` ≤ 31 days; `CURRENT_MONTH` and `LAST_MONTH` added by the
+   2026-10-11 amendment) and an optional reader, it returns the summary,
    one row per picker (a "Non attribué" row last) and 24 hourly entries. Three `GROUP BY` queries; days and hours in
    the configurable station zone (`Europe/Paris`), with hours grouped by UTC hour index and mapped in Java so the
    result is DST-safe and portable between H2 and PostgreSQL.
@@ -20,6 +21,12 @@ The dashboard page exists but has had no data source since `GET /api/tags` was f
    chart, CSV export; empty/error states with no demo data; auto-refresh only when the period contains today.
 3. **Tests (SC-001)**: service unit test (period resolution, DST mapping) and API test on H2 (exact totals and
    invariants); one line in `AccessMatrixSecurityTest`.
+
+**Amendment 2026-10-11 (Clarifications 2026-10-11, FR-007)**: two more named periods, `CURRENT_MONTH` (the 1st of the
+current month to today) and `LAST_MONTH` (the whole previous calendar month), resolved by the server in the station
+zone like the others ([research.md](research.md) R12). A calendar month is at most 31 days, so the 31-day limit, the
+queries, the index and SC-002 do not change. Scope: two enum values in `api.yaml`, two cases in
+`RecordStatsService.resolveDays`, two `<option>`s in `front/index.html`, tests in `RecordStatsServiceTest`.
 
 The generated helper documents in `doc/` are only partly reused: see [research.md](research.md) R1 for what is kept
 and what is dropped (invented crate types and weights, demo data, hardcoded token, browser-side aggregation, XSS).
@@ -121,6 +128,18 @@ binding (`400`). An unknown reader reuses `ReaderNotFoundException` (`404`).
 
 **Structure Decision**: single Spring Boot project with the existing packages; the dashboard stays in
 `front/index.html`. A separate `RecordStatsService` keeps `RecordService` focused on single records.
+
+### Amendment 2026-10-11 (month periods)
+
+```text
+src/main/resources/openapi/api.yaml               # StatsPeriod: + CURRENT_MONTH, LAST_MONTH (before CUSTOM)
+src/main/java/com/rfidback/service/RecordStatsService.java   # resolveDays: + 2 cases
+src/test/java/com/rfidback/service/RecordStatsServiceTest.java  # + month cases (1st of month, January, Paris midnight)
+front/index.html                                  # + "Le mois en cours", "Le mois dernier" between "7 derniers jours" and "Personnalisée"
+```
+
+Constitution Check for the amendment: same gates, all pass — the change starts in `api.yaml`, stays in the existing
+service, adds no route, no schema change and no front build step.
 
 ## Complexity Tracking
 
