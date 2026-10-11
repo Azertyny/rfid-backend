@@ -22,12 +22,12 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 @Entity
-// The first index serves the duplicate-read lookup of a scan (spec 004, FR-008);
+// The first index serves the crate lookup of a scan (spec 004, FR-010);
 // the second serves the last 10 records of a reader (spec 005, SC-003) and the dashboard queries of one reader;
 // the third serves the dashboard period queries without a reader (spec 007, research R8);
 // the fourth serves the check before deleting an activity (spec 012, research R7).
 @Table(name = "record", indexes = {
-        @Index(name = "idx_record_reader_tag_date", columnList = "reader_id, tag_id, creation_date"),
+        @Index(name = "idx_record_reader_bucket_date", columnList = "reader_id, bucket_id, creation_date"),
         @Index(name = "idx_record_reader_date", columnList = "reader_id, creation_date"),
         @Index(name = "idx_record_creation_date", columnList = "creation_date"),
         @Index(name = "idx_record_activity", columnList = "activity_id") })
@@ -68,4 +68,14 @@ public class RecordEntity {
 
     @Column
     private String comment;
+
+    // Last read this record absorbed: set at creation, then by each read of the same pass or of the crate's second tag
+    // (spec 004, FR-008/FR-010); null before 2026-10-11.
+    @Column(name = "last_read_at")
+    private OffsetDateTime lastReadAt;
+
+    // The bucket the counted tag left; null for a tag without a bucket and for a rescan (spec 004, FR-009/FR-010).
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "bucket_id")
+    private BucketEntity bucket;
 }

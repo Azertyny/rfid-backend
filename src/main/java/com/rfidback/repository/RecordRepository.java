@@ -14,6 +14,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import com.rfidback.entity.ActivityEntity;
+import com.rfidback.entity.BucketEntity;
 import com.rfidback.entity.ReaderEntity;
 import com.rfidback.entity.RecordEntity;
 import com.rfidback.entity.TagEntity;
@@ -32,12 +33,13 @@ public interface RecordRepository extends JpaRepository<RecordEntity, UUID> {
     long countByReaderAndCreationDateGreaterThanEqualAndActivityIsNull(ReaderEntity reader, OffsetDateTime since);
 
     /**
-     * The latest record of this tag by this reader created after {@code cutoff} (spec 004, FR-008). Row-locked, so an
-     * Opérateur's change and a duplicate scan of the same record never interleave (spec 005, FR-006).
+     * The newest record of this reader that counted another tag of this bucket after {@code cutoff}: the crate a second
+     * tag joins (spec 004, FR-010). Row-locked, so an Opérateur's change and the read never interleave (spec 005,
+     * FR-006).
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    Optional<RecordEntity> findFirstByReaderAndTagAndCreationDateAfterOrderByCreationDateDesc(ReaderEntity reader,
-            TagEntity tag, OffsetDateTime cutoff);
+    Optional<RecordEntity> findFirstByReaderAndBucketAndTagNotAndCreationDateAfterOrderByCreationDateDesc(
+            ReaderEntity reader, BucketEntity bucket, TagEntity tag, OffsetDateTime cutoff);
 
     /**
      * The record, row-locked until the transaction ends, so concurrent compliance changes are applied one after the

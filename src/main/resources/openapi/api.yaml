@@ -551,11 +551,16 @@ paths:
         the application (its last 12 characters): for a reader in ENREGISTREMENT mode, a uid not in the list is not
         kept and the message is "Registration read ignored: tag not in reference list"; for a reader in PRODUCTION
         mode, no tag and no record are created, isCompliant is true and the message is "Tag not in reference list,
-        ignored". For a reader in PRODUCTION mode, a scan of the same tag by the same
-        reader within app.scan.duplicate-window (10 s by default) of that tag's latest record creates no new
-        record: the response carries the existing record and the message "Duplicate read ignored". If that
-        repeat reports isCompliant false and the record is compliant, the record becomes non-compliant.
-        The record carries the line's current activity, if any.
+        ignored". For a reader in PRODUCTION mode, rules apply in this order. A read of a tag by the same reader
+        less than app.scan.duplicate-window (10 s by default) after the last read of the record that counted it is
+        the same pass: no new record, the response carries that record and the message "Duplicate read ignored". A
+        tag of bucket B read by the same reader less than app.scan.crate-window (2 s by default) after a record
+        counted another tag of B is the second tag of that crate: no new record, the tag leaves its bucket, the
+        response carries the crate's record and the message "Second tag of the crate ignored". In both cases, a read
+        reporting isCompliant false turns a compliant record non-compliant. A tag already counted today (station
+        day), read again, gives a new non-compliant record with no picker, whatever isCompliant says, and the message
+        "Tag already scanned today". Otherwise a new record is created and the tag leaves its bucket. Registering the
+        tag into a bucket again resets it. A record carries the line's current activity, if any.
       operationId: scanTag
       tags: [Tag]
       security:
@@ -1513,8 +1518,10 @@ components:
         message:
           type: string
           description: >
-            Processing message. "Duplicate read ignored" when the scan repeated a recent one (no new record);
-            registration messages for readers in ENREGISTREMENT mode; absent otherwise.
+            Processing message, absent when a new record counted the tag. "Duplicate read ignored" for a repeat of
+            the same pass, "Second tag of the crate ignored" for a crate's second tag (no new record), "Tag already
+            scanned today" for a non-compliant rescan, "Tag not in reference list, ignored" for a uid outside the
+            reference list; registration messages for readers in ENREGISTREMENT mode.
           example: Duplicate read ignored
       required:
         - uid
