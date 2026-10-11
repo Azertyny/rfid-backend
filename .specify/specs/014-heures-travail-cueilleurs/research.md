@@ -99,6 +99,8 @@ questions the spec leaves to planning.
 
 ## R7 — Deleting a picker
 
+**Amendé (2026-10-11, spec `001` FR-010)** : la suppression d'un cueilleur est logique ; ses heures sont conservées et `deleteByPicker` est supprimé.
+
 - **Decision**: `PickerService.deletePicker` deletes the picker's `picker_work_day` rows
   (`PickerWorkDayRepository.deleteByPicker`) before the picker, in the same transaction (Edge Case "Cueilleur
   supprimé").

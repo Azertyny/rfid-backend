@@ -218,3 +218,100 @@ T009 PickerService.java → T010 PickerController.java            # sequential
 - T029–T032 touch different files and can run in parallel. None of them depends on Phases 1–8.
 - T033 and T034 run after T029–T032.
 - No automated test covers `front/` (no build, no JS tests), so T034 plus the manual check are this phase's acceptance.
+
+---
+
+## Amendment 2026-10-11: logical deletion of a picker
+
+**Input**: spec Clarifications 2026-10-11 (FR-010, User Story 4 scenarios 3–6); plan "Amendment 2026-10-11"; research
+R9–R15; data-model "Amendment 2026-10-11"; contract §5; quickstart "Amendment 2026-10-11". Code references are to
+branch `006-suppression-seau` (spec `006` amendment, uncommitted at the time of writing).
+
+**Branch**: create `001-suppression-cueilleur` from `006-suppression-seau` (research R15); open its PR (base `dev`)
+after 006's.
+
+**Story**: the amendment extends User Story 4 (`[US4]`). It is the only story, so it is also the MVP. Tests first: the
+new ones fail until T041–T045 are done; the updated existing ones must keep passing.
+
+**Key rules** (used by every task below):
+- A picker is **deleted** when `picker.deleted_at` is not null (`PickerEntity.isDeleted()`). Set once, never cleared.
+- `DELETE /api/pickers/{id}`: lock the picker (`findWithLockById`), `404` when missing **or deleted**, `409` while a
+  bucket points at them (unchanged), else `deletedAt = OffsetDateTime.now(clock)`. Nothing is deleted: not the row, not
+  the hours, not the records.
+- A deleted picker is **unknown (`404`)** to `GET`/`PUT`/`DELETE /api/pickers/{id}`, bucket assignment and hour entry,
+  and **not listed** by `GET /api/pickers` and `GET /api/work-hours`; but it is **still seen** by the duplicate-name
+  rule (FR-002, its name stays taken) and by everything that reads history through records or work days (dashboard).
+- `PickerService` gets the application `Clock` (bean in `configuration/ClockConfig.java`) and loses
+  `PickerWorkDayRepository` (its only use was the hour deletion): constructor `(PickerRepository, BucketRepository,
+  Clock)`.
+
+## Phase 10: Setup (amendment)
+
+- [X] T035 Update descriptions only in `src/main/resources/openapi/api.yaml`, as listed in [contracts/openapi-pickers.md](contracts/openapi-pickers.md) §5: `DELETE /pickers/{pickerId}` (logical delete wording), `GET /pickers` ("Deleted pickers are not listed."), the `404` wording of `GET`/`PUT /pickers/{pickerId}` ("unknown or deleted"), `PUT /buckets/{bucketId}/picker` (`404` also for a deleted picker), `GET /work-hours` ("Deleted pickers are not listed.") and `PUT /work-hours` (`404` also for a deleted picker). Where a response is a shared `$ref`, put the precision in the operation `description` instead. Run `mvn generate-sources`; no generated signature may change
+
+## Phase 11: Foundational (amendment)
+
+- [X] T036 [P] Add to `src/main/java/com/rfidback/entity/PickerEntity.java`: `@Column(name = "deleted_at") private OffsetDateTime deletedAt;` with a comment "Set by the logical delete; never cleared (spec 001, FR-010)", and `public boolean isDeleted() { return deletedAt != null; }`, copying `ReaderEntity.deletedAt`/`isDeleted()`
+- [X] T037 [P] Add to `src/main/java/com/rfidback/repository/PickerRepository.java`: `Page<PickerEntity> findAllByDeletedAtIsNull(Pageable pageable)`, `List<PickerEntity> findAllByDeletedAtIsNull()`, and `Optional<PickerEntity> findWithLockById(@Param("id") UUID id)` with `@Lock(LockModeType.PESSIMISTIC_WRITE)`, `@QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "5000"))`, `@Query("select p from PickerEntity p where p.id = :id")` and a Javadoc "orders a delete against a concurrent bucket assignment (spec 001, research R12)". Leave the two `existsByLastname…` methods unfiltered and add a comment saying deleted pickers are counted on purpose (FR-002/FR-010)
+
+## Phase 12: User Story 4 - Supprimer un cueilleur, suppression logique (Priority: P2)
+
+**Goal**: deleting a picker who has records or hours succeeds (`204`), hides them everywhere they could be chosen, and
+leaves their history on the dashboard.
+
+**Independent Test**: quickstart "Amendment 2026-10-11" — automated tests, then manual steps 1–6.
+
+### Tests for User Story 4 (write first)
+
+- [X] T038 [P] [US4] Update `src/test/java/com/rfidback/service/PickerServiceTest.java`: build the service with `new PickerService(pickerRepository, bucketRepository, Clock.fixed(Instant.parse("2026-10-11T08:00:00Z"), ZoneOffset.UTC))` and drop the `PickerWorkDayRepository` mock; in `listPickers` tests, stub `findAllByDeletedAtIsNull(any(Pageable.class))` instead of `findAll(any(Pageable.class))` (including the `sortUsedFor` helper); in the delete tests, stub `findWithLockById` instead of `findById`. Replace `deletePicker_withoutBucket_deletes` and `deletePicker_withoutBucket_deletesTheHoursFirst` by `deletePicker_withoutBucket_setsDeletedAtAndDeletesNothing` (`deletedAt` equals the fixed clock's instant; `verify(pickerRepository, never()).delete(any())`). Add `deletePicker_alreadyDeleted_throwsNotFoundBeforeBucketCheck`, `getPicker_deleted_throwsNotFound`, `updatePicker_deleted_throwsNotFound`, and `createPicker_nameOfADeletedPicker_throwsConflict` (the `existsBy…` stub returns `true`)
+- [X] T039 [P] [US4] Add to `src/test/java/com/rfidback/controller/PickerApiTest.java` `deletePicker_withRecordAndHours_softDeletesAndKeepsHistory`: a saved picker with one `RecordEntity` (saved reader, `compliant(true)`) and one `PickerWorkDayEntity` for today (with a saved `UserEntity` as `updatedBy`, as `WorkHoursApiTest` does); capture `GET /api/records/stats` (as Administrateur, no parameter); `DELETE /api/pickers/{id}` → `204`; then `GET /api/pickers/{id}`, `PUT /api/pickers/{id}` (valid body) and `DELETE /api/pickers/{id}` → `404`; the picker is absent from every page of `GET /api/pickers?size=100`; `GET /api/records/stats` body is identical to the captured one and contains the picker's last name; `POST /api/pickers` with the same names in another case → `409`; the record and the work-day row still exist (repositories)
+- [X] T040 [P] [US4] Update `src/test/java/com/rfidback/service/BucketServiceTest.java`: the assign tests stub `pickerRepository.findWithLockById` instead of `findById` (the `verify(pickerRepository, never()).findById(any())` check becomes `findWithLockById`); add `assignBucketToPicker_deletedPicker_throwsPickerNotFoundAndDoesNotSave`. Add to `src/test/java/com/rfidback/controller/BucketApiTest.java`: `assign_deletedPicker_returns404` and `deleteBucketThenPickerWithRecord_returns204` (a picker with a record and one bucket: `DELETE /api/buckets/{id}` → `204`, then `DELETE /api/pickers/{id}` → `204`; spec 006 T045)
+- [X] T041 [P] [US4] Update `src/test/java/com/rfidback/service/WorkHoursServiceTest.java`: stub `pickerRepository.findAllByDeletedAtIsNull()` instead of `findAll()` (lines ~96 and ~288); add `saveDay_deletedPicker_throwsPickerNotFound` (the `findAllById` stub returns a picker with `deletedAt` set). Add to `src/test/java/com/rfidback/controller/WorkHoursApiTest.java` `aDeletedPickerIsNotListedAndCannotGetHours`: save hours for a picker, soft-delete them (`DELETE /api/pickers/{id}` as admin), then `GET /api/work-hours?day=` does not list them, and `PUT /api/work-hours` with an entry for them → `404`
+
+### Implementation for User Story 4
+
+- [X] T042 [US4] In `src/main/java/com/rfidback/service/PickerService.java`: replace the `PickerWorkDayRepository` field by `private final Clock clock;`; `listPickers` uses `pickerRepository.findAllByDeletedAtIsNull(pageable)`; `loadPicker` throws `PickerNotFoundException` also when the picker `isDeleted()` (same message); `deletePicker` loads with `findWithLockById(pickerId).filter(p -> !p.isDeleted())` (`404` otherwise), keeps the `existsByPicker` → `PickerHasBucketsException` check, then `entity.setDeletedAt(OffsetDateTime.now(clock))` and `pickerRepository.save(entity)`, with a comment citing spec 001 FR-010 (records and hours stay). Makes T038 and T039 pass
+- [X] T043 [US4] Remove `deleteByPicker` (and its now-unused imports) from `src/main/java/com/rfidback/repository/PickerWorkDayRepository.java`; check nothing else calls it (`grep -rn deleteByPicker src`)
+- [X] T044 [US4] In `src/main/java/com/rfidback/service/BucketService.java` `assignBucketToPicker`: load the picker with `pickerRepository.findWithLockById(pickerId).filter(p -> !p.isDeleted())` (after the bucket lock), same `PickerNotFoundException`. Makes T040 pass
+- [X] T045 [US4] In `src/main/java/com/rfidback/service/WorkHoursService.java`: `describe` iterates `pickerRepository.findAllByDeletedAtIsNull()` instead of `findAll()`; in `saveWorkDay`, build the `pickers` map from `findAllById(...)` filtered on `!isDeleted()`, so an entry naming a deleted picker hits the existing `PickerNotFoundException`. Makes T041 pass
+- [X] T046 [US4] In `front/pickers.html` (line ~130), replace "Cette action est irréversible et supprimera l'historique associé." by "Cette action est irréversible. Ses lectures et ses heures restent comptées sur le tableau de bord." (research R13)
+
+**Checkpoint**: `mvn clean test -Dtest='PickerServiceTest,PickerApiTest,BucketServiceTest,BucketApiTest,WorkHoursServiceTest,WorkHoursApiTest,AccessMatrixSecurityTest'` is green.
+
+## Phase 13: Polish (amendment)
+
+- [X] T047 [P] In `CLAUDE.md` (Persistence), replace "Deleting a picker deletes their hours." by "Pickers are never physically deleted: `DELETE /api/pickers/{id}` sets `picker.deleted_at`, which hides them from the lists, bucket assignment and hour entry but keeps their name taken and their records and hours on the dashboard (spec 001, FR-010)."
+- [X] T048 [P] In `doc/20251116-use_cases.md` "Supprimer un cueilleur": the final condition "Le cueilleur est supprimé du système ainsi que l'ensemble des données associées" and step 5 become "Le cueilleur n'apparaît plus dans les listes ; ses lectures et ses heures sont conservées et restent comptées"
+- [X] T049 [P] In `.specify/specs/001-gestion-cueilleurs/spec.md`, append "**Livré** : `picker.deleted_at`, `PickerService.deletePicker` (suppression logique), filtres de `PickerService`, `BucketService` et `WorkHoursService`." to FR-010; in `.specify/specs/006-gestion-seaux-affectation/tasks.md`, tick T045 (done by T040's `deleteBucketThenPickerWithRecord_returns204`); in the same `spec.md`, set the header **Status** to "Implémenté — la spec décrit l'état initial (as-is) puis la cible ; amendement du 2026-10-11 (suppression logique, FR-010) implémenté sur la branche `001-suppression-cueilleur`" and append to User Story 4 scenario 2 "**Livré** : rejet `409` (`PickerHasBucketsException`) tant qu'un seau est affecté." Then mark spec `014`'s design as amended, with a dated line so its history stays readable: in `.specify/specs/014-heures-travail-cueilleurs/research.md` R7 and in `data-model.md` (`deleteByPicker` entry), add "**Amendé (2026-10-11, spec `001` FR-010)** : la suppression d'un cueilleur est logique ; ses heures sont conservées et `deleteByPicker` est supprimé."; in `plan.md` (lines ~105 and ~110 of the source tree), add the same note after `deleteByPicker` and after "deletePicker removes the picker's hours first"
+- [X] T050 Run `mvn clean install`; the full suite must be green
+- [X] T051 Run the manual check of [quickstart.md](quickstart.md) "Amendment 2026-10-11", steps 1–6, and record any deviation in [research.md](research.md)
+
+## Dependencies (amendment)
+
+- T035 first (descriptions only, nothing depends on it at compile time, but API-first).
+- T036, T037 → every test and implementation task (they compile against `deletedAt`, `findAllByDeletedAtIsNull`, `findWithLockById`).
+- T038–T041 written before T042–T045; each fails until its implementation task is done.
+- T042 → T043 (removing `deleteByPicker` once `PickerService` no longer calls it). T044, T045, T046 are independent of T042 and of each other.
+- T050 after all code tasks; T051 after T050.
+
+### Parallel Opportunities (amendment)
+
+- T036 and T037.
+- T038, T039, T040, T041 (different files; T040 touches two files that no other test task touches).
+- T044, T045, T046 alongside T042 → T043.
+- T047, T048, T049.
+
+```text
+# After T035–T037:
+Task: "T038 PickerServiceTest"   Task: "T039 PickerApiTest"   Task: "T040 Bucket tests"   Task: "T041 WorkHours tests"
+# Then:
+Task: "T042 → T043 PickerService, PickerWorkDayRepository"   Task: "T044 BucketService"
+Task: "T045 WorkHoursService"   Task: "T046 pickers.html"
+```
+
+## Implementation Strategy (amendment)
+
+1. T035–T037, then the tests T038–T041.
+2. T042–T043: deleting any picker works and keeps history — **MVP** (removes the `500`).
+3. T044–T045: a deleted picker can no longer be chosen for a bucket or given hours.
+4. T046 and Polish T047–T051.

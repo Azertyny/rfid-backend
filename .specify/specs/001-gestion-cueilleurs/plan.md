@@ -1,6 +1,6 @@
 # Implementation Plan: Gestion des cueilleurs (Picker management)
 
-**Branch**: `001-gestion-cueilleurs` (work currently on `feature/authentication`) | **Date**: 2026-09-24 | **Spec**: [spec.md](spec.md)
+**Branch**: `001-gestion-cueilleurs` (work currently on `feature/authentication`) | **Date**: 2026-09-24, amended 2026-10-11 (logical deletion, branch `001-suppression-cueilleur`) | **Spec**: [spec.md](spec.md)
 
 **Input**: Feature specification from `.specify/specs/001-gestion-cueilleurs/spec.md`
 
@@ -61,7 +61,7 @@ No violations, so Complexity Tracking stays empty.
 .specify/specs/001-gestion-cueilleurs/
 ├── spec.md              # As-is spec + 2026-09-24 clarifications
 ├── plan.md              # This file
-├── research.md          # Phase 0: decisions R1-R8
+├── research.md          # Phase 0: decisions R1-R8, amendment R9-R15
 ├── data-model.md        # Phase 1: Picker, sortable fields, delete lifecycle
 ├── quickstart.md        # Phase 1: validation guide
 ├── contracts/
@@ -104,3 +104,63 @@ No Constitution Check violations.
 
 - Update spec `001` FR-008, the "Authentification absente" edge case and the first Drift row: they still say auth is missing, but spec `008` delivered it.
 - Spec `006` still owns FR-004 (`bucketNumbers` list, and the `500` on the list/detail when a picker has two buckets). Its FR-007 is delivered here and should be marked so when 006 is planned.
+
+---
+
+## Amendment 2026-10-11: logical deletion of a picker (FR-010, User Story 4 scenarios 3–6)
+
+### Summary
+
+Deleting a picker who has ever been counted failed with `500` (`record.picker_id`). Spec Clarifications 2026-10-11 chose a logical delete, like readers (spec `002`, FR-008):
+
+1. `picker.deleted_at` (nullable); `DELETE /api/pickers/{id}` sets it, still `409` while a bucket is assigned, and no longer deletes the hours (research R9, R10).
+2. A deleted picker is left out of `GET /api/pickers` and `GET /api/work-hours`, and answers `404` on `GET`/`PUT`/`DELETE /api/pickers/{id}`, on bucket assignment and on hour entry; their name stays taken (research R11).
+3. Records, hours and the dashboard are untouched: `RecordStatsService` reads names through records and work days (research, "What exists").
+4. A row lock on the picker orders a delete against a concurrent bucket assignment (research R12).
+
+### Technical Context (changes only)
+
+**Storage**: one nullable column, `picker.deleted_at timestamp with time zone`, added by `ddl-auto: update`. No row is deleted any more.
+
+**Performance Goals**: unchanged; the listing filters in the query.
+
+**Scale/Scope**: 1 column, 3 repository methods added and 1 removed, 3 services (`PickerService`, `BucketService`, `WorkHoursService`), `api.yaml` descriptions, 1 confirmation text in `front/pickers.html`, tests in 4–5 classes, 2 docs.
+
+### Constitution Check (amendment)
+
+`.specify/memory/constitution.md` is still the template; `CLAUDE.md` gates:
+
+| Gate | Pre-design | Post-design |
+|---|---|---|
+| Layering | Pass | Pass: filters in repositories, rules in services |
+| API-first | Pass | Pass: descriptions in `api.yaml` first; no signature change |
+| Spec `008` access matrix | Pass | Pass: no new route |
+| Schema through entities, `ddl-auto: update` | Pass | Pass: nullable column, no default needed |
+| `mvn clean test` / `mvn clean install` | Pass | Pass (planned) |
+
+No violations.
+
+### Source Code (amendment)
+
+```text
+src/main/resources/openapi/api.yaml             # descriptions: DELETE/GET /pickers*, PUT /buckets/{id}/picker, /work-hours
+src/main/java/com/rfidback/
+├── entity/PickerEntity.java                    # + deletedAt, isDeleted()
+├── repository/PickerRepository.java            # + findAllByDeletedAtIsNull(Pageable), findAllByDeletedAtIsNull(), findWithLockById
+├── repository/PickerWorkDayRepository.java     # − deleteByPicker
+├── service/PickerService.java                  # list live only; loadPicker 404 when deleted; deletePicker → lock, 409, deletedAt
+├── service/BucketService.java                  # assignBucketToPicker: findWithLockById, 404 when deleted
+└── service/WorkHoursService.java               # describe: live pickers; saveWorkDay: 404 for a deleted picker
+src/test/java/com/rfidback/
+├── service/PickerServiceTest.java              # research R14
+├── controller/PickerApiTest.java
+├── controller/BucketApiTest.java               # + spec 006 T045
+└── (work-hours test classes)
+front/pickers.html                              # confirmation text (research R13)
+CLAUDE.md, doc/20251116-use_cases.md            # research R15
+```
+
+### Follow-ups
+
+- Spec `006` T045: done by this amendment's `BucketApiTest` test; tick it when delivered.
+- Spec `001` User Story 4 scenario 2 still describes the pre-2026-09-24 as-is state ("supprime quand même sans vérification"); mark it delivered.

@@ -99,7 +99,7 @@ Deleting a bucket (`DELETE /api/buckets/{id}`, spec 006) frees its tags and unli
 which keep their picker; the number can be used again.
 Work hours live in `picker_work_day`, one row per picker and station day in whole minutes (no row = not entered);
 `GET /api/records/stats` sums them per picker next to the crates per activity, only without a reader (hours are not
-per line). Deleting a picker deletes their hours.
+per line). Pickers are never physically deleted: `DELETE /api/pickers/{id}` sets `picker.deleted_at`, which hides them from the lists, bucket assignment and hour entry but keeps their name taken and their records and hours on the dashboard (spec 001, FR-010).
 One-off data changes also run at startup, recorded in table
 `data_upgrade` so they run once (`configuration/OffListTagPurge`: deleted the tags not in the reference list stored
 before spec 010's revision).

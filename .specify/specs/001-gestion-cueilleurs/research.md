@@ -57,3 +57,62 @@ The spec's Technical Context had no open `NEEDS CLARIFICATION` items after the 2
 
 - **FR-004 (`bucketNumbers` list)**: owned by spec `006-gestion-seaux-affectation`, which has no plan yet. It is not implemented here. The delete check (R3) already works when a picker has several buckets.
 - **FR-008 (authentication)**: already delivered by spec `008` (`SecurityConfig.java:119-121`, `AccessMatrixSecurityTest`). Nothing to build. The spec text that still says "mécanisme non encore choisi" is out of date and should be updated.
+
+---
+
+## Amendment 2026-10-11: logical deletion of a picker (FR-010, User Story 4 scenarios 3–6)
+
+What exists (checked on 2026-10-11, branch `006-suppression-seau`):
+
+- Three foreign keys point at `picker`: `record.picker_id`, `bucket.picker_id`, `picker_work_day.picker_id` (non-null).
+- `PickerService.deletePicker` refuses a picker with a bucket (`409`), deletes their hours (`PickerWorkDayRepository.deleteByPicker`), then deletes the row. With any record, the `record.picker_id` key makes the delete fail: `500` (spec Edge Cases, constat 2026-10-11).
+- The dashboard (`RecordStatsService`, `GET /api/records/stats`) reads picker names through `left join r.picker` on records and on work days, not through `/pickers`; so a picker row that stays keeps its name on the dashboard with no change there.
+- Pickers are offered for choice in two places only: `front/buckets.html` (walks `GET /api/pickers`) and `front/work-hours.html` (reads `GET /api/work-hours?day=`, built by `WorkHoursService.describe` from `pickerRepository.findAll()`).
+- Readers already have the same pattern (spec `002`, FR-008): `reader.deleted_at`, `ReaderEntity.isDeleted()`.
+
+## R9. A nullable `picker.deleted_at` column
+
+- **Decision**: `PickerEntity.deletedAt` (`OffsetDateTime`, column `deleted_at`, nullable) and `isDeleted()`, as on `ReaderEntity`. `ddl-auto: update` adds the column; existing rows read `null` (not deleted). No data upgrade.
+- **Rationale**: same shape as readers, so one convention in the code base. A timestamp also tells when the picker was removed, which a boolean would not.
+- **Alternatives considered**: a boolean `active` flag (rejected: there is no reactivation, and the reader pattern uses a date); moving deleted pickers to another table (rejected: every foreign key would have to follow).
+
+## R10. `DELETE /api/pickers/{id}` sets the date, nothing else
+
+- **Decision**: `deletePicker` loads the picker **row-locked** (`PickerRepository.findWithLockById`, `PESSIMISTIC_WRITE`, 5 s), answers `404` when it is missing or already deleted, keeps the `409` when a bucket still points at them (`existsByPicker`), then sets `deletedAt = now(clock)`. It no longer deletes the hours (`deleteByPicker` loses its last caller and is removed). Records, hours and conformity changes are untouched.
+- **Rationale**: FR-010. The lock orders a delete against a concurrent bucket assignment (R12): without it, an assignment could commit between the bucket check and the date, leaving a bucket assigned to a deleted picker.
+- **Alternatives considered**: keep `deleteByPicker` for pickers with no record (two behaviours for one button; rejected by FR-010, "qu'il ait ou non des lectures ou des heures").
+
+## R11. Where a deleted picker is hidden or refused
+
+- **Decision**: one repository read for "live" pickers, used everywhere a picker is listed or targeted:
+  - `PickerRepository.findAllByDeletedAtIsNull(Pageable)` for `GET /api/pickers` (pagination and `sort` unchanged, the allow-list stays).
+  - `PickerService.loadPicker` (`GET`, `PUT`, `DELETE /api/pickers/{id}`): `404` when `isDeleted()`.
+  - `BucketService.assignBucketToPicker`: `404` (`PickerNotFoundException`) for a deleted picker, after locking it (R12).
+  - `WorkHoursService`: `describe` lists `findAllByDeletedAtIsNull()` instead of `findAll()`; `saveWorkDay` answers `404` (`PickerNotFoundException`) for an entry naming a deleted picker.
+  - The name rule (FR-002) is **not** filtered: `existsByLastnameIgnoreCaseAndFirstnameIgnoreCase…` keeps seeing deleted rows, so their name stays taken (`409`), as readers' uids do.
+- **Rationale**: FR-010 lists exactly these surfaces. Everything that shows history (dashboard, records, kiosk) reads through records and needs no change (what exists, above).
+- **Alternatives considered**: a Hibernate `@SQLRestriction("deleted_at is null")` on `PickerEntity`: rejected, it would also hide the picker from `record.picker` joins and lose their name on the dashboard, and make the duplicate-name rule miss deleted rows.
+
+## R12. Assignment against a concurrent delete
+
+- **Decision**: `BucketService.assignBucketToPicker` loads the picker with `findWithLockById` (after the bucket lock it already takes, spec `006` R12) and refuses a deleted one with `404`. `deletePicker` takes the picker lock first, then checks the buckets.
+- **Rationale**: whichever comes second waits and sees the first one's result: an assignment after the delete gets `404`; a delete after the assignment gets `409`. Lock order (bucket then picker in assign; picker only in delete, which takes no bucket lock) cannot deadlock.
+- **Accepted limit**: `WorkHoursService.saveWorkDay` reads its pickers without a lock, so a `PUT /api/work-hours` running at the same moment as the delete can still save hours for the picker just deleted. Harmless: those hours are kept and counted like the ones entered before the delete (FR-010), and the picker is no longer offered afterwards. No lock is added for it.
+
+## R13. Front
+
+- **Decision**: one text change. `pickers.html` already calls `DELETE` with a confirmation and reloads the page; the deleted picker disappears because `GET /api/pickers` no longer returns them, and `buckets.html` and `work-hours.html` read the filtered lists. But the confirmation says "Cette action est irréversible et supprimera l'historique associé." (`front/pickers.html:130`), which becomes false: it becomes "Cette action est irréversible. Ses lectures et ses heures restent comptées sur le tableau de bord." The button "Supprimer définitivement" stays (the deletion is final).
+- **Rationale**: FR-010 changes what the API returns and what a deletion keeps; the page must not promise the opposite.
+
+## R14. Tests
+
+- **Decision**:
+  - `PickerServiceTest`: replace `deletePicker_withoutBucket_deletes` and `deletePicker_withoutBucket_deletesTheHoursFirst` with `deletePicker_setsDeletedAtAndKeepsHours` (no `delete`, no `deleteByPicker`); `deletePicker_alreadyDeleted_throwsNotFound`; `getPicker`/`updatePicker` on a deleted picker → `PickerNotFoundException`; `createPicker` with the name of a deleted picker → `409`; the delete tests stub `findWithLockById`.
+  - `PickerApiTest`: a picker with a record and hours → `DELETE` `204`; absent from `GET /api/pickers`; `GET`/`PUT`/`DELETE /api/pickers/{id}` `404`; `GET /api/records/stats` body identical before and after, with the picker's name and hours in it.
+  - `BucketApiTest`: assigning a bucket to a deleted picker → `404`; spec `006` T045 (delete the bucket of a picker who has a record, then delete the picker → `204`).
+  - `WorkHoursApiTest` (or the class that tests `/api/work-hours`): a deleted picker is not in `GET /api/work-hours?day=`; `PUT` with their id → `404`; their hours still count in `GET /api/records/stats`.
+- **Rationale**: one test per scenario 3–6 of User Story 4 and per surface of R11.
+
+## R15. Branch and documentation
+
+- **Decision**: branch `001-suppression-cueilleur` from `006-suppression-seau` (spec `006` T045 and its `BucketApiTest` test live there; spec `014`'s hours, which this changes, are in `dev` since `0cd0501`). Open its PR after 006's. Docs: `CLAUDE.md` Persistence ("Deleting a picker deletes their hours" → pickers are soft-deleted, `picker.deleted_at`, their records and hours stay); `doc/20251116-use_cases.md` "Supprimer un cueilleur" (the final condition "supprimé ainsi que l'ensemble des données associées" becomes "n'apparaît plus ; ses lectures et heures sont conservées"); spec `008` access table unchanged (`DELETE /api/pickers/{id}` already Administrateur-only).

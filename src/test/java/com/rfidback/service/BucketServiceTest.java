@@ -108,7 +108,7 @@ class BucketServiceTest {
         BucketEntity bucket = bucket(4, null);
         PickerEntity picker = picker("Dupont", "Jean", null);
         when(bucketRepository.findWithLockById(bucket.getId())).thenReturn(Optional.of(bucket));
-        when(pickerRepository.findById(picker.getId())).thenReturn(Optional.of(picker));
+        when(pickerRepository.findWithLockById(picker.getId())).thenReturn(Optional.of(picker));
 
         bucketService.assignBucketToPicker(bucket.getId(), picker.getId());
 
@@ -122,7 +122,7 @@ class BucketServiceTest {
         PickerEntity next = picker("Martin", "Paul", null);
         BucketEntity bucket = bucket(5, previous);
         when(bucketRepository.findWithLockById(bucket.getId())).thenReturn(Optional.of(bucket));
-        when(pickerRepository.findById(next.getId())).thenReturn(Optional.of(next));
+        when(pickerRepository.findWithLockById(next.getId())).thenReturn(Optional.of(next));
 
         bucketService.assignBucketToPicker(bucket.getId(), next.getId());
 
@@ -137,7 +137,7 @@ class BucketServiceTest {
 
         assertThrows(BucketNotFoundException.class,
                 () -> bucketService.assignBucketToPicker(bucketId, UUID.randomUUID()));
-        verify(pickerRepository, never()).findById(any());
+        verify(pickerRepository, never()).findWithLockById(any());
     }
 
     @Test
@@ -145,10 +145,24 @@ class BucketServiceTest {
         BucketEntity bucket = bucket(6, null);
         UUID pickerId = UUID.randomUUID();
         when(bucketRepository.findWithLockById(bucket.getId())).thenReturn(Optional.of(bucket));
-        when(pickerRepository.findById(pickerId)).thenReturn(Optional.empty());
+        when(pickerRepository.findWithLockById(pickerId)).thenReturn(Optional.empty());
 
         assertThrows(PickerNotFoundException.class,
                 () -> bucketService.assignBucketToPicker(bucket.getId(), pickerId));
+        assertNull(bucket.getPicker());
+        verify(bucketRepository, never()).save(any());
+    }
+
+    @Test
+    void assignBucketToPicker_deletedPicker_throwsPickerNotFoundAndDoesNotSave() {
+        BucketEntity bucket = bucket(10, null);
+        PickerEntity picker = picker("Dupont", "Jean", null);
+        picker.setDeletedAt(OffsetDateTime.parse("2026-10-01T08:00:00Z"));
+        when(bucketRepository.findWithLockById(bucket.getId())).thenReturn(Optional.of(bucket));
+        when(pickerRepository.findWithLockById(picker.getId())).thenReturn(Optional.of(picker));
+
+        assertThrows(PickerNotFoundException.class,
+                () -> bucketService.assignBucketToPicker(bucket.getId(), picker.getId()));
         assertNull(bucket.getPicker());
         verify(bucketRepository, never()).save(any());
     }

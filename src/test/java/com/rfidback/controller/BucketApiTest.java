@@ -292,6 +292,34 @@ class BucketApiTest {
                 .andExpect(status().isNoContent());
     }
 
+    @Test
+    void assign_deletedPicker_returns404() throws Exception {
+        PickerEntity picker = createPicker("Gone");
+        mockMvc.perform(delete("/api/pickers/" + picker.getId()).with(admin()).with(csrf()))
+                .andExpect(status().isNoContent());
+
+        assign(createBucket().getId(), picker.getId()).andExpect(status().isNotFound());
+    }
+
+    @Test
+    void deleteBucketThenPickerWithRecord_returns204() throws Exception {
+        PickerEntity picker = createPicker("Counted");
+        BucketEntity bucket = createBucket();
+        assign(bucket.getId(), picker.getId()).andExpect(status().isNoContent());
+        TagEntity tag = createTag(bucket);
+        ReaderEntity reader = readerRepository.save(
+                ReaderEntity.builder().name("Reader picker delete " + UUID.randomUUID().toString().substring(0, 8))
+                        .build());
+        recordRepository.save(RecordEntity.builder()
+                .tag(tag).reader(reader).picker(picker).bucket(bucket).compliant(true).build());
+
+        deleteBucket(bucket.getId()).andExpect(status().isNoContent());
+
+        // Used to fail with 500 on record.picker_id; the delete is now logical (spec 001, FR-010; spec 006 T045).
+        mockMvc.perform(delete("/api/pickers/" + picker.getId()).with(admin()).with(csrf()))
+                .andExpect(status().isNoContent());
+    }
+
     private ResultActions deleteBucket(UUID bucketId) throws Exception {
         return mockMvc.perform(delete("/api/buckets/" + bucketId).with(admin()).with(csrf()));
     }
