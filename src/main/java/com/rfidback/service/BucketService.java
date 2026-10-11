@@ -92,7 +92,9 @@ public class BucketService {
     public void assignBucketToPicker(UUID bucketId, UUID pickerId) {
         BucketEntity bucket = bucketRepository.findWithLockById(bucketId)
                 .orElseThrow(() -> new BucketNotFoundException("Bucket %s not found".formatted(bucketId)));
-        PickerEntity picker = pickerRepository.findById(pickerId)
+        // Locked after the bucket: a concurrent picker delete either waits for this or is seen (spec 001, R12).
+        PickerEntity picker = pickerRepository.findWithLockById(pickerId)
+                .filter(candidate -> !candidate.isDeleted())
                 .orElseThrow(() -> new PickerNotFoundException("Picker %s not found".formatted(pickerId)));
 
         bucket.setPicker(picker);

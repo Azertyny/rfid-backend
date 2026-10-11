@@ -46,7 +46,7 @@ Relations: many-to-one `picker` (lazy), many-to-one `updatedBy` (`UserEntity`, l
 - `Optional<PickerWorkDayEntity> findByPickerAndWorkDate(PickerEntity picker, LocalDate day)` — upsert (R3);
 - `List<PickerMinutesView> sumMinutesByPicker(LocalDate first, LocalDate last)` — `select p.id, p.firstname,
   p.lastname, sum(w.minutes) … where w.workDate between :first and :last group by …` (R6);
-- `void deleteByPicker(PickerEntity picker)` — picker deletion (R7).
+- `void deleteByPicker(PickerEntity picker)` — picker deletion (R7). **Amendé (2026-10-11, spec `001` FR-010)** : la suppression d'un cueilleur est logique ; ses heures sont conservées et `deleteByPicker` est supprimé.
 
 `RecordRepository` (spec 007 statistics block):
 

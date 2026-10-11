@@ -1,6 +1,7 @@
 package com.rfidback.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
@@ -8,7 +9,10 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -20,7 +24,6 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InOrder;
 import org.mockito.Mockito;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
@@ -40,21 +43,20 @@ import com.rfidback.generated.model.Picker;
 import com.rfidback.generated.model.UpdatePicker;
 import com.rfidback.repository.BucketRepository;
 import com.rfidback.repository.PickerRepository;
-import com.rfidback.repository.PickerWorkDayRepository;
 
 class PickerServiceTest {
 
+    private static final Instant DELETED_AT = Instant.parse("2026-10-11T08:00:00Z");
+
     private PickerRepository pickerRepository;
     private BucketRepository bucketRepository;
-    private PickerWorkDayRepository pickerWorkDayRepository;
     private PickerService pickerService;
 
     @BeforeEach
     void setUp() {
         pickerRepository = Mockito.mock(PickerRepository.class);
         bucketRepository = Mockito.mock(BucketRepository.class);
-        pickerWorkDayRepository = Mockito.mock(PickerWorkDayRepository.class);
-        pickerService = new PickerService(pickerRepository, bucketRepository, pickerWorkDayRepository);
+        pickerService = new PickerService(pickerRepository, bucketRepository, Clock.fixed(DELETED_AT, ZoneOffset.UTC));
     }
 
     @Test
@@ -147,44 +149,72 @@ class PickerServiceTest {
     @Test
     void deletePicker_withBucket_throwsConflictAndKeepsPicker() {
         PickerEntity entity = picker("Dupont", "Jean");
-        when(pickerRepository.findById(entity.getId())).thenReturn(Optional.of(entity));
+        when(pickerRepository.findWithLockById(entity.getId())).thenReturn(Optional.of(entity));
         when(bucketRepository.existsByPicker(entity)).thenReturn(true);
 
         assertThrows(PickerHasBucketsException.class, () -> pickerService.deletePicker(entity.getId()));
+        assertFalse(entity.isDeleted());
+        verify(pickerRepository, never()).save(any());
+    }
+
+    @Test
+    void deletePicker_withoutBucket_setsDeletedAtAndDeletesNothing() {
+        PickerEntity entity = picker("Dupont", "Jean");
+        when(pickerRepository.findWithLockById(entity.getId())).thenReturn(Optional.of(entity));
+        when(bucketRepository.existsByPicker(entity)).thenReturn(false);
+
+        pickerService.deletePicker(entity.getId());
+
+        assertEquals(DELETED_AT, entity.getDeletedAt().toInstant());
+        verify(pickerRepository).save(entity);
         verify(pickerRepository, never()).delete(any());
-    }
-
-    @Test
-    void deletePicker_withoutBucket_deletes() {
-        PickerEntity entity = picker("Dupont", "Jean");
-        when(pickerRepository.findById(entity.getId())).thenReturn(Optional.of(entity));
-        when(bucketRepository.existsByPicker(entity)).thenReturn(false);
-
-        pickerService.deletePicker(entity.getId());
-
-        verify(pickerRepository).delete(entity);
-    }
-
-    @Test
-    void deletePicker_withoutBucket_deletesTheHoursFirst() {
-        PickerEntity entity = picker("Dupont", "Jean");
-        when(pickerRepository.findById(entity.getId())).thenReturn(Optional.of(entity));
-        when(bucketRepository.existsByPicker(entity)).thenReturn(false);
-
-        pickerService.deletePicker(entity.getId());
-
-        InOrder inOrder = Mockito.inOrder(pickerWorkDayRepository, pickerRepository);
-        inOrder.verify(pickerWorkDayRepository).deleteByPicker(entity);
-        inOrder.verify(pickerRepository).delete(entity);
     }
 
     @Test
     void deletePicker_unknownId_throwsNotFoundBeforeBucketCheck() {
         UUID pickerId = UUID.randomUUID();
-        when(pickerRepository.findById(pickerId)).thenReturn(Optional.empty());
+        when(pickerRepository.findWithLockById(pickerId)).thenReturn(Optional.empty());
 
         assertThrows(PickerNotFoundException.class, () -> pickerService.deletePicker(pickerId));
         verify(bucketRepository, never()).existsByPicker(any());
+    }
+
+    @Test
+    void deletePicker_alreadyDeleted_throwsNotFoundBeforeBucketCheck() {
+        PickerEntity entity = deleted(picker("Dupont", "Jean"));
+        when(pickerRepository.findWithLockById(entity.getId())).thenReturn(Optional.of(entity));
+
+        assertThrows(PickerNotFoundException.class, () -> pickerService.deletePicker(entity.getId()));
+        verify(bucketRepository, never()).existsByPicker(any());
+        verify(pickerRepository, never()).save(any());
+    }
+
+    @Test
+    void getPicker_deleted_throwsNotFound() {
+        PickerEntity entity = deleted(picker("Dupont", "Jean"));
+        when(pickerRepository.findById(entity.getId())).thenReturn(Optional.of(entity));
+
+        assertThrows(PickerNotFoundException.class, () -> pickerService.getPicker(entity.getId()));
+    }
+
+    @Test
+    void updatePicker_deleted_throwsNotFound() {
+        PickerEntity entity = deleted(picker("Dupont", "Jean"));
+        when(pickerRepository.findById(entity.getId())).thenReturn(Optional.of(entity));
+
+        assertThrows(PickerNotFoundException.class, () -> pickerService.updatePicker(entity.getId(),
+                new UpdatePicker().lastname("Martin").firstname("Paul")));
+        verify(pickerRepository, never()).save(any());
+    }
+
+    @Test
+    void createPicker_nameOfADeletedPicker_throwsConflict() {
+        // The duplicate check sees deleted pickers: their name stays taken (FR-010).
+        when(pickerRepository.existsByLastnameIgnoreCaseAndFirstnameIgnoreCase("Dupont", "Jean")).thenReturn(true);
+
+        assertThrows(PickerAlreadyExistsException.class,
+                () -> pickerService.createPicker(new CreatePicker().lastname("Dupont").firstname("Jean")));
+        verify(pickerRepository, never()).save(any());
     }
 
     @ParameterizedTest
@@ -219,13 +249,13 @@ class PickerServiceTest {
         ResponseStatusException exception = assertThrows(ResponseStatusException.class,
                 () -> pickerService.listPickers(0, 20, sort));
         assertEquals(HttpStatus.BAD_REQUEST, exception.getStatusCode());
-        verify(pickerRepository, never()).findAll(any(Pageable.class));
+        verify(pickerRepository, never()).findAllByDeletedAtIsNull(any(Pageable.class));
     }
 
     @Test
     void listPickers_pickerWithTwoBuckets_returnsBothNumbersSorted() {
         PickerEntity entity = picker("Dupont", "Jean");
-        when(pickerRepository.findAll(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(entity)));
+        when(pickerRepository.findAllByDeletedAtIsNull(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(entity)));
         when(bucketRepository.findAllByPickerIn(List.of(entity)))
                 .thenReturn(List.of(bucket(47, entity), bucket(12, entity)));
 
@@ -237,7 +267,7 @@ class PickerServiceTest {
     @Test
     void listPickers_pickerWithoutBucket_returnsEmptyList() {
         PickerEntity entity = picker("Dupont", "Jean");
-        when(pickerRepository.findAll(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(entity)));
+        when(pickerRepository.findAllByDeletedAtIsNull(any(Pageable.class))).thenReturn(new PageImpl<>(List.of(entity)));
         when(bucketRepository.findAllByPickerIn(List.of(entity))).thenReturn(List.of());
 
         Picker picker = pickerService.listPickers(0, 20, null).getContent().get(0);
@@ -278,10 +308,10 @@ class PickerServiceTest {
     }
 
     private Sort sortUsedFor(String sort) {
-        when(pickerRepository.findAll(any(Pageable.class))).thenReturn(Page.empty());
+        when(pickerRepository.findAllByDeletedAtIsNull(any(Pageable.class))).thenReturn(Page.empty());
         pickerService.listPickers(0, 20, sort);
         ArgumentCaptor<Pageable> captor = ArgumentCaptor.forClass(Pageable.class);
-        verify(pickerRepository).findAll(captor.capture());
+        verify(pickerRepository).findAllByDeletedAtIsNull(captor.capture());
         return captor.getValue().getSort();
     }
 
@@ -292,6 +322,11 @@ class PickerServiceTest {
                 .firstname(firstname)
                 .creationDate(OffsetDateTime.now())
                 .build();
+    }
+
+    private PickerEntity deleted(PickerEntity picker) {
+        picker.setDeletedAt(OffsetDateTime.parse("2026-10-01T08:00:00Z"));
+        return picker;
     }
 
     private BucketEntity bucket(int number, PickerEntity picker) {

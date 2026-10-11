@@ -143,7 +143,7 @@ repère ceux qui ont des lectures sans heures pour les compléter.
   s'accumulent jusqu'au soir ; la page le signale quand la période inclut le jour en cours.
 - **Heures prévues différentes des heures réalisées** : l'Administrateur corrige la saisie ; le tableau utilise
   toujours la dernière valeur, visible au rafraîchissement suivant.
-- **Cueilleur supprimé** (spec `001`) : ses heures sont supprimées avec lui et ne comptent plus dans aucun total.
+- **Cueilleur supprimé** (spec `001`) : amendé par la spec `001` (Clarifications 2026-10-11, FR-010) — la suppression d'un cueilleur est logique ; ses heures sont conservées et comptent toujours dans les totaux, sous son nom, mais ne sont plus modifiables. (Avant : ses heures étaient supprimées avec lui.)
 
 ## Requirements *(mandatory)*
 

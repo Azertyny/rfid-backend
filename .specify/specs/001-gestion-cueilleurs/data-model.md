@@ -44,3 +44,42 @@ Any other field, or a direction other than `asc`/`desc`, returns `400`.
 ```
 
 Before a picker can be deleted, each of their buckets must be unassigned with `DELETE /api/buckets/{bucketId}/picker` (spec `006`).
+
+---
+
+## Amendment 2026-10-11: logical deletion (FR-010)
+
+### Picker: one new column
+
+| Field | Type | Rules |
+|---|---|---|
+| `deletedAt` (`deleted_at`) | OffsetDateTime, nullable | `null` = live picker; set once by `DELETE /pickers/{id}`, never cleared |
+
+`isDeleted()` ⇔ `deletedAt != null`. Added by `ddl-auto: update`; no data upgrade (existing rows are live).
+
+### Lifecycle (amended)
+
+```text
+          POST /pickers                PUT /pickers/{id}
+ (none) ───────────────▶ Live ◀──────────────────────┐
+                           │  └─────────────────────┘
+                           │ DELETE /pickers/{id}  (picker row locked)
+                           ▼
+         ┌── has ≥ 1 bucket? ──yes──▶ 409, picker unchanged
+         └──no──▶ 204, deleted_at = now ──▶ Deleted (final)
+```
+
+| | Live | Deleted |
+|---|---|---|
+| `GET /pickers` | listed | not listed |
+| `GET` / `PUT` / `DELETE /pickers/{id}` | 200 / 200 / 204 or 409 | 404 |
+| Assign a bucket to them | 204 | 404 |
+| `GET /work-hours?day=` | listed | not listed |
+| `PUT /work-hours` naming them | saved | 404 |
+| Name (FR-002) | taken | **still taken** (409 on a duplicate) |
+| Records, hours, conformity changes | kept | **kept**, shown under their name on the dashboard |
+
+### Repository changes
+
+- `PickerRepository`: + `findAllByDeletedAtIsNull(Pageable)`, `findAllByDeletedAtIsNull()`, `findWithLockById(id)` (`PESSIMISTIC_WRITE`, 5 s). The duplicate-name queries are unchanged (they see deleted rows on purpose).
+- `PickerWorkDayRepository.deleteByPicker`: removed (no caller left).

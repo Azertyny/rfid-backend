@@ -7,7 +7,6 @@ import java.util.UUID;
 
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -27,10 +26,6 @@ public interface PickerWorkDayRepository extends JpaRepository<PickerWorkDayEnti
             + " from PickerWorkDayEntity w join w.picker p where w.workDate between :first and :last"
             + " group by p.id, p.firstname, p.lastname")
     List<PickerMinutesView> sumMinutesByPicker(@Param("first") LocalDate first, @Param("last") LocalDate last);
-
-    @Modifying
-    @Query("delete from PickerWorkDayEntity w where w.picker = :picker")
-    int deleteByPicker(@Param("picker") PickerEntity picker);
 
     // Number, not Long: sum comes back as Long or BigDecimal depending on the database (see RecordRepository).
     interface PickerMinutesView {
