@@ -2,6 +2,9 @@ package com.rfidback.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -224,6 +227,25 @@ class TagScanApiTest {
         TagEntity tag = tag(uid);
         assertThat(tag.getBucket()).isNull();
         assertThat(tag.getCountedRecord().getId()).isEqualTo(record.getId());
+    }
+
+    @Test
+    void scan_tagFreedByBucketDelete_countsWithoutPicker() throws Exception {
+        String uid = tagInBucket(4010);
+        BucketEntity bucket = bucketRepository.findByNumber(4010).orElseThrow();
+
+        // Deleting the bucket frees its tags (spec 006, FR-010).
+        mockMvc.perform(delete("/api/buckets/" + bucket.getId())
+                .with(user("admin").roles("ADMINISTRATEUR")).with(csrf()))
+                .andExpect(status().isNoContent());
+        // Each request has its own persistence context in production; here they share the test's transaction.
+        entityManager.clear();
+        scan(reader, uid, true).andExpect(status().isOk());
+
+        RecordEntity record = latestRecord();
+        assertThat(record.getTag().getUid()).isEqualTo(uid);
+        assertThat(record.getPicker()).isNull();
+        assertThat(record.getBucket()).isNull();
     }
 
     @Test

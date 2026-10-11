@@ -142,6 +142,10 @@ public class TagService {
      * managed, so its changes are written with the transaction.
      */
     private ScanTagResponse count(TagEntity tag, ReaderEntity reader, boolean isCompliant, OffsetDateTime now) {
+        // Locks the bucket so a concurrent delete either waits for this scan or is seen by it (spec 006, research R12).
+        if (tag.getBucket() != null && bucketRepository.findWithLockById(tag.getBucket().getId()).isEmpty()) {
+            tag.setBucket(null);
+        }
         BucketEntity bucket = tag.getBucket();
         RecordEntity saved = recordRepository.saveAndFlush(RecordEntity.builder()
                 .tag(tag)
@@ -271,7 +275,7 @@ public class TagService {
             throw new RegistrationNotConfirmedException(tagsInOtherBuckets);
         }
 
-        BucketEntity bucket = bucketRepository.findByNumber(bucketNumber)
+        BucketEntity bucket = bucketRepository.findWithLockByNumber(bucketNumber)
                 .orElseGet(() -> bucketRepository.save(BucketEntity.builder().number(bucketNumber).build()));
 
         List<TagEntity> tagsToSave = new ArrayList<>();

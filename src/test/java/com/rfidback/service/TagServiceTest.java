@@ -2,6 +2,7 @@ package com.rfidback.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
@@ -71,6 +72,10 @@ class TagServiceTest {
         clock = Clock.fixed(Instant.parse("2024-01-15T09:30:00Z"), ZoneOffset.UTC);
         // The station day of the fixed clock (spec 004, FR-009).
         when(lineActivityService.startOfToday()).thenReturn(OffsetDateTime.parse("2024-01-15T00:00:00Z"));
+        // The bucket of a counted tag still exists unless a test deletes it meanwhile (spec 006, research R12). Only
+        // its existence is read: the picker comes from the tag's own bucket.
+        when(bucketRepository.findWithLockById(any())).thenAnswer(
+                invocation -> Optional.of(BucketEntity.builder().id(invocation.getArgument(0)).build()));
         tagService = tagService(DUPLICATE_WINDOW, CRATE_WINDOW);
     }
 
@@ -460,6 +465,24 @@ class TagServiceTest {
     }
 
     @Test
+    void scan_bucketDeletedMeanwhile_countsWithoutPickerNorBucket() {
+        BucketEntity bucket = bucket();
+        bucket.setPicker(PickerEntity.builder().id(UUID.randomUUID()).firstname("Jane").lastname("Doe").build());
+        TagEntity tag = existingTag();
+        tag.setBucket(bucket);
+        when(bucketRepository.findWithLockById(bucket.getId())).thenReturn(Optional.empty());
+        stubNewRecordSave();
+
+        tagService.registerScan(scanReader(), new ScanTagRequest().uid(DUPLICATE_UID).isCompliant(true));
+
+        RecordEntity record = savedRecord();
+        assertNull(record.getPicker());
+        assertNull(record.getBucket());
+        assertNull(tag.getBucket());
+        assertEquals(record, tag.getCountedRecord());
+    }
+
+    @Test
     void registerScan_secondTagOfACrate_joinsItsRecord() {
         ReaderEntity reader = scanReader();
         BucketEntity bucket = bucket();
@@ -558,7 +581,7 @@ class TagServiceTest {
 
     private BucketEntity existingBucket(int number) {
         BucketEntity bucket = BucketEntity.builder().id(UUID.randomUUID()).number(number).build();
-        when(bucketRepository.findByNumber(number)).thenReturn(Optional.of(bucket));
+        when(bucketRepository.findWithLockByNumber(number)).thenReturn(Optional.of(bucket));
         return bucket;
     }
 
@@ -589,7 +612,7 @@ class TagServiceTest {
 
     @Test
     void registerTagsForBucket_createsBucketWhenUnknown() {
-        when(bucketRepository.findByNumber(12)).thenReturn(Optional.empty());
+        when(bucketRepository.findWithLockByNumber(12)).thenReturn(Optional.empty());
         when(bucketRepository.save(any(BucketEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(tagRepository.findAllByUidIn(anyCollection())).thenReturn(List.of());
 

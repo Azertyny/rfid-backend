@@ -62,3 +62,40 @@ Access: all four routes are Administrateur only (`SecurityConfig.java:125`, spec
 | "Confirmer" | `DELETE /buckets/{id}/picker` | `204` → close, reload; `404` → same message as above |
 
 Navigation: a "Seaux" link (`buckets.html`, `data-admin-only`) is added to the nav bar in `index.html`, `pickers.html`, `readers.html`, `tags.html` and `users.html`.
+
+---
+
+## 3. Amendment 2026-10-11: `DELETE /buckets/{bucketId}` (FR-010)
+
+Added to the existing `/buckets/{bucketId}` path item in `api.yaml`, next to `get`:
+
+```yaml
+    delete:
+      summary: Delete a bucket
+      description: >
+        Deletes the bucket for good, whatever its tags and picker. Its tags stay known without a bucket, the
+        records that counted them keep their picker, and its number can be used again by a tag registration.
+      operationId: deleteBucket
+      tags: [Bucket]
+      responses:
+        "204":
+          description: Bucket deleted
+        "404":
+          description: Bucket not found (unknown or already deleted)
+```
+
+`BucketController` implements the generated `BucketApiDelegate.deleteBucket(UUID)` and returns `204`.
+
+| Route | Success | Errors |
+|---|---|---|
+| `DELETE /api/buckets/{id}` | `204` | `404`, `401`, `403` |
+
+Access: Administrateur only, already covered by the `/api/buckets/**` rule (`SecurityConfig.java:166`); CSRF required (`apiFetch`).
+
+### Front contract (`front/buckets.html`)
+
+| Step | Call | Page behaviour |
+|---|---|---|
+| "Supprimer" (every row) | none | Modal "Supprimer le seau": "Supprimer le seau n°X ?", plus "Ses N tags seront libérés et devront être réenregistrés." (or "Son tag sera libéré…" for 1) when it has tags, "Il est affecté à <Prénom Nom>, qui ne l'aura plus." when it has a picker, and "Les lectures passées sont conservées." |
+| "Annuler" | none | Modal closes, nothing sent |
+| "Confirmer" | `DELETE /buckets/{id}` | `204` → close, reload `GET /buckets`; `404` → "Ce seau n'existe plus", reload; other → generic error, modal stays open |

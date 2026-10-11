@@ -83,3 +83,75 @@ So the remaining work is: `bucketNumbers` on the picker API (FR-006), the front 
   - `doc/20251013-database_diagram.puml:66` becomes `picker ||--o{ bucket` (one picker has 0..n buckets).
   - `doc/20251116-use_cases.md` gets a short "Désaffecter un seau" use case next to "Affecter des seaux", and a note on the reassignment warning.
 - **Rationale**: the spec's drift table asks for the diagram to be fixed, and `CLAUDE.md` tells readers to check `doc/` first, so it must not contradict the code.
+
+---
+
+## Amendment 2026-10-11: deleting a bucket (FR-010, User Story 4)
+
+What exists (checked on 2026-10-11):
+
+- Two columns point at a bucket: `tag.bucket_id` (`TagEntity.bucket`) and `record.bucket_id` (`RecordEntity.bucket`, added by the spec `004` amendment). `RecordEntity.bucket` only serves the crate window (`TagService.crateOf`, `RecordRepository.findFirstByReaderAndBucketAnd…`); no API response, stat or page reads it. The picker of a record is copied at scan time (`TagService.count`).
+- Nothing else references a bucket: registration sessions name a bucket **number**, `PickerService` derives `bucketNumbers` from the `bucket` table, `RecordStatsService` and work hours ignore buckets.
+- `/api/buckets/**` is Administrateur-only for every method (`SecurityConfig.java:166`), so a new `DELETE /api/buckets/{bucketId}` needs no security change; spec `008`'s row `/api/buckets/**` already covers it.
+- `BucketNotFoundException` already maps to `404`.
+
+## R10. Physical delete, in one transaction
+
+- **Decision**: `BucketService.deleteBucket(bucketId)`, `@Transactional`:
+  1. lock the bucket row (`BucketRepository.findWithLockById`, R12), `404` when missing;
+  2. `TagRepository.clearBucket(bucket)`: `update TagEntity t set t.bucket = null where t.bucket = :bucket`;
+  3. `RecordRepository.clearBucket(bucket)`: `update RecordEntity r set r.bucket = null where r.bucket = :bucket`;
+  4. `bucketRepository.delete(bucket)`.
+- **Rationale**: the spec's assumption (no history of its own, number reusable). Two bulk updates make the cost independent of the number of tags or records. Clearing `record.bucket_id` only matters for the 2-second crate window: a crate whose bucket was just deleted can no longer gather a second tag, but that tag has been freed anyway (it no longer has the bucket).
+- **Alternatives considered**:
+  - Soft delete (`bucket.deleted_at`, like readers): rejected in the spec; it would also keep the number taken while `registerTagsForBucket` looks buckets up by number.
+  - `ON DELETE SET NULL` on the foreign keys: not expressible through `ddl-auto: update` on existing columns, and invisible from the code.
+  - Refusing a bucket with tags or a picker: rejected by Clarifications 2026-10-11.
+
+## R11. Picker, tags and the scan rules after a delete
+
+- **Decision**: nothing more to do.
+  - The picker loses the bucket because the row is gone; `bucketNumbers` no longer lists it, and `existsByPicker` no longer blocks deleting the picker (US 4, scenario 7).
+  - A freed tag has `bucket = null`. Its `counted_record` is untouched: a tag in a bucket always has `counted_record = null` (registration clears it, spec `004`), so freeing a tag gives exactly the state of a tag never registered. A production scan counts it without picker (`TagService.count`), and registering it into a bucket asks for no move confirmation (`registerTagsForBucket` only lists tags whose bucket number differs).
+- **Rationale**: the existing rules already give the spec's scenarios 5 and 7.
+
+## R12. Concurrent scan, registration or assignment
+
+- **Decision**: one new locking read, `BucketRepository.findWithLockById(id)` (`@Lock(PESSIMISTIC_WRITE)`, 5 s lock timeout, `select b from BucketEntity b where b.id = :id`), and its by-number twin `findWithLockByNumber(number)`:
+  - `deleteBucket`, `assignBucketToPicker` and `unassignBucketFromPicker` load the bucket through it (instead of `findById`).
+  - `TagService.count` (rule 4 of a scan, the only rule that inserts a record pointing at a bucket): when the tag has a bucket, it locks it first; if the lock read finds no row, the bucket was deleted meanwhile, so the tag is treated as having no bucket (`tag.setBucket(null)`, record without picker nor bucket).
+  - `TagService.registerTagsForBucket` looks the bucket up with `findWithLockByNumber`; a bucket deleted meanwhile is simply not found and is created again.
+- **Rationale**: without a lock, a scan inserting `record.bucket_id = B` while B is being deleted fails on the foreign key (or makes the delete fail), and an assignment flushing an `UPDATE` on a deleted row fails with a stale-state error: a `500` either way, which the spec's edge case forbids. With the lock, whichever comes second waits (milliseconds) and then sees the committed state. The lock only makes scans of tags of the **same** bucket wait for each other. It is taken in rule 4, after the crate rule (`crateOf`) has run, so it does not change how crates are detected (spec `004`, FR-010). Only existence is read from the lock query, so the stale-instance caveat of `ReaderRepository` (an entity already in the persistence context comes back as it was) does not matter here.
+- **Alternatives considered**:
+  - A shared lock (`PESSIMISTIC_READ`) on the scan side: H2, used by dev and tests, turns it into an exclusive lock anyway, so the behaviour would differ between environments for no gain.
+  - Retrying on `DataIntegrityViolationException`: hides the race instead of ordering it, and the reader device would have to resend.
+  - Accepting the race: a scan line runs all day; a delete during the shift is plausible.
+
+## R13. Front: "Supprimer" on every bucket
+
+- **Decision**: in `front/buckets.html`, a "Supprimer" button (`btn-outline-danger`, `fa-trash`) on every row, after the existing actions. It opens a Bootstrap modal (like "Désaffecter") titled "Supprimer le seau" whose text is built from the loaded bucket:
+  - always "Supprimer le seau n°X ?";
+  - if it has tags: "Ses N tags seront libérés et devront être réenregistrés.", or "Son tag sera libéré et devra être réenregistré." for 1;
+  - if it has a picker: "Il est affecté à <Prénom Nom>, qui ne l'aura plus.";
+  - "Les lectures passées sont conservées."
+  "Confirmer" (`btn-danger`) sends `DELETE /buckets/{id}` through `apiFetch`; `204` closes the modal and reloads `GET /buckets`; `404` shows "Ce seau n'existe plus" and reloads; other errors show the generic message and keep the modal open (same handling as R6).
+- **Rationale**: FR-010 asks for the number, the freed tags and the picker in the confirmation; the page already has the data. The button is always shown since any bucket may be deleted.
+
+## R14. Tests (SC-003)
+
+- **Decision**:
+  - `BucketServiceTest` (Mockito): delete → tags and records cleared, then bucket deleted; unknown bucket → `BucketNotFoundException`, nothing cleared; assign/unassign now go through `findWithLockById`.
+  - `BucketApiTest` (MockMvc, real data): a bucket with 2 tags, a picker and a counted record → `DELETE` `204`; `GET /api/buckets/{id}` `404`; the bucket is gone from `GET /api/buckets` and the picker's `bucketNumbers`; second `DELETE` `404`; `GET /api/records/stats` identical before and after; the record keeps its picker; re-registering the same number creates a new empty-then-filled bucket without picker and with no `409`; the picker can then be deleted (`204`).
+  - `TagScanApiTest`: a freed tag scanned in production → a record with no picker.
+  - `TagServiceTest`: rule 4 with a bucket whose lock read is empty → record with no picker nor bucket, tag without bucket.
+  - `AccessMatrixSecurityTest`: + `DELETE /api/buckets/{id}` (`ADMIN_ONLY`).
+  - The concurrency of R12 is not tested automatically (would need two real transactions on PostgreSQL); the lock queries are covered by the tests above, which run through them.
+- **Rationale**: SC-003's list, in the existing test classes.
+
+## R15. Documentation
+
+- **Decision**: `doc/20251116-use_cases.md` gets a "Supprimer un seau" use case after "Désaffecter un seau". `CLAUDE.md` (Persistence) gets one sentence: deleting a bucket frees its tags and unlinks its records (`record.bucket_id`), which keep their picker. The database diagram does not change (no column added or removed).
+
+## Deviation found by T044 (2026-10-11): deleting a picker who has records answers `500`
+
+Running quickstart §3 against the built app (in-memory H2, port 8099), every step behaved as specified except step 8: `DELETE /api/pickers/{id}` for picker A, who no longer had a bucket but had one record from step 3, answered `500` (`record.picker_id` foreign key, `DataIntegrityViolationException` in `PickerService.deletePicker`). This is **not caused by the bucket delete**: unassigning a bucket and then deleting a picker who has records gives the same `500` on `dev`. `deletePicker` only checks buckets (`409`) and work hours (deleted), not records. What should happen to a deleted picker's records (refuse with `409`, keep them without picker, or delete them) is a spec `001` decision, left out of this amendment. US 4 scenario 7 holds for a picker with no record (`BucketApiTest.deleteBucket_numberReusable_andPickerDeletable`).

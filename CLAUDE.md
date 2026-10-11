@@ -95,6 +95,8 @@ which hides the reader from every list and line but keeps its uid taken and its 
 A production scan takes the tag out of its bucket: `tag.counted_record_id` points at the record that counted it, and
 registering the tag into a bucket again clears it. The same station day, a rescan gives a non-compliant record with no
 picker, and two tags of one bucket read by one reader within `app.scan.crate-window` count as one crate (spec 004).
+Deleting a bucket (`DELETE /api/buckets/{id}`, spec 006) frees its tags and unlinks its records (`record.bucket_id`),
+which keep their picker; the number can be used again.
 Work hours live in `picker_work_day`, one row per picker and station day in whole minutes (no row = not entered);
 `GET /api/records/stats` sums them per picker next to the crates per activity, only without a reader (hours are not
 per line). Deleting a picker deletes their hours.

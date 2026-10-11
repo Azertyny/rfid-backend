@@ -104,6 +104,11 @@ public interface RecordRepository extends JpaRepository<RecordEntity, UUID> {
     @Query("delete from RecordEntity r where r.tag.id in :tagIds")
     int deleteByTagIdIn(@Param("tagIds") Collection<UUID> tagIds);
 
+    /** Unlinks the records of a bucket being deleted; they keep their picker (spec 006, FR-010). */
+    @Modifying
+    @Query("update RecordEntity r set r.bucket = null where r.bucket = :bucket")
+    int clearBucket(@Param("bucket") BucketEntity bucket);
+
     // Numbers, not Long: count, sum and floor come back as Long, Integer, Double or BigDecimal depending on the
     // database. A sum over no row is null.
     interface CountsView {
