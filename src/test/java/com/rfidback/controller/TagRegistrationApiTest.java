@@ -25,13 +25,19 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rfidback.entity.BucketEntity;
+import com.rfidback.entity.PickerEntity;
+import com.rfidback.entity.ReaderEntity;
+import com.rfidback.entity.RecordEntity;
 import com.rfidback.repository.BucketRepository;
+import com.rfidback.repository.PickerRepository;
+import com.rfidback.repository.ReaderRepository;
+import com.rfidback.repository.RecordRepository;
 import com.rfidback.repository.TagRepository;
 import com.rfidback.support.ReferenceTagUids;
 
 /**
  * HTTP-level checks of POST /api/tags/buckets/{bucketNumber} (spec 003: add-only, move confirmation; spec 010:
- * a uid not in the reference list refuses the whole request).
+ * a uid not in the reference list refuses the whole request; spec 004: registering a counted tag again resets it).
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -50,6 +56,15 @@ class TagRegistrationApiTest {
 
     @Autowired
     private TagRepository tagRepository;
+
+    @Autowired
+    private PickerRepository pickerRepository;
+
+    @Autowired
+    private ReaderRepository readerRepository;
+
+    @Autowired
+    private RecordRepository recordRepository;
 
     @Test
     void register_addsToExistingTags_andReturnsBothCounts() throws Exception {
@@ -154,6 +169,40 @@ class TagRegistrationApiTest {
 
         assertThat(tagRepository.findByUid(moved).orElseThrow().getBucket().getNumber()).isEqualTo(firstBucket);
         assertThat(tagRepository.findByUid(offList)).isEmpty();
+    }
+
+    @Test
+    void register_aCountedTagAgain_resetsIt_soItsNextScanCountsNormally() throws Exception {
+        ReaderEntity reader = readerRepository.save(ReaderEntity.builder().name("Reader register again test").build());
+        PickerEntity picker = pickerRepository.save(PickerEntity.builder().firstname("Jane").lastname("Doe").build());
+        int number = randomBucketNumber();
+        bucketRepository.save(BucketEntity.builder().number(number).picker(picker).build());
+        String uid = ReferenceTagUids.nextInList();
+        register(number, Map.of("uids", new String[] { uid })).andExpect(status().isOk());
+        scan(reader, uid).andExpect(status().isOk()).andExpect(jsonPath("$.message").doesNotExist());
+        assertThat(tagRepository.findByUid(uid).orElseThrow().getBucket()).isNull();
+
+        // Back into its bucket: no 409, since the scan took it out (spec 004, FR-009).
+        register(number, Map.of("uids", new String[] { uid })).andExpect(status().isOk());
+        scan(reader, uid, false)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").doesNotExist())
+                .andExpect(jsonPath("$.isCompliant").value(false));
+
+        RecordEntity latest = recordRepository.findTop10ByReader_NameOrderByCreationDateDesc(reader.getName()).get(0);
+        assertThat(latest.getPicker().getId()).isEqualTo(picker.getId());
+        assertThat(recordRepository.findTop10ByReader_NameOrderByCreationDateDesc(reader.getName())).hasSize(2);
+    }
+
+    private ResultActions scan(ReaderEntity reader, String uid) throws Exception {
+        return scan(reader, uid, true);
+    }
+
+    private ResultActions scan(ReaderEntity reader, String uid, boolean isCompliant) throws Exception {
+        return mockMvc.perform(post("/api/tags/scan")
+                .header("x-api-token", reader.getApitoken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(Map.of("uid", uid, "isCompliant", isCompliant))));
     }
 
     private ResultActions register(int bucketNumber, Map<String, Object> body) throws Exception {

@@ -20,6 +20,7 @@ import com.rfidback.generated.model.BucketWithTagsAndPickerAllOfPicker;
 import com.rfidback.generated.model.BucketsList;
 import com.rfidback.repository.BucketRepository;
 import com.rfidback.repository.PickerRepository;
+import com.rfidback.repository.RecordRepository;
 import com.rfidback.repository.TagRepository;
 
 import lombok.RequiredArgsConstructor;
@@ -31,6 +32,7 @@ public class BucketService {
     private final BucketRepository bucketRepository;
     private final TagRepository tagRepository;
     private final PickerRepository pickerRepository;
+    private final RecordRepository recordRepository;
 
     public BucketsList listBuckets() {
         List<BucketEntity> buckets = bucketRepository.findAll(Sort.by(Sort.Order.asc("number")));
@@ -88,9 +90,11 @@ public class BucketService {
 
     @Transactional
     public void assignBucketToPicker(UUID bucketId, UUID pickerId) {
-        BucketEntity bucket = bucketRepository.findById(bucketId)
+        BucketEntity bucket = bucketRepository.findWithLockById(bucketId)
                 .orElseThrow(() -> new BucketNotFoundException("Bucket %s not found".formatted(bucketId)));
-        PickerEntity picker = pickerRepository.findById(pickerId)
+        // Locked after the bucket: a concurrent picker delete either waits for this or is seen (spec 001, R12).
+        PickerEntity picker = pickerRepository.findWithLockById(pickerId)
+                .filter(candidate -> !candidate.isDeleted())
                 .orElseThrow(() -> new PickerNotFoundException("Picker %s not found".formatted(pickerId)));
 
         bucket.setPicker(picker);
@@ -99,11 +103,26 @@ public class BucketService {
 
     @Transactional
     public void unassignBucketFromPicker(UUID bucketId) {
-        BucketEntity bucket = bucketRepository.findById(bucketId)
+        BucketEntity bucket = bucketRepository.findWithLockById(bucketId)
                 .orElseThrow(() -> new BucketNotFoundException("Bucket %s not found".formatted(bucketId)));
 
         bucket.setPicker(null);
         bucketRepository.save(bucket);
+    }
+
+    /**
+     * Deletes the bucket for good (spec 006, FR-010): its tags and the records that counted them lose it, the records
+     * keep their picker, and its number is free again. Locked first, so a concurrent scan, registration or assignment
+     * either commits before or sees the bucket gone (research R10, R12).
+     */
+    @Transactional
+    public void deleteBucket(UUID bucketId) {
+        BucketEntity bucket = bucketRepository.findWithLockById(bucketId)
+                .orElseThrow(() -> new BucketNotFoundException("Bucket %s not found".formatted(bucketId)));
+
+        tagRepository.clearBucket(bucket);
+        recordRepository.clearBucket(bucket);
+        bucketRepository.delete(bucket);
     }
 
     private BucketWithTagsAndPickerAllOfPicker toPickerModel(PickerEntity entity) {

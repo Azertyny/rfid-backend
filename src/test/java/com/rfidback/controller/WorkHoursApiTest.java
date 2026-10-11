@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -148,6 +149,20 @@ class WorkHoursApiTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"day\":\"" + DAY + "\",\"entries\":[{\"pickerId\":\"" + UUID.randomUUID()
                                 + "\",\"hours\":8}]}"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void aDeletedPickerIsNotListedAndCannotGetHours() throws Exception {
+        save(DAY, entry(moreau, "7.5"));
+        mockMvc.perform(delete("/api/pickers/" + moreau.getId()).with(asAdmin()).with(csrf()))
+                .andExpect(status().isNoContent());
+
+        JsonNode day = read(DAY);
+        day.get("pickers").forEach(row ->
+                assertThat(row.get("pickerId").asText()).isNotEqualTo(moreau.getId().toString()));
+        mockMvc.perform(put("/api/work-hours").with(asAdmin()).with(csrf())
+                        .contentType(MediaType.APPLICATION_JSON).content(body(DAY, entry(moreau, "8"))))
                 .andExpect(status().isNotFound());
     }
 

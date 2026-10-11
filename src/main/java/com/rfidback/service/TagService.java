@@ -49,6 +49,8 @@ public class TagService {
 
     static final String DUPLICATE_READ_IGNORED = "Duplicate read ignored";
     static final String OFF_LIST_SCAN_IGNORED = "Tag not in reference list, ignored";
+    static final String RESCAN_TODAY = "Tag already scanned today";
+    static final String SECOND_TAG_OF_CRATE = "Second tag of the crate ignored";
 
     private final TagRepository tagRepository;
     private final RecordRepository recordRepository;
@@ -59,12 +61,14 @@ public class TagService {
     private final LineActivityService lineActivityService;
     private final Clock clock;
     private final Duration duplicateWindow;
+    private final Duration crateWindow;
 
     public TagService(TagRepository tagRepository, RecordRepository recordRepository,
             BucketRepository bucketRepository, RecordConformityChangeRepository recordConformityChangeRepository,
             ReferenceTagList referenceTagList, ReaderRepository readerRepository,
             LineActivityService lineActivityService, Clock clock,
-            @Value("${app.scan.duplicate-window}") Duration duplicateWindow) {
+            @Value("${app.scan.duplicate-window}") Duration duplicateWindow,
+            @Value("${app.scan.crate-window}") Duration crateWindow) {
         this.tagRepository = tagRepository;
         this.recordRepository = recordRepository;
         this.bucketRepository = bucketRepository;
@@ -74,12 +78,14 @@ public class TagService {
         this.lineActivityService = lineActivityService;
         this.clock = clock;
         this.duplicateWindow = duplicateWindow;
+        this.crateWindow = crateWindow;
     }
 
     /**
      * A scan from a PRODUCTION reader. A tag not in the reference list is ignored before any database access: no Tag,
-     * no Record, and {@code isCompliant} true so the line raises no alert (spec 010 révision, FR-006). The record
-     * carries the line's current activity at scan time, if any (spec 012, FR-014).
+     * no Record, and {@code isCompliant} true so the line raises no alert (spec 010 révision, FR-006). Otherwise the
+     * first matching rule applies (spec 004, research R13): the same pass (FR-008), the second tag of a crate (FR-010),
+     * a rescan the same day (FR-009), or a new Record that takes the tag out of its bucket (FR-009). A record carries the line's current activity at scan time, if any (spec 012, FR-014).
      */
     @Transactional
     public ScanTagResponse registerScan(ReaderEntity reader, ScanTagRequest scanTagRequest) {
@@ -97,32 +103,91 @@ public class TagService {
             return ignored;
         }
         boolean isCompliant = Boolean.TRUE.equals(scanTagRequest.getIsCompliant());
-        Optional<TagEntity> existingTag = tagRepository.findByUid(uid);
-        if (existingTag.isPresent()) {
-            Optional<RecordEntity> recent = findRecentRecord(reader, existingTag.get());
-            if (recent.isPresent()) {
-                return ignoreDuplicate(recent.get(), isCompliant);
-            }
-        }
-        TagEntity tag = existingTag.orElseGet(() -> tagRepository.save(TagEntity.builder().uid(uid).build()));
+        OffsetDateTime now = OffsetDateTime.now(clock);
+        TagEntity tag = tagRepository.findByUid(uid)
+                .orElseGet(() -> tagRepository.save(TagEntity.builder().uid(uid).build()));
 
-        PickerEntity picker = tag.getBucket() != null ? tag.getBucket().getPicker() : null;
-        RecordEntity recordEntity = RecordEntity.builder()
+        Optional<RecordEntity> counted = countedRecord(tag);
+        if (counted.isPresent() && isSamePass(counted.get(), reader, now)) {
+            return absorb(counted.get(), tag, isCompliant, now, DUPLICATE_READ_IGNORED);
+        }
+        Optional<RecordEntity> crate = crateOf(tag, reader, now);
+        if (crate.isPresent()) {
+            tag.setBucket(null);
+            tag.setCountedRecord(crate.get());
+            return absorb(crate.get(), tag, isCompliant, now, SECOND_TAG_OF_CRATE);
+        }
+        if (counted.isPresent() && !counted.get().getCreationDate().isBefore(lineActivityService.startOfToday())) {
+            return rescanToday(tag, reader, now);
+        }
+        return count(tag, reader, isCompliant, now);
+    }
+
+    /** The record that counted the tag since its last registration, row-locked (spec 005, FR-006; research R8). */
+    private Optional<RecordEntity> countedRecord(TagEntity tag) {
+        return tag.getCountedRecord() == null ? Optional.empty()
+                : recordRepository.findWithLockById(tag.getCountedRecord().getId());
+    }
+
+    /** Rule 1 (FR-008, research R7): the same reader read it less than the window ago, the window sliding. */
+    private boolean isSamePass(RecordEntity record, ReaderEntity reader, OffsetDateTime now) {
+        return duplicateWindow.isPositive()
+                && record.getReader().getId().equals(reader.getId())
+                && record.getLastReadAt() != null
+                && record.getLastReadAt().isAfter(now.minus(duplicateWindow));
+    }
+
+    /**
+     * Rule 4 (FR-003, FR-009): a new Record with the bucket's picker, and the tag leaves its bucket. The tag is
+     * managed, so its changes are written with the transaction.
+     */
+    private ScanTagResponse count(TagEntity tag, ReaderEntity reader, boolean isCompliant, OffsetDateTime now) {
+        // Locks the bucket so a concurrent delete either waits for this scan or is seen by it (spec 006, research R12).
+        if (tag.getBucket() != null && bucketRepository.findWithLockById(tag.getBucket().getId()).isEmpty()) {
+            tag.setBucket(null);
+        }
+        BucketEntity bucket = tag.getBucket();
+        RecordEntity saved = recordRepository.saveAndFlush(RecordEntity.builder()
                 .tag(tag)
                 .reader(reader)
-                .picker(picker)
+                .picker(bucket != null ? bucket.getPicker() : null)
+                .bucket(bucket)
                 .activity(currentActivity(reader))
                 .compliant(isCompliant)
-                .build();
+                .lastReadAt(now)
+                .build());
+        tag.setBucket(null);
+        tag.setCountedRecord(saved);
+        return response(tag, saved, null);
+    }
 
-        RecordEntity saved = recordRepository.saveAndFlush(recordEntity);
+    /**
+     * Rule 2 (FR-010, research R10): the Record this reader created less than the crate window ago for another tag of
+     * the same bucket. Measured from that Record's creation, so a crate still in front of the reader never swallows
+     * the next one.
+     */
+    private Optional<RecordEntity> crateOf(TagEntity tag, ReaderEntity reader, OffsetDateTime now) {
+        if (tag.getBucket() == null || !crateWindow.isPositive()) {
+            return Optional.empty();
+        }
+        return recordRepository.findFirstByReaderAndBucketAndTagNotAndCreationDateAfterOrderByCreationDateDesc(
+                reader, tag.getBucket(), tag, now.minus(crateWindow));
+    }
 
-        ScanTagResponse response = new ScanTagResponse();
-        response.setUid(tag.getUid());
-        response.setIsCompliant(isCompliant);
-        response.setProcessedAt(saved.getCreationDate());
-        response.setMessage(saved.getComment());
-        return response;
+    /**
+     * Rule 3 (FR-009, research R9): a tag counted earlier today, read again outside its pass, was reused: a new
+     * non-compliant Record with no picker, whatever the reader says. The first Record is unchanged.
+     */
+    private ScanTagResponse rescanToday(TagEntity tag, ReaderEntity reader, OffsetDateTime now) {
+        RecordEntity saved = recordRepository.saveAndFlush(RecordEntity.builder()
+                .tag(tag)
+                .reader(reader)
+                .activity(currentActivity(reader))
+                .compliant(false)
+                .lastReadAt(now)
+                .build());
+        tag.setCountedRecord(saved);
+        return response(tag, saved, RESCAN_TODAY);
     }
 
     /**
@@ -135,30 +200,27 @@ public class TagService {
                 .orElse(null);
     }
 
-    /** FR-008: a Record of this tag by this reader within the duplicate window; a new tag has none. */
-    private Optional<RecordEntity> findRecentRecord(ReaderEntity reader, TagEntity tag) {
-        if (duplicateWindow.isZero() || duplicateWindow.isNegative()) {
-            return Optional.empty();
-        }
-        OffsetDateTime cutoff = OffsetDateTime.now(clock).minus(duplicateWindow);
-        return recordRepository.findFirstByReaderAndTagAndCreationDateAfterOrderByCreationDateDesc(reader, tag,
-                cutoff);
-    }
-
     /**
-     * A repeated read creates no Record; a non-compliant one still lowers the Record (never raises it), unless an
-     * Opérateur already changed it (spec 005, FR-006).
+     * A read that creates no Record: it extends the record's pass, and a non-compliant one lowers the record (never
+     * raises it), unless an Opérateur already changed it (spec 005, FR-006).
      */
-    private ScanTagResponse ignoreDuplicate(RecordEntity existing, boolean isCompliant) {
+    private ScanTagResponse absorb(RecordEntity existing, TagEntity tag, boolean isCompliant, OffsetDateTime now,
+            String message) {
+        existing.setLastReadAt(now);
         if (!isCompliant && existing.isCompliant() && !recordConformityChangeRepository.existsByRecord(existing)) {
             existing.setCompliant(false);
             existing = recordRepository.saveAndFlush(existing);
         }
+        return response(tag, existing, message);
+    }
+
+    /** The tag the reader sent, even when the record was created for another tag of its crate. */
+    private static ScanTagResponse response(TagEntity tag, RecordEntity record, String message) {
         ScanTagResponse response = new ScanTagResponse();
-        response.setUid(existing.getTag().getUid());
-        response.setIsCompliant(existing.isCompliant());
-        response.setProcessedAt(existing.getCreationDate());
-        response.setMessage(DUPLICATE_READ_IGNORED);
+        response.setUid(tag.getUid());
+        response.setIsCompliant(record.isCompliant());
+        response.setProcessedAt(record.getCreationDate());
+        response.setMessage(message);
         return response;
     }
 
@@ -213,13 +275,15 @@ public class TagService {
             throw new RegistrationNotConfirmedException(tagsInOtherBuckets);
         }
 
-        BucketEntity bucket = bucketRepository.findByNumber(bucketNumber)
+        BucketEntity bucket = bucketRepository.findWithLockByNumber(bucketNumber)
                 .orElseGet(() -> bucketRepository.save(BucketEntity.builder().number(bucketNumber).build()));
 
         List<TagEntity> tagsToSave = new ArrayList<>();
         for (String uid : uniqueUids) {
             TagEntity tag = existingTags.getOrDefault(uid, TagEntity.builder().uid(uid).build());
             tag.setBucket(bucket);
+            // Registering again makes the tag new for the scan rules (spec 004, FR-009).
+            tag.setCountedRecord(null);
             tagsToSave.add(tag);
         }
         tagRepository.saveAll(tagsToSave);

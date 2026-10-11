@@ -1,5 +1,7 @@
 package com.rfidback.service;
 
+import java.time.Clock;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -29,7 +31,6 @@ import com.rfidback.generated.model.PickersPage;
 import com.rfidback.generated.model.UpdatePicker;
 import com.rfidback.repository.BucketRepository;
 import com.rfidback.repository.PickerRepository;
-import com.rfidback.repository.PickerWorkDayRepository;
 
 import lombok.RequiredArgsConstructor;
 
@@ -47,11 +48,11 @@ public class PickerService {
 
     private final PickerRepository pickerRepository;
     private final BucketRepository bucketRepository;
-    private final PickerWorkDayRepository pickerWorkDayRepository;
+    private final Clock clock;
 
     public PickersPage listPickers(int page, int size, String sort) {
         Pageable pageable = PageRequest.of(page, size, toSort(sort));
-        Page<PickerEntity> pickerPage = pickerRepository.findAll(pageable);
+        Page<PickerEntity> pickerPage = pickerRepository.findAllByDeletedAtIsNull(pageable);
 
         List<PickerEntity> pickerEntities = pickerPage.getContent();
         // A picker may hold several buckets (spec 006), so group the numbers instead of mapping one per picker.
@@ -127,14 +128,18 @@ public class PickerService {
 
     @Transactional
     public void deletePicker(UUID pickerId) {
-        PickerEntity entity = loadPicker(pickerId);
+        // Locked, so a concurrent bucket assignment either commits before (409) or sees the picker gone (research R12).
+        PickerEntity entity = pickerRepository.findWithLockById(pickerId)
+                .filter(picker -> !picker.isDeleted())
+                .orElseThrow(() -> new PickerNotFoundException("Picker %s not found".formatted(pickerId)));
         if (bucketRepository.existsByPicker(entity)) {
             throw new PickerHasBucketsException(
                     "Picker %s still has at least one bucket assigned; unassign it first".formatted(pickerId));
         }
-        // No hours without their picker (spec 014); the foreign key would block the deletion otherwise.
-        pickerWorkDayRepository.deleteByPicker(entity);
-        pickerRepository.delete(entity);
+        // Logical delete: the row stays, so the picker's records and hours keep their name on the dashboard
+        // (spec 001, FR-010).
+        entity.setDeletedAt(OffsetDateTime.now(clock));
+        pickerRepository.save(entity);
     }
 
     private Sort toSort(String sort) {
@@ -172,6 +177,7 @@ public class PickerService {
 
     private PickerEntity loadPicker(UUID pickerId) {
         return pickerRepository.findById(pickerId)
+                .filter(picker -> !picker.isDeleted())
                 .orElseThrow(() -> new PickerNotFoundException("Picker %s not found".formatted(pickerId)));
     }
 

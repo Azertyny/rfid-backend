@@ -340,7 +340,7 @@ paths:
     get:
       summary: List pickers with pagination
       description: |
-        Get the sorted and filtered list of pickers with pagination support
+        Get the sorted and filtered list of pickers with pagination support. Deleted pickers are not listed.
       operationId: getPickers
       tags: [Picker]
       parameters:
@@ -389,7 +389,7 @@ paths:
           format: uuid
     get:
       summary: Get picker detail
-      description: Get detailed information about a specific picker
+      description: Get detailed information about a specific picker. 404 for an unknown or deleted picker.
       operationId: getPicker
       tags: [Picker]
       responses:
@@ -403,6 +403,7 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
     put:
       summary: Update picker
+      description: Same name rule as the creation, deleted pickers included. 404 for an unknown or deleted picker.
       operationId: updatePicker
       tags: [Picker]
       requestBody:
@@ -424,6 +425,10 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
     delete:
       summary: Delete picker
+      description: >
+        Deletes the picker logically: they disappear from the lists and can no longer be read, changed, assigned a
+        bucket or given hours (404), but their records and hours stay and keep their name on the dashboard. Their
+        name stays taken. Refused with 409 while a bucket is assigned to them; 404 for an unknown or deleted picker.
       operationId: deletePicker
       tags: [Picker]
       responses:
@@ -440,7 +445,7 @@ paths:
     get:
       summary: Work hours of every picker for one day
       description: >
-        Every picker, by lastname then firstname, with the hours entered for the day (null when none), the number of
+        Every picker not deleted, by lastname then firstname, with the hours entered for the day (null when none), the number of
         records attributed to the picker that day on all readers, and missingHours when there are records but no
         hours. The day is a day of the station time zone; today by default, a future day is refused. Administrateur.
       operationId: getWorkDay
@@ -468,7 +473,7 @@ paths:
       description: >
         For each entry, sets the picker's hours for the day (replacing the previous value) or, with hours null,
         removes them. Pickers not listed are unchanged. All or nothing: an invalid entry (hours not a multiple of
-        0.25 between 0.25 and 24, a picker listed twice) answers 400, an unknown picker 404, and nothing is saved.
+        0.25 between 0.25 and 24, a picker listed twice) answers 400, an unknown or deleted picker 404, and nothing is saved.
         A day after today in the station time zone is refused (400). The session's user and the current time are
         stored as the last change of each written entry. Administrateur.
       operationId: saveWorkDay
@@ -551,11 +556,16 @@ paths:
         the application (its last 12 characters): for a reader in ENREGISTREMENT mode, a uid not in the list is not
         kept and the message is "Registration read ignored: tag not in reference list"; for a reader in PRODUCTION
         mode, no tag and no record are created, isCompliant is true and the message is "Tag not in reference list,
-        ignored". For a reader in PRODUCTION mode, a scan of the same tag by the same
-        reader within app.scan.duplicate-window (10 s by default) of that tag's latest record creates no new
-        record: the response carries the existing record and the message "Duplicate read ignored". If that
-        repeat reports isCompliant false and the record is compliant, the record becomes non-compliant.
-        The record carries the line's current activity, if any.
+        ignored". For a reader in PRODUCTION mode, rules apply in this order. A read of a tag by the same reader
+        less than app.scan.duplicate-window (10 s by default) after the last read of the record that counted it is
+        the same pass: no new record, the response carries that record and the message "Duplicate read ignored". A
+        tag of bucket B read by the same reader less than app.scan.crate-window (2 s by default) after a record
+        counted another tag of B is the second tag of that crate: no new record, the tag leaves its bucket, the
+        response carries the crate's record and the message "Second tag of the crate ignored". In both cases, a read
+        reporting isCompliant false turns a compliant record non-compliant. A tag already counted today (station
+        day), read again, gives a new non-compliant record with no picker, whatever isCompliant says, and the message
+        "Tag already scanned today". Otherwise a new record is created and the tag leaves its bucket. Registering the
+        tag into a bucket again resets it. A record carries the line's current activity, if any.
       operationId: scanTag
       tags: [Tag]
       security:
@@ -916,6 +926,18 @@ paths:
                 $ref: "#/components/schemas/BucketWithTagsAndPicker"
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/InternalError" }
+    delete:
+      summary: Delete a bucket
+      description: >
+        Deletes the bucket for good, whatever its tags and picker. Its tags stay known without a bucket, the
+        records that counted them keep their picker, and its number can be used again by a tag registration.
+      operationId: deleteBucket
+      tags: [Bucket]
+      responses:
+        "204": { $ref: "#/components/responses/Deleted" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /buckets/{bucketId}/picker:
     parameters:
@@ -928,7 +950,7 @@ paths:
           format: uuid
     put:
       summary: Assign a bucket to a picker
-      description: Assign an existing bucket to an existing picker. If the bucket already has a picker, it is replaced (a picker may have several buckets).
+      description: Assign an existing bucket to an existing picker. If the bucket already has a picker, it is replaced (a picker may have several buckets). 404 when the bucket or the picker is unknown, or the picker is deleted.
       operationId: assignBucketToPicker
       tags: [Bucket]
       requestBody:
@@ -1513,8 +1535,10 @@ components:
         message:
           type: string
           description: >
-            Processing message. "Duplicate read ignored" when the scan repeated a recent one (no new record);
-            registration messages for readers in ENREGISTREMENT mode; absent otherwise.
+            Processing message, absent when a new record counted the tag. "Duplicate read ignored" for a repeat of
+            the same pass, "Second tag of the crate ignored" for a crate's second tag (no new record), "Tag already
+            scanned today" for a non-compliant rescan, "Tag not in reference list, ignored" for a uid outside the
+            reference list; registration messages for readers in ENREGISTREMENT mode.
           example: Duplicate read ignored
       required:
         - uid

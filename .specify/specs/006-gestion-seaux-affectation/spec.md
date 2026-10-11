@@ -4,9 +4,11 @@
 
 **Created**: 2026-09-24
 
-**Status**: Target — as-is spec updated by the 2026-09-24/25 clarifications, implemented on branch `006-gestion-seaux-affectation`
+**Status**: Target — as-is spec updated by the 2026-09-24/25 clarifications, implemented on branch `006-gestion-seaux-affectation` ; amendement du 2026-10-11 (suppression d'un seau, FR-010, User Story 4) implémenté sur la branche `006-suppression-seau`
 
 **Input**: User description: "Parcours le dépôt. Pour chaque fonctionnalité métier identifiée, crée .specify/specs/NNN-nom-feature/spec.md ... Décris le comportement ACTUEL (as-is) ... cite les fichiers ... Marque [NEEDS CLARIFICATION] ..."
+
+**Amendment input (2026-10-11)**: "Il faudrait avoir la possibilité de supprimer un seau"
 
 ## Clarifications
 
@@ -24,6 +26,11 @@
 - Q: Should the new bucket management page also let the Administrateur remove a picker from a bucket, or only assign one? → A: Assign and unassign — each assigned bucket has a "Désaffecter" button, with a confirmation window naming the current picker, calling `DELETE /api/buckets/{bucketId}/picker`.
 - Q: Which automated tests are required for this feature to be done? → A: Backend tests only — `BucketService` unit tests plus controller/security tests; the front page is checked manually.
 - Q: On the bucket page, how should the Administrateur choose the picker to assign? → A: A dropdown with text filtering, listing all pickers sorted by last name; the page loads every page of `GET /api/pickers` (`size` is capped at 100); no API change.
+
+### Session 2026-10-11
+
+- Q: When an Administrateur deletes a bucket that still has registered tags, what should happen? (FR-010) → A: Free the tags — the bucket is deleted and its tags stay known but without a bucket, to be registered again; the confirmation window gives the number of tags. Refusing would leave no way to empty a bucket, since a tag can only leave one by moving to another bucket or by being counted.
+- Q: And when the bucket is still assigned to a picker? (FR-010) → A: Delete anyway — the picker loses this bucket, their past records keep their name; the confirmation window names the picker.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -68,6 +75,24 @@ Un Administrateur retire le cueilleur d'un seau depuis la page de gestion des se
 2. **Given** la fenêtre de confirmation est ouverte, **When** l'Administrateur annule, **Then** aucune requête n'est envoyée et l'affectation est inchangée.
 3. **Given** un seau sans cueilleur, **When** la page l'affiche, **Then** aucune action "Désaffecter" n'est proposée pour ce seau.
 
+### User Story 4 - Supprimer un seau (Priority: P2)
+
+Cible (Clarifications 2026-10-11, FR-010). Un Administrateur supprime un seau dont il n'a plus l'usage : créé par erreur (numéro mal saisi à l'enregistrement des tags, qui crée le seau), perdu ou retiré. Aujourd'hui un seau ne disparaît jamais de la page "Seaux".
+
+**Why this priority**: les seaux s'accumulent dans la liste sans gêner le comptage ; gêne de lisibilité, pas de blocage.
+
+**Acceptance Scenarios**:
+
+1. **Given** un seau sans tag ni cueilleur, **When** l'Administrateur clique sur "Supprimer" puis confirme, **Then** le seau n'apparaît plus dans la liste des seaux ni dans son détail (`404`).
+2. **Given** un seau n°12 avec 2 tags et affecté au cueilleur Jean Martin, **When** l'Administrateur clique sur "Supprimer", **Then** la fenêtre de confirmation indique que le seau n°12 contient 2 tags qui seront libérés et qu'il est affecté à Jean Martin ; après validation, le seau est supprimé, ses 2 tags n'ont plus de seau et le seau n'apparaît plus dans les numéros de seaux de Jean Martin.
+3. **Given** la fenêtre de confirmation est ouverte, **When** l'Administrateur annule, **Then** rien n'est envoyé et le seau est inchangé.
+4. **Given** des lectures passées comptées pour un tag de ce seau, **When** le seau est supprimé, **Then** ces lectures restent consultables avec le même cueilleur, la même activité et la même conformité, et les totaux du tableau de bord sont identiques à ceux d'avant la suppression.
+5. **Given** un tag libéré par la suppression, **When** il est lu par un lecteur de production, **Then** il est traité comme tout tag sans seau (lecture sans cueilleur, spec `004`) ; **When** il est enregistré dans un seau, **Then** il y est ajouté sans demande de confirmation de déplacement.
+6. **Given** le seau n°12 supprimé, **When** des tags sont ensuite enregistrés sous le numéro 12, **Then** un nouveau seau n°12 est créé, sans cueilleur, ne contenant que ces tags.
+7. **Given** le cueilleur Jean Martin n'avait que ce seau, **When** le seau est supprimé, **Then** Jean Martin peut être supprimé (spec `001`) sans désaffectation préalable.
+8. **Given** un identifiant de seau inconnu ou déjà supprimé, **When** la suppression est demandée, **Then** `404`.
+9. **Given** un Opérateur connecté, **When** il tente de supprimer un seau, **Then** `403` ; un appelant non connecté reçoit `401`.
+
 ### Edge Cases
 
 - **Cardinalité 1 cueilleur ↔ 0..1 seau non appliquée** : `doc/20251013-database_diagram.puml:66` déclare `picker ||--o| bucket`, soit un cueilleur associé à **au plus un** seau. Rien dans le code n'impose cette contrainte : `BucketEntity.picker` (`BucketEntity.java:36-38`) est une simple FK `@ManyToOne`, **sans contrainte d'unicité** sur la colonne `picker_id`, et `BucketService.assignBucketToPicker` (`BucketService.java:89-98`) n'effectue **aucune vérification** qu'un cueilleur n'a pas déjà un seau avant d'en affecter un second. Rien ne désaffecte non plus l'éventuel seau précédent de ce cueilleur. Un même cueilleur peut donc se retrouver, en base, affecté à plusieurs seaux simultanément — ce qui contredit directement `doc/20251013-database_diagram.puml`. **Résolu (2026-09-24)** : le diagramme est obsolète — un cueilleur peut avoir plusieurs seaux, aucune contrainte d'unicité n'est à ajouter. **Diagramme corrigé (006)** : `picker ||--o{ bucket`.
@@ -75,6 +100,8 @@ Un Administrateur retire le cueilleur d'un seau depuis la page de gestion des se
 - **Désaffectation** (écart corrigé) : à l'origine aucune route ne permettait de retirer un cueilleur d'un seau, seule une réaffectation via le même `PUT` était possible ; combiné à la spec `001` (suppression refusée tant qu'il a un seau), un cueilleur ayant un seau ne pouvait jamais être supprimé. **Résolu (2026-09-24)** : ajouter `DELETE /api/buckets/{bucketId}/picker`, qui retire le cueilleur du seau (`204`, ou `404` si le seau n'existe pas). **Livré par la feature `001`** (voir FR-007).
 - **Aucune interface utilisateur** : `doc/20251116-use_cases.md:82-100` ("Affecter des seaux") décrit un parcours UI complet (page de gestion des seaux, sélection, liste des cueilleurs, fenêtre de confirmation). Aucune page de `/front` n'appelle `/api/buckets*` (vérifié par recherche de `buckets` dans `front/*.html` — la seule occurrence, `front/index.html:293`, est une variable locale de graphique temporel sans rapport avec l'entité métier "seau"). **Résolu (2026-09-24, révisé lors de `/speckit-plan`)** : il n'y a pas d'outil externe — l'affectation des seaux fait partie du front web, utilisée par un Administrateur connecté. Une page `/front` est à construire, conformément au parcours de `doc/20251116-use_cases.md:82-100`. **Livré (006)** : `front/buckets.html`.
 - **Authentification** (écart corrigé) : à l'origine aucune authentification sur ces routes, malgré la précondition "L'utilisateur est connecté" de `doc/`. **Livré par la spec `008`** : `/api/buckets/**` exige un utilisateur connecté de rôle Administrateur (`SecurityConfig.java:125`) ; l'Opérateur reçoit `403`, un appelant anonyme `401` (vérifié par `AccessMatrixSecurityTest.java:74-78`).
+- **Suppression d'un seau en cours de lecture** (Clarifications 2026-10-11) : si un tag du seau est lu au moment où le seau est supprimé, l'une des deux opérations passe avant l'autre — soit le tag est compté avec le cueilleur du seau puis le seau est supprimé, soit le seau est supprimé puis le tag est compté sans cueilleur. Aucune des deux ne doit échouer.
+- **Seau supprimé pendant une session d'enregistrement** : une session ouverte vise un numéro de seau, pas un seau existant ; l'enregistrer après la suppression recrée un seau de ce numéro (scénario 6 de la User Story 4).
 - **Aucun test** pour `BucketService`/`BucketController`. **Résolu (Clarifications 2026-09-25)** : tests backend requis, voir SC-002.
 
 ## Requirements *(mandatory)*
@@ -91,11 +118,14 @@ Un Administrateur retire le cueilleur d'un seau depuis la page de gestion des se
 - **FR-007** (nouveau, Clarifications 2026-09-24) : le système DOIT permettre de retirer le cueilleur d'un seau via `DELETE /api/buckets/{bucketId}/picker` (`204`, ou `404` si le seau n'existe pas). **Livré par la feature `001`** (tâches T001, T021, T022) : `BucketService.unassignBucketFromPicker`, idempotent (`204` aussi si le seau n'avait pas de cueilleur), Administrateur seul.
 - **FR-008** (Clarifications 2026-09-25) : la page front de gestion des seaux DOIT proposer, pour chaque seau affecté, une action "Désaffecter" ; après une fenêtre de confirmation nommant le cueilleur actuel, elle appelle `DELETE /api/buckets/{bucketId}/picker` (FR-007) et rafraîchit la liste (le seau apparaît sans cueilleur).
 - **FR-009** (Clarifications 2026-09-25) : pour choisir le cueilleur, la page DOIT proposer une liste déroulante filtrable par saisie, contenant **tous** les cueilleurs triés par nom ; elle charge toutes les pages de `GET /api/pickers` (`size` ≤ 100, `api.yaml:755-763`) jusqu'à la dernière. Aucune modification de l'API cueilleurs n'est requise.
+- **FR-010** (nouveau, Clarifications 2026-10-11) : le système DOIT permettre à un Administrateur (et à lui seul, FR-005) de supprimer un seau, qu'il ait ou non des tags et un cueilleur. La suppression est définitive : le seau disparaît de la liste et du détail des seaux et des numéros de seaux de son cueilleur, et son numéro redevient libre (un enregistrement de tags sous ce numéro crée un nouveau seau). Ses tags restent connus mais sans seau. Les lectures passées sont conservées avec leur tag, leur cueilleur, leur activité et leur conformité ; les totaux du tableau de bord et les heures de travail ne changent pas. Un seau inconnu ou déjà supprimé DOIT répondre `404`. La page "Seaux" DOIT proposer une action "Supprimer" sur chaque seau, avec une fenêtre de confirmation qui donne le numéro du seau, le nombre de tags libérés (s'il y en a) et le cueilleur affecté (s'il y en a), puis rafraîchir la liste. **Livré** : `DELETE /api/buckets/{bucketId}`, `BucketService.deleteBucket`, bouton « Supprimer » de `front/buckets.html`.
 
 ### Key Entities
 
-- **Bucket** (`bucket` table) : voir spec `003`. Relation `picker` non contrainte en unicité côté base/JPA. Cible (Clarifications 2026-09-24) : relation 1 cueilleur → 0..n seaux, un seau ayant 0..1 cueilleur.
+- **Bucket** (`bucket` table) : voir spec `003`. Relation `picker` non contrainte en unicité côté base/JPA. Cible (Clarifications 2026-09-24) : relation 1 cueilleur → 0..n seaux, un seau ayant 0..1 cueilleur. Cible (Clarifications 2026-10-11, FR-010) : un seau peut être supprimé définitivement ; ses tags perdent leur seau, et les lectures qui le désignaient le perdent aussi, sans autre changement.
 - **Picker** : voir spec `001`.
+- **Tag** : voir spec `003` ; un tag sans seau est un état normal (jamais enregistré, ou déjà compté, spec `004`), que la suppression d'un seau donne aussi.
+- **Record** : voir spec `004` ; il garde son cueilleur et son activité, copiés à la lecture, indépendamment du seau.
 
 ## Success Criteria *(mandatory)*
 
@@ -103,11 +133,15 @@ Un Administrateur retire le cueilleur d'un seau depuis la page de gestion des se
 
 - **SC-001** (observé) : une affectation réussie renvoie `204` et le `GET` suivant sur le seau reflète le nouveau cueilleur.
 - **SC-002** (Clarifications 2026-09-25) : des tests backend automatisés couvrent, et passent : (a) tests unitaires `BucketService` — liste triée par numéro, détail, affectation, réaffectation (l'ancien cueilleur perd le seau), désaffectation, `404` seau/cueilleur absent ; (b) tests contrôleur/sécurité — mêmes routes, `401` non connecté, `403` Opérateur, `2xx` Administrateur ; (c) un cueilleur affecté à 2 seaux → `GET /api/pickers` et `GET /api/pickers/{id}` renvoient `200` avec `bucketNumbers` de 2 éléments. La page front est vérifiée manuellement (pas de tests navigateur).
+- **SC-003** (Clarifications 2026-10-11, livré) : un Administrateur supprime un seau en 2 clics ("Supprimer", puis confirmer) depuis la page "Seaux". Des tests backend automatisés couvrent, et passent : suppression d'un seau vide, d'un seau avec tags et cueilleur (tags sans seau, cueilleur sans ce numéro), lectures passées et totaux du tableau de bord inchangés, numéro réutilisable, `404` seau inconnu ou déjà supprimé, `401` non connecté, `403` Opérateur.
 
 ## Assumptions
 
 - "Seau" (doc/front) et "Bucket" (code) désignent la même entité.
 - **Révisé lors de `/speckit-plan`** : ce module est utilisé depuis le front web par un Administrateur connecté ; une page `/front` est prévue.
+- (2026-10-11) La suppression d'un seau est physique, pas logique comme celle d'un lecteur (spec `002`, FR-008) : un seau n'a pas d'historique propre à conserver (les lectures portent le cueilleur), et un numéro gardé pris bloquerait l'enregistrement de tags sous ce numéro, qui crée le seau à la volée.
+- (2026-10-11) Pas de suppression en lot : un seau à la fois.
+- (2026-10-11) La suppression d'un seau est réservée à l'Administrateur comme toutes les routes des seaux ; la ligne `/api/buckets/**` de la table d'accès de la spec `008` la couvre déjà.
 
 ## Drift vs `doc/`
 

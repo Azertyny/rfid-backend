@@ -239,6 +239,8 @@ class RecordStatsApiTest {
     @Test
     void aScanStaysWithThePickerOfItsBucketAtScanTime() throws Exception {
         ReaderEntity scanner = readerRepository.save(ReaderEntity.builder().name("Reader stats scan").build());
+        // Read before the scan, which takes the tag out of its bucket (spec 004, FR-009).
+        BucketEntity bucket = dialloTag.getBucket();
         mockMvc.perform(post("/api/tags/scan")
                 .header("x-api-token", scanner.getApitoken())
                 .contentType(MediaType.APPLICATION_JSON)
@@ -247,7 +249,6 @@ class RecordStatsApiTest {
         RecordEntity scan = recordRepository.findTop10ByReader_NameOrderByCreationDateDesc("Reader stats scan").get(0);
         setCreationDate(scan, "2031-05-01T08:00:00Z");
 
-        BucketEntity bucket = dialloTag.getBucket();
         bucket.setPicker(moreau);
         bucketRepository.saveAndFlush(bucket);
 

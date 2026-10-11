@@ -102,12 +102,12 @@ src/main/java/com/rfidback/
 ├── controller/WorkHoursController.java                   # new, implements WorkHoursApiDelegate
 ├── entity/PickerWorkDayEntity.java                       # new, table picker_work_day
 ├── repository/
-│   ├── PickerWorkDayRepository.java                      # new: by day, upsert lookup, sum by picker, deleteByPicker
+│   ├── PickerWorkDayRepository.java                      # new: by day, upsert lookup, sum by picker, deleteByPicker (removed 2026-10-11, spec 001 FR-010)
 │   └── RecordRepository.java                             # countByPickerAndActivity (+ForReader)
 └── service/
     ├── WorkHoursService.java                             # new: day view, all-or-nothing save, validation
     ├── RecordStatsService.java                           # activity columns, hours, hours-only rows, includesToday
-    └── PickerService.java                                # deletePicker removes the picker's hours first
+    └── PickerService.java                                # deletePicker removes the picker's hours first (amended 2026-10-11, spec 001 FR-010: hours kept)
 
 src/test/java/com/rfidback/
 ├── controller/WorkHoursApiTest.java                      # new

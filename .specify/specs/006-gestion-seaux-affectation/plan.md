@@ -1,6 +1,6 @@
 # Implementation Plan: Gestion des seaux et affectation à un cueilleur
 
-**Branch**: `006-gestion-seaux-affectation` | **Date**: 2026-09-25 | **Spec**: [spec.md](spec.md)
+**Branch**: `006-gestion-seaux-affectation` | **Date**: 2026-09-25, amended 2026-10-11 (bucket deletion, branch `006-suppression-seau`) | **Spec**: [spec.md](spec.md)
 
 **Input**: Feature specification from `.specify/specs/006-gestion-seaux-affectation/spec.md`
 
@@ -71,9 +71,9 @@ No violations, so Complexity Tracking stays empty.
 
 ```text
 .specify/specs/006-gestion-seaux-affectation/
-├── spec.md              # As-is spec + 2026-09-24/25 clarifications
+├── spec.md              # As-is spec + 2026-09-24/25 and 2026-10-11 clarifications
 ├── plan.md              # This file
-├── research.md          # Phase 0: decisions R1-R9
+├── research.md          # Phase 0: decisions R1-R9, amendment R10-R15
 ├── data-model.md        # Phase 1: Bucket ↔ Picker cardinality, assignment lifecycle, Picker.bucketNumbers
 ├── quickstart.md        # Phase 1: validation guide
 ├── contracts/
@@ -114,3 +114,70 @@ No Constitution Check violations.
 
 - Spec `006` header still says `Status: As-Is (reverse-engineered)`. Switch it to the target once implemented, and turn the "État actuel" wording of FR-005 into "Livré par `008`".
 - Spec `001` FR-004 (`bucketNumber`) should point to FR-006 here once delivered.
+
+---
+
+## Amendment 2026-10-11: deleting a bucket (FR-010, User Story 4)
+
+### Summary
+
+An Administrateur can delete any bucket from the "Seaux" page, whatever its tags and picker (spec Clarifications 2026-10-11):
+
+1. `DELETE /api/buckets/{bucketId}` → `204`, `404` for an unknown or already deleted bucket ([contracts/openapi-buckets.md](contracts/openapi-buckets.md) §3).
+2. The delete is physical: in one transaction, the bucket's tags and the records that point at it lose their bucket, then the row is deleted. Records keep their picker, so stats and history do not change; the number becomes free (research R10, R11).
+3. A lock on the bucket row orders a delete against a concurrent scan, registration or assignment, so none of them fails with a `500` (research R12).
+4. `buckets.html` gets a "Supprimer" button on every row, with a confirmation giving the number, the freed tags and the picker (research R13).
+
+### Dependency on the spec `004` amendment
+
+This amendment needs `record.bucket_id` (`RecordEntity.bucket`), added by the spec `004` amendment (commit `ddfbe0c`), which is only on `004-scan-tag-conformite` and not yet in `dev`. Create `006-suppression-seau` from `004-scan-tag-conformite`, and open its PR (base `dev`) only after 004's is merged, or rebase it on `dev` once that is done. A branch created from today's `dev` has no `record.bucket_id`: T030, T033 and T038 could not be done.
+
+### Technical Context (changes only)
+
+**Storage**: no schema change. Two bulk updates (`tag.bucket_id`, `record.bucket_id` → `null`) and one delete per bucket deleted.
+
+**Performance Goals**: a delete is 4 statements whatever the number of tags or records. Scans gain one row lock on their bucket in rule 4 only (a scan that counts a tag of a bucket), held until the scan commits; only scans of tags of the same bucket wait for each other.
+
+**Scale/Scope**: 1 route, 4 repository methods (2 lock reads, 2 bulk updates), `BucketService` (+ delete, lock reads), `TagService` (scan rule 4, registration lookup), `BucketController`, 1 page, tests in 5 classes, 2 docs.
+
+### Constitution Check (amendment)
+
+| Gate | Pre-design | Post-design |
+|---|---|---|
+| Layering | Pass | Pass: the delete lives in `BucketService`; the lock reads and bulk updates in repositories |
+| API-first | Pass | Pass: `delete` on `/buckets/{bucketId}` in `api.yaml` first, implemented through `BucketApiDelegate.deleteBucket` |
+| Spec `008` access matrix | Pass | Pass: `/api/buckets/**` already Administrateur-only for every method; one new row in `AccessMatrixSecurityTest` |
+| Schema through entities, `ddl-auto: update` | Pass | Pass: no schema change |
+| Front static, writes through `apiFetch` | Pass | Pass: one modal in `buckets.html` |
+| `mvn clean test` / `mvn clean install` | Pass | Pass (planned) |
+
+No violations.
+
+### Source Code (amendment)
+
+```text
+src/main/resources/openapi/api.yaml             # + delete on /buckets/{bucketId}
+src/main/java/com/rfidback/
+├── repository/BucketRepository.java            # + findWithLockById, findWithLockByNumber
+├── repository/TagRepository.java               # + clearBucket
+├── repository/RecordRepository.java            # + clearBucket
+├── service/BucketService.java                  # + deleteBucket; assign/unassign load through findWithLockById
+├── service/TagService.java                     # count (rule 4): lock the tag's bucket, no row → no bucket;
+│                                               #   registerTagsForBucket: findWithLockByNumber
+└── controller/BucketController.java            # + deleteBucket
+src/test/java/com/rfidback/
+├── service/BucketServiceTest.java              # delete, 404, lock reads
+├── service/TagServiceTest.java                 # rule 4 with a bucket deleted meanwhile
+├── controller/BucketApiTest.java               # delete end to end (research R14)
+├── controller/TagScanApiTest.java              # freed tag → record with no picker
+└── security/AccessMatrixSecurityTest.java      # + DELETE /api/buckets/{id} (ADMIN_ONLY)
+front/buckets.html                              # "Supprimer" + confirmation modal
+doc/20251116-use_cases.md                       # + "Supprimer un seau"
+CLAUDE.md                                       # Persistence: one sentence on bucket deletion
+```
+
+No other page changes: `pickers.html` reads `bucketNumbers`, `tags.html` registers by number, both already consistent after a delete.
+
+### Follow-ups
+
+- Spec `006` status line: switch the amendment to "implémenté" once delivered, and mark FR-010 / SC-003 delivered.

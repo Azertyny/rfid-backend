@@ -42,4 +42,13 @@ public class PickerEntity {
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private OffsetDateTime creationDate;
+
+    // Set by the logical delete, never cleared: the row stays for the records and hours that point to it (spec 001,
+    // FR-010).
+    @Column(name = "deleted_at")
+    private OffsetDateTime deletedAt;
+
+    public boolean isDeleted() {
+        return deletedAt != null;
+    }
 }

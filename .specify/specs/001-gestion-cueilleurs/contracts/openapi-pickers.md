@@ -73,3 +73,27 @@ Roles are unchanged (spec `008`): `GET` requires Opérateur or Administrateur, a
 - `pickers.html` `confirmDelete`: on `409`, keep the modal open and show "Ce cueilleur a encore un seau affecté : désaffectez-le avant de le supprimer." instead of the generic error. On `404`, refresh the list.
 - `pickers.html` list: keeps sending `sort=lastname,asc`, which is still valid.
 - `index.html`: replace `/pickers?size=500` with a loop over `/pickers?size=100&page=N` until `metadata.hasNext` is `false`.
+
+---
+
+## 5. Amendment 2026-10-11: logical deletion (FR-010)
+
+No schema or signature change; descriptions only, so the contract says what the code does:
+
+- `DELETE /pickers/{pickerId}`: description → "Deletes the picker logically: they disappear from the lists and can no longer be read, changed, assigned a bucket or given hours (404), but their records and hours stay and keep their name on the dashboard. Their name stays taken. Refused with 409 while a bucket is assigned to them." Responses unchanged: `204`, `404` (unknown or already deleted), `409`, `401`, `403`.
+- `GET /pickers`: description gains "Deleted pickers are not listed."
+- `GET`, `PUT /pickers/{pickerId}`: `404` description → "Picker not found (unknown or deleted)".
+- `PUT /buckets/{bucketId}/picker`: `404` also when the picker is deleted.
+- `GET /work-hours`: "Deleted pickers are not listed."; `PUT /work-hours`: `404` also for an entry naming a deleted picker.
+
+| Route | Deleted picker |
+|---|---|
+| `GET /api/pickers` | not in `content`; `metadata` counts live pickers only |
+| `GET`/`PUT`/`DELETE /api/pickers/{id}` | `404` |
+| `POST /api/pickers` with their name | `409` |
+| `PUT /api/buckets/{id}/picker` with their id | `404` |
+| `GET /api/work-hours?day=` | not listed |
+| `PUT /api/work-hours` with their id | `404` |
+| `GET /api/records/stats` | unchanged: their crates and hours, under their name |
+
+Front: only the confirmation text of `pickers.html` changes (research R13): "Cette action est irréversible. Ses lectures et ses heures restent comptées sur le tableau de bord."

@@ -2,6 +2,7 @@ package com.rfidback.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
@@ -45,6 +46,7 @@ import com.rfidback.repository.TagRepository;
 class TagServiceTest {
 
     private static final Duration DUPLICATE_WINDOW = Duration.ofSeconds(10);
+    private static final Duration CRATE_WINDOW = Duration.ofSeconds(2);
 
     private TagRepository tagRepository;
     private RecordRepository recordRepository;
@@ -68,9 +70,18 @@ class TagServiceTest {
         readerRepository = Mockito.mock(ReaderRepository.class);
         lineActivityService = Mockito.mock(LineActivityService.class);
         clock = Clock.fixed(Instant.parse("2024-01-15T09:30:00Z"), ZoneOffset.UTC);
-        tagService = new TagService(tagRepository, recordRepository, bucketRepository,
-                recordConformityChangeRepository, referenceTagList, readerRepository, lineActivityService, clock,
-                DUPLICATE_WINDOW);
+        // The station day of the fixed clock (spec 004, FR-009).
+        when(lineActivityService.startOfToday()).thenReturn(OffsetDateTime.parse("2024-01-15T00:00:00Z"));
+        // The bucket of a counted tag still exists unless a test deletes it meanwhile (spec 006, research R12). Only
+        // its existence is read: the picker comes from the tag's own bucket.
+        when(bucketRepository.findWithLockById(any())).thenAnswer(
+                invocation -> Optional.of(BucketEntity.builder().id(invocation.getArgument(0)).build()));
+        tagService = tagService(DUPLICATE_WINDOW, CRATE_WINDOW);
+    }
+
+    private TagService tagService(Duration duplicateWindow, Duration crateWindow) {
+        return new TagService(tagRepository, recordRepository, bucketRepository, recordConformityChangeRepository,
+                referenceTagList, readerRepository, lineActivityService, clock, duplicateWindow, crateWindow);
     }
 
     @Test
@@ -128,10 +139,10 @@ class TagServiceTest {
         assertEquals(picker, captor.getValue().getPicker());
     }
 
-    // --- registerScan duplicates (spec 004, FR-008: same reader and tag within the window) ---
+    // --- registerScan rules (spec 004): 1 same pass, 2 second tag of a crate, 3 rescan today, 4 count ---
 
     private static final String DUPLICATE_UID = "E2000017221101891400A23G";
-    private static final OffsetDateTime EXPECTED_CUTOFF = OffsetDateTime.parse("2024-01-15T09:29:50Z");
+    private static final OffsetDateTime NOW = OffsetDateTime.parse("2024-01-15T09:30:00Z");
 
     private ReaderEntity scanReader() {
         return ReaderEntity.builder().id(UUID.randomUUID()).apitoken("token").name("Reader").build();
@@ -143,20 +154,45 @@ class TagServiceTest {
         return tag;
     }
 
-    private RecordEntity recentRecord(ReaderEntity reader, TagEntity tag, boolean compliant) {
-        RecordEntity record = RecordEntity.builder().id(UUID.randomUUID()).reader(reader).tag(tag)
-                .compliant(compliant).creationDate(OffsetDateTime.parse("2024-01-15T09:29:55Z")).build();
-        when(recordRepository.findFirstByReaderAndTagAndCreationDateAfterOrderByCreationDateDesc(
-                reader, tag, EXPECTED_CUTOFF)).thenReturn(Optional.of(record));
+    /** The record that counted the tag, found by id and row-locked by the scan (research R8). */
+    private RecordEntity countedRecord(ReaderEntity reader, String createdAt, String lastReadAt, boolean compliant) {
+        RecordEntity record = RecordEntity.builder().id(UUID.randomUUID()).reader(reader).compliant(compliant)
+                .creationDate(OffsetDateTime.parse(createdAt))
+                .lastReadAt(lastReadAt == null ? null : OffsetDateTime.parse(lastReadAt))
+                .build();
+        when(recordRepository.findWithLockById(record.getId())).thenReturn(Optional.of(record));
+        return record;
+    }
+
+    /** An existing tag, out of its bucket, counted by {@code record}. */
+    private TagEntity countedTag(RecordEntity record) {
+        TagEntity tag = existingTag();
+        tag.setCountedRecord(record);
+        record.setTag(tag);
+        return tag;
+    }
+
+    /** A record counted 60 s ago by {@code reader}, last read 5 s ago: the next read is the same pass. */
+    private RecordEntity samePassRecord(ReaderEntity reader, boolean compliant) {
+        RecordEntity record = countedRecord(reader, "2024-01-15T09:29:00Z", "2024-01-15T09:29:55Z", compliant);
+        countedTag(record);
         return record;
     }
 
     private void stubNewRecordSave() {
         when(recordRepository.saveAndFlush(any(RecordEntity.class))).thenAnswer(invocation -> {
             RecordEntity entity = invocation.getArgument(0);
-            entity.setCreationDate(OffsetDateTime.parse("2024-01-15T09:30:00Z"));
+            if (entity.getCreationDate() == null) {
+                entity.setCreationDate(NOW);
+            }
             return entity;
         });
+    }
+
+    private RecordEntity savedRecord() {
+        ArgumentCaptor<RecordEntity> saved = ArgumentCaptor.forClass(RecordEntity.class);
+        verify(recordRepository).saveAndFlush(saved.capture());
+        return saved.getValue();
     }
 
     @Test
@@ -171,16 +207,94 @@ class TagServiceTest {
 
         tagService.registerScan(authenticated, new ScanTagRequest().uid("E2000017221101891400A23G").isCompliant(true));
 
-        ArgumentCaptor<RecordEntity> saved = ArgumentCaptor.forClass(RecordEntity.class);
-        verify(recordRepository).saveAndFlush(saved.capture());
-        assertThat(saved.getValue().getActivity()).isSameAs(fraise);
+        assertThat(savedRecord().getActivity()).isSameAs(fraise);
+    }
+
+    // Rule 4: count (FR-003, FR-009)
+
+    @Test
+    void registerScan_tagInBucket_countsIt_andTheTagLeavesTheBucket() {
+        ReaderEntity reader = scanReader();
+        PickerEntity picker = PickerEntity.builder().firstname("Jane").lastname("Doe").build();
+        BucketEntity bucket = BucketEntity.builder().id(UUID.randomUUID()).number(12).picker(picker).build();
+        TagEntity tag = existingTag();
+        tag.setBucket(bucket);
+        stubNewRecordSave();
+
+        ScanTagResponse response = tagService.registerScan(reader,
+                new ScanTagRequest().uid(DUPLICATE_UID).isCompliant(true));
+
+        RecordEntity saved = savedRecord();
+        assertThat(saved.getPicker()).isSameAs(picker);
+        assertThat(saved.getBucket()).isSameAs(bucket);
+        assertEquals(NOW, saved.getLastReadAt());
+        assertThat(tag.getBucket()).isNull();
+        assertThat(tag.getCountedRecord()).isSameAs(saved);
+        assertEquals(null, response.getMessage());
+    }
+
+    @Test
+    void registerScan_newTag_skipsTheCountedRecordLookup() {
+        ReaderEntity reader = scanReader();
+        when(tagRepository.findByUid(DUPLICATE_UID)).thenReturn(Optional.empty());
+        when(tagRepository.save(any(TagEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        stubNewRecordSave();
+
+        tagService.registerScan(reader, new ScanTagRequest().uid(DUPLICATE_UID).isCompliant(true));
+
+        verify(recordRepository, never()).findWithLockById(any());
+        assertThat(savedRecord().getTag().getCountedRecord()).isNotNull();
+    }
+
+    // Rule 1: same pass, a sliding window from the last read (FR-008, research R7)
+
+    @Test
+    void registerScan_samePass_measuredFromTheLastRead() {
+        ReaderEntity reader = scanReader();
+        RecordEntity record = samePassRecord(reader, true);
+
+        ScanTagResponse response = tagService.registerScan(reader,
+                new ScanTagRequest().uid(DUPLICATE_UID).isCompliant(true));
+
+        verify(recordRepository, never()).saveAndFlush(any(RecordEntity.class));
+        assertEquals(NOW, record.getLastReadAt());
+        assertEquals(DUPLICATE_UID, response.getUid());
+        assertEquals(true, response.getIsCompliant());
+        assertEquals(OffsetDateTime.parse("2024-01-15T09:29:00Z"), response.getProcessedAt());
+        assertEquals("Duplicate read ignored", response.getMessage());
+    }
+
+    @Test
+    void registerScan_samePass_lastReadNull_isNotTheSamePass() {
+        ReaderEntity reader = scanReader();
+        countedTag(countedRecord(reader, "2024-01-14T17:00:00Z", null, true));
+        stubNewRecordSave();
+
+        ScanTagResponse response = tagService.registerScan(reader,
+                new ScanTagRequest().uid(DUPLICATE_UID).isCompliant(true));
+
+        assertThat(savedRecord().getCreationDate()).isEqualTo(NOW);
+        assertEquals(null, response.getMessage());
+    }
+
+    @Test
+    void registerScan_zeroWindow_neverTheSamePass() {
+        TagService withoutDeduplication = tagService(Duration.ZERO, CRATE_WINDOW);
+        ReaderEntity reader = scanReader();
+        countedTag(countedRecord(reader, "2024-01-14T17:00:00Z", "2024-01-15T09:29:59Z", true));
+        stubNewRecordSave();
+
+        ScanTagResponse response = withoutDeduplication.registerScan(reader,
+                new ScanTagRequest().uid(DUPLICATE_UID).isCompliant(true));
+
+        assertThat(savedRecord().getCreationDate()).isEqualTo(NOW);
+        assertEquals(null, response.getMessage());
     }
 
     @Test
     void registerScan_duplicate_leavesTheExistingRecordsActivity() {
         ReaderEntity reader = scanReader();
-        TagEntity tag = existingTag();
-        RecordEntity existing = recentRecord(reader, tag, true);
+        RecordEntity existing = samePassRecord(reader, true);
         ActivityEntity fraise = ActivityEntity.builder().id(UUID.randomUUID()).name("Fraise").build();
         existing.setActivity(fraise);
 
@@ -191,50 +305,26 @@ class TagServiceTest {
     }
 
     @Test
-    void registerScan_duplicateWithinWindow_returnsExistingRecordWithoutSaving() {
-        ReaderEntity reader = scanReader();
-        TagEntity tag = existingTag();
-        recentRecord(reader, tag, true);
-
-        ScanTagResponse response = tagService.registerScan(reader,
-                new ScanTagRequest().uid(DUPLICATE_UID).isCompliant(true));
-
-        verify(recordRepository, never()).saveAndFlush(any(RecordEntity.class));
-        ArgumentCaptor<OffsetDateTime> cutoff = ArgumentCaptor.forClass(OffsetDateTime.class);
-        verify(recordRepository).findFirstByReaderAndTagAndCreationDateAfterOrderByCreationDateDesc(
-                any(ReaderEntity.class), any(TagEntity.class), cutoff.capture());
-        assertEquals(EXPECTED_CUTOFF, cutoff.getValue());
-        assertEquals(DUPLICATE_UID, response.getUid());
-        assertEquals(true, response.getIsCompliant());
-        assertEquals(OffsetDateTime.parse("2024-01-15T09:29:55Z"), response.getProcessedAt());
-        assertEquals("Duplicate read ignored", response.getMessage());
-    }
-
-    @Test
     void registerScan_nonCompliantRepeatOfCompliantRecord_lowersIt() {
         ReaderEntity reader = scanReader();
-        TagEntity tag = existingTag();
-        RecordEntity record = recentRecord(reader, tag, true);
+        RecordEntity record = samePassRecord(reader, true);
         when(recordConformityChangeRepository.existsByRecord(record)).thenReturn(false);
         when(recordRepository.saveAndFlush(record)).thenReturn(record);
 
         ScanTagResponse response = tagService.registerScan(reader,
                 new ScanTagRequest().uid(DUPLICATE_UID).isCompliant(false));
 
-        ArgumentCaptor<RecordEntity> saved = ArgumentCaptor.forClass(RecordEntity.class);
-        verify(recordRepository).saveAndFlush(saved.capture());
-        assertThat(saved.getValue()).isSameAs(record);
-        assertThat(saved.getValue().isCompliant()).isFalse();
+        assertThat(savedRecord()).isSameAs(record);
+        assertThat(record.isCompliant()).isFalse();
         assertEquals(false, response.getIsCompliant());
-        assertEquals(OffsetDateTime.parse("2024-01-15T09:29:55Z"), response.getProcessedAt());
+        assertEquals(OffsetDateTime.parse("2024-01-15T09:29:00Z"), response.getProcessedAt());
         assertEquals("Duplicate read ignored", response.getMessage());
     }
 
     @Test
     void registerScan_nonCompliantRepeatOfChangedRecord_keepsIt() {
         ReaderEntity reader = scanReader();
-        TagEntity tag = existingTag();
-        RecordEntity record = recentRecord(reader, tag, true);
+        RecordEntity record = samePassRecord(reader, true);
         when(recordConformityChangeRepository.existsByRecord(record)).thenReturn(true);
 
         ScanTagResponse response = tagService.registerScan(reader,
@@ -249,8 +339,7 @@ class TagServiceTest {
     @Test
     void registerScan_compliantRepeat_skipsChangeLookup() {
         ReaderEntity reader = scanReader();
-        TagEntity tag = existingTag();
-        recentRecord(reader, tag, true);
+        samePassRecord(reader, true);
 
         tagService.registerScan(reader, new ScanTagRequest().uid(DUPLICATE_UID).isCompliant(true));
 
@@ -260,8 +349,7 @@ class TagServiceTest {
     @Test
     void registerScan_compliantRepeatOfNonCompliantRecord_keepsIt() {
         ReaderEntity reader = scanReader();
-        TagEntity tag = existingTag();
-        RecordEntity record = recentRecord(reader, tag, false);
+        RecordEntity record = samePassRecord(reader, false);
 
         ScanTagResponse response = tagService.registerScan(reader,
                 new ScanTagRequest().uid(DUPLICATE_UID).isCompliant(true));
@@ -272,46 +360,220 @@ class TagServiceTest {
         assertEquals("Duplicate read ignored", response.getMessage());
     }
 
+    // Rule 3: rescan the same station day → non-compliant, no picker; an earlier day → ordinary (FR-009, research R9)
+
     @Test
-    void registerScan_noRecordInWindow_createsRecord() {
+    void registerScan_rescanToday_afterTheWindow_createsANonCompliantRecordWithoutPicker() {
         ReaderEntity reader = scanReader();
-        existingTag();
+        RecordEntity first = countedRecord(reader, "2024-01-15T08:00:00Z", "2024-01-15T08:00:00Z", true);
+        TagEntity tag = countedTag(first);
         stubNewRecordSave();
 
         ScanTagResponse response = tagService.registerScan(reader,
                 new ScanTagRequest().uid(DUPLICATE_UID).isCompliant(true));
 
-        verify(recordRepository).saveAndFlush(any(RecordEntity.class));
+        RecordEntity saved = savedRecord();
+        assertThat(saved).isNotSameAs(first);
+        assertThat(saved.isCompliant()).isFalse();
+        assertThat(saved.getPicker()).isNull();
+        assertThat(saved.getBucket()).isNull();
+        assertEquals(NOW, saved.getLastReadAt());
+        assertThat(tag.getCountedRecord()).isSameAs(saved);
+        assertThat(first.isCompliant()).isTrue();
+        assertEquals(OffsetDateTime.parse("2024-01-15T08:00:00Z"), first.getLastReadAt());
+        assertEquals(false, response.getIsCompliant());
+        assertEquals(NOW, response.getProcessedAt());
+        assertEquals("Tag already scanned today", response.getMessage());
+    }
+
+    @Test
+    void registerScan_rescanToday_byAnotherReader_isKO() {
+        countedTag(countedRecord(scanReader(), "2024-01-15T09:29:58Z", "2024-01-15T09:29:59Z", true));
+        stubNewRecordSave();
+
+        ScanTagResponse response = tagService.registerScan(scanReader(),
+                new ScanTagRequest().uid(DUPLICATE_UID).isCompliant(true));
+
+        assertThat(savedRecord().isCompliant()).isFalse();
+        assertEquals("Tag already scanned today", response.getMessage());
+    }
+
+    @Test
+    void registerScan_rescanAtStartOfToday_isKO() {
+        ReaderEntity reader = scanReader();
+        countedTag(countedRecord(reader, "2024-01-15T00:00:00Z", "2024-01-15T00:00:00Z", true));
+        stubNewRecordSave();
+
+        ScanTagResponse response = tagService.registerScan(reader,
+                new ScanTagRequest().uid(DUPLICATE_UID).isCompliant(true));
+
+        assertEquals("Tag already scanned today", response.getMessage());
+    }
+
+    @Test
+    void registerScan_countedOnAnEarlierDay_createsAnOrdinaryRecordWithoutPicker() {
+        ReaderEntity reader = scanReader();
+        TagEntity tag = countedTag(countedRecord(reader, "2024-01-14T17:00:00Z", "2024-01-14T17:00:00Z", true));
+        stubNewRecordSave();
+
+        ScanTagResponse response = tagService.registerScan(reader,
+                new ScanTagRequest().uid(DUPLICATE_UID).isCompliant(false));
+
+        RecordEntity saved = savedRecord();
+        assertThat(saved.isCompliant()).isFalse();
+        assertThat(saved.getPicker()).isNull();
+        assertThat(tag.getCountedRecord()).isSameAs(saved);
+        assertEquals(false, response.getIsCompliant());
         assertEquals(null, response.getMessage());
     }
 
     @Test
-    void registerScan_newTag_skipsDuplicateLookup() {
+    void registerScan_countedOnAnEarlierDay_keepsACompliantVerdict() {
         ReaderEntity reader = scanReader();
-        when(tagRepository.findByUid(DUPLICATE_UID)).thenReturn(Optional.empty());
-        when(tagRepository.save(any(TagEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        countedTag(countedRecord(reader, "2024-01-14T17:00:00Z", "2024-01-14T17:00:00Z", true));
         stubNewRecordSave();
 
-        tagService.registerScan(reader, new ScanTagRequest().uid(DUPLICATE_UID).isCompliant(true));
+        ScanTagResponse response = tagService.registerScan(reader,
+                new ScanTagRequest().uid(DUPLICATE_UID).isCompliant(true));
 
-        verify(recordRepository, never()).findFirstByReaderAndTagAndCreationDateAfterOrderByCreationDateDesc(
-                any(), any(), any());
-        verify(recordRepository).saveAndFlush(any(RecordEntity.class));
+        assertThat(savedRecord().isCompliant()).isTrue();
+        assertEquals(null, response.getMessage());
+    }
+
+    // Rule 2: the second tag of a crate joins the crate's Record (FR-010, research R10)
+
+    private static final OffsetDateTime CRATE_CUTOFF = OffsetDateTime.parse("2024-01-15T09:29:58Z");
+
+    /** An existing tag still in a bucket, and the crate's Record that the lookup finds for it. */
+    private TagEntity secondTagOf(RecordEntity crate, BucketEntity bucket) {
+        TagEntity tag = existingTag();
+        tag.setBucket(bucket);
+        when(recordRepository.findFirstByReaderAndBucketAndTagNotAndCreationDateAfterOrderByCreationDateDesc(
+                crate.getReader(), bucket, tag, CRATE_CUTOFF)).thenReturn(Optional.of(crate));
+        return tag;
+    }
+
+    private RecordEntity crate(ReaderEntity reader, BucketEntity bucket, boolean compliant) {
+        TagEntity first = TagEntity.builder().id(UUID.randomUUID()).uid("E2000017221101891400FIRST").build();
+        return RecordEntity.builder().id(UUID.randomUUID()).reader(reader).tag(first).bucket(bucket)
+                .compliant(compliant).creationDate(OffsetDateTime.parse("2024-01-15T09:29:59Z"))
+                .lastReadAt(OffsetDateTime.parse("2024-01-15T09:29:59Z")).build();
+    }
+
+    private BucketEntity bucket() {
+        return BucketEntity.builder().id(UUID.randomUUID()).number(12).build();
     }
 
     @Test
-    void registerScan_zeroWindow_skipsDuplicateLookup() {
-        TagService withoutDeduplication = new TagService(tagRepository, recordRepository, bucketRepository,
-                recordConformityChangeRepository, referenceTagList, readerRepository, lineActivityService, clock,
-                Duration.ZERO);
+    void scan_bucketDeletedMeanwhile_countsWithoutPickerNorBucket() {
+        BucketEntity bucket = bucket();
+        bucket.setPicker(PickerEntity.builder().id(UUID.randomUUID()).firstname("Jane").lastname("Doe").build());
+        TagEntity tag = existingTag();
+        tag.setBucket(bucket);
+        when(bucketRepository.findWithLockById(bucket.getId())).thenReturn(Optional.empty());
+        stubNewRecordSave();
+
+        tagService.registerScan(scanReader(), new ScanTagRequest().uid(DUPLICATE_UID).isCompliant(true));
+
+        RecordEntity record = savedRecord();
+        assertNull(record.getPicker());
+        assertNull(record.getBucket());
+        assertNull(tag.getBucket());
+        assertEquals(record, tag.getCountedRecord());
+    }
+
+    @Test
+    void registerScan_secondTagOfACrate_joinsItsRecord() {
         ReaderEntity reader = scanReader();
+        BucketEntity bucket = bucket();
+        RecordEntity crate = crate(reader, bucket, true);
+        TagEntity tag = secondTagOf(crate, bucket);
+
+        ScanTagResponse response = tagService.registerScan(reader,
+                new ScanTagRequest().uid(DUPLICATE_UID).isCompliant(true));
+
+        ArgumentCaptor<OffsetDateTime> cutoff = ArgumentCaptor.forClass(OffsetDateTime.class);
+        verify(recordRepository).findFirstByReaderAndBucketAndTagNotAndCreationDateAfterOrderByCreationDateDesc(
+                any(), any(), any(), cutoff.capture());
+        assertEquals(CRATE_CUTOFF, cutoff.getValue());
+        verify(recordRepository, never()).saveAndFlush(any(RecordEntity.class));
+        assertThat(tag.getBucket()).isNull();
+        assertThat(tag.getCountedRecord()).isSameAs(crate);
+        assertEquals(NOW, crate.getLastReadAt());
+        assertEquals(DUPLICATE_UID, response.getUid());
+        assertEquals(true, response.getIsCompliant());
+        assertEquals(OffsetDateTime.parse("2024-01-15T09:29:59Z"), response.getProcessedAt());
+        assertEquals("Second tag of the crate ignored", response.getMessage());
+    }
+
+    @Test
+    void registerScan_secondTagOfACrate_nonCompliant_lowersTheCrate() {
+        ReaderEntity reader = scanReader();
+        BucketEntity bucket = bucket();
+        RecordEntity crate = crate(reader, bucket, true);
+        secondTagOf(crate, bucket);
+        when(recordRepository.saveAndFlush(crate)).thenReturn(crate);
+
+        ScanTagResponse response = tagService.registerScan(reader,
+                new ScanTagRequest().uid(DUPLICATE_UID).isCompliant(false));
+
+        assertThat(savedRecord()).isSameAs(crate);
+        assertThat(crate.isCompliant()).isFalse();
+        assertEquals(false, response.getIsCompliant());
+    }
+
+    @Test
+    void registerScan_secondTagOfAChangedCrate_nonCompliant_keepsIt() {
+        ReaderEntity reader = scanReader();
+        BucketEntity bucket = bucket();
+        RecordEntity crate = crate(reader, bucket, true);
+        secondTagOf(crate, bucket);
+        when(recordConformityChangeRepository.existsByRecord(crate)).thenReturn(true);
+
+        tagService.registerScan(reader, new ScanTagRequest().uid(DUPLICATE_UID).isCompliant(false));
+
+        verify(recordRepository, never()).saveAndFlush(any(RecordEntity.class));
+        assertThat(crate.isCompliant()).isTrue();
+    }
+
+    @Test
+    void registerScan_noCrate_countsTheTag() {
+        ReaderEntity reader = scanReader();
+        BucketEntity bucket = bucket();
+        TagEntity tag = existingTag();
+        tag.setBucket(bucket);
+        stubNewRecordSave();
+
+        ScanTagResponse response = tagService.registerScan(reader,
+                new ScanTagRequest().uid(DUPLICATE_UID).isCompliant(true));
+
+        assertThat(savedRecord().getBucket()).isSameAs(bucket);
+        assertEquals(null, response.getMessage());
+    }
+
+    @Test
+    void registerScan_tagWithoutBucket_skipsTheCrateLookup() {
         existingTag();
         stubNewRecordSave();
 
-        withoutDeduplication.registerScan(reader, new ScanTagRequest().uid(DUPLICATE_UID).isCompliant(true));
+        tagService.registerScan(scanReader(), new ScanTagRequest().uid(DUPLICATE_UID).isCompliant(true));
 
-        verify(recordRepository, never()).findFirstByReaderAndTagAndCreationDateAfterOrderByCreationDateDesc(
-                any(), any(), any());
+        verify(recordRepository, never())
+                .findFirstByReaderAndBucketAndTagNotAndCreationDateAfterOrderByCreationDateDesc(any(), any(), any(),
+                        any());
+    }
+
+    @Test
+    void registerScan_zeroCrateWindow_skipsTheCrateLookup() {
+        TagService withoutCrates = tagService(DUPLICATE_WINDOW, Duration.ZERO);
+        existingTag().setBucket(bucket());
+        stubNewRecordSave();
+
+        withoutCrates.registerScan(scanReader(), new ScanTagRequest().uid(DUPLICATE_UID).isCompliant(true));
+
+        verify(recordRepository, never())
+                .findFirstByReaderAndBucketAndTagNotAndCreationDateAfterOrderByCreationDateDesc(any(), any(), any(),
+                        any());
         verify(recordRepository).saveAndFlush(any(RecordEntity.class));
     }
 
@@ -319,7 +581,7 @@ class TagServiceTest {
 
     private BucketEntity existingBucket(int number) {
         BucketEntity bucket = BucketEntity.builder().id(UUID.randomUUID()).number(number).build();
-        when(bucketRepository.findByNumber(number)).thenReturn(Optional.of(bucket));
+        when(bucketRepository.findWithLockByNumber(number)).thenReturn(Optional.of(bucket));
         return bucket;
     }
 
@@ -350,7 +612,7 @@ class TagServiceTest {
 
     @Test
     void registerTagsForBucket_createsBucketWhenUnknown() {
-        when(bucketRepository.findByNumber(12)).thenReturn(Optional.empty());
+        when(bucketRepository.findWithLockByNumber(12)).thenReturn(Optional.empty());
         when(bucketRepository.save(any(BucketEntity.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(tagRepository.findAllByUidIn(anyCollection())).thenReturn(List.of());
 
@@ -423,6 +685,20 @@ class TagServiceTest {
         tagService.registerTagsForBucket(12, List.of("T1"), true);
 
         assertEquals(bucket, tag.getBucket());
+        assertThat(savedTags()).containsExactly(tag);
+    }
+
+    @Test
+    void registerTagsForBucket_clearsTheCountedRecord() {
+        BucketEntity bucket = existingBucket(5);
+        RecordEntity counted = RecordEntity.builder().id(UUID.randomUUID()).build();
+        TagEntity tag = TagEntity.builder().uid("T1").countedRecord(counted).build();
+        when(tagRepository.findAllByUidIn(anyCollection())).thenReturn(List.of(tag));
+
+        tagService.registerTagsForBucket(5, List.of("T1"), false);
+
+        assertEquals(bucket, tag.getBucket());
+        assertThat(tag.getCountedRecord()).isNull();
         assertThat(savedTags()).containsExactly(tag);
     }
 

@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -16,6 +17,7 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 import org.mockito.Mockito;
 import org.springframework.data.domain.Sort;
 
@@ -28,14 +30,16 @@ import com.rfidback.generated.model.BucketWithTagsAndPicker;
 import com.rfidback.generated.model.BucketsList;
 import com.rfidback.repository.BucketRepository;
 import com.rfidback.repository.PickerRepository;
+import com.rfidback.repository.RecordRepository;
 import com.rfidback.repository.TagRepository;
 
-/** Unit tests of the bucket list, detail and (un)assignment rules (spec 006). */
+/** Unit tests of the bucket list, detail, (un)assignment and delete rules (spec 006). */
 class BucketServiceTest {
 
     private BucketRepository bucketRepository;
     private TagRepository tagRepository;
     private PickerRepository pickerRepository;
+    private RecordRepository recordRepository;
     private BucketService bucketService;
 
     @BeforeEach
@@ -43,7 +47,8 @@ class BucketServiceTest {
         bucketRepository = Mockito.mock(BucketRepository.class);
         tagRepository = Mockito.mock(TagRepository.class);
         pickerRepository = Mockito.mock(PickerRepository.class);
-        bucketService = new BucketService(bucketRepository, tagRepository, pickerRepository);
+        recordRepository = Mockito.mock(RecordRepository.class);
+        bucketService = new BucketService(bucketRepository, tagRepository, pickerRepository, recordRepository);
     }
 
     @Test
@@ -102,8 +107,8 @@ class BucketServiceTest {
     void assignBucketToPicker_setsPickerAndSaves() {
         BucketEntity bucket = bucket(4, null);
         PickerEntity picker = picker("Dupont", "Jean", null);
-        when(bucketRepository.findById(bucket.getId())).thenReturn(Optional.of(bucket));
-        when(pickerRepository.findById(picker.getId())).thenReturn(Optional.of(picker));
+        when(bucketRepository.findWithLockById(bucket.getId())).thenReturn(Optional.of(bucket));
+        when(pickerRepository.findWithLockById(picker.getId())).thenReturn(Optional.of(picker));
 
         bucketService.assignBucketToPicker(bucket.getId(), picker.getId());
 
@@ -116,8 +121,8 @@ class BucketServiceTest {
         PickerEntity previous = picker("Dupont", "Jean", null);
         PickerEntity next = picker("Martin", "Paul", null);
         BucketEntity bucket = bucket(5, previous);
-        when(bucketRepository.findById(bucket.getId())).thenReturn(Optional.of(bucket));
-        when(pickerRepository.findById(next.getId())).thenReturn(Optional.of(next));
+        when(bucketRepository.findWithLockById(bucket.getId())).thenReturn(Optional.of(bucket));
+        when(pickerRepository.findWithLockById(next.getId())).thenReturn(Optional.of(next));
 
         bucketService.assignBucketToPicker(bucket.getId(), next.getId());
 
@@ -128,19 +133,19 @@ class BucketServiceTest {
     @Test
     void assignBucketToPicker_unknownBucket_throwsBucketNotFound() {
         UUID bucketId = UUID.randomUUID();
-        when(bucketRepository.findById(bucketId)).thenReturn(Optional.empty());
+        when(bucketRepository.findWithLockById(bucketId)).thenReturn(Optional.empty());
 
         assertThrows(BucketNotFoundException.class,
                 () -> bucketService.assignBucketToPicker(bucketId, UUID.randomUUID()));
-        verify(pickerRepository, never()).findById(any());
+        verify(pickerRepository, never()).findWithLockById(any());
     }
 
     @Test
     void assignBucketToPicker_unknownPicker_throwsPickerNotFoundAndDoesNotSave() {
         BucketEntity bucket = bucket(6, null);
         UUID pickerId = UUID.randomUUID();
-        when(bucketRepository.findById(bucket.getId())).thenReturn(Optional.of(bucket));
-        when(pickerRepository.findById(pickerId)).thenReturn(Optional.empty());
+        when(bucketRepository.findWithLockById(bucket.getId())).thenReturn(Optional.of(bucket));
+        when(pickerRepository.findWithLockById(pickerId)).thenReturn(Optional.empty());
 
         assertThrows(PickerNotFoundException.class,
                 () -> bucketService.assignBucketToPicker(bucket.getId(), pickerId));
@@ -149,9 +154,23 @@ class BucketServiceTest {
     }
 
     @Test
+    void assignBucketToPicker_deletedPicker_throwsPickerNotFoundAndDoesNotSave() {
+        BucketEntity bucket = bucket(10, null);
+        PickerEntity picker = picker("Dupont", "Jean", null);
+        picker.setDeletedAt(OffsetDateTime.parse("2026-10-01T08:00:00Z"));
+        when(bucketRepository.findWithLockById(bucket.getId())).thenReturn(Optional.of(bucket));
+        when(pickerRepository.findWithLockById(picker.getId())).thenReturn(Optional.of(picker));
+
+        assertThrows(PickerNotFoundException.class,
+                () -> bucketService.assignBucketToPicker(bucket.getId(), picker.getId()));
+        assertNull(bucket.getPicker());
+        verify(bucketRepository, never()).save(any());
+    }
+
+    @Test
     void unassignBucketFromPicker_clearsPickerAndSaves() {
         BucketEntity bucket = bucket(7, picker("Dupont", "Jean", null));
-        when(bucketRepository.findById(bucket.getId())).thenReturn(Optional.of(bucket));
+        when(bucketRepository.findWithLockById(bucket.getId())).thenReturn(Optional.of(bucket));
 
         bucketService.unassignBucketFromPicker(bucket.getId());
 
@@ -162,7 +181,7 @@ class BucketServiceTest {
     @Test
     void unassignBucketFromPicker_noPicker_stillSucceeds() {
         BucketEntity bucket = bucket(8, null);
-        when(bucketRepository.findById(bucket.getId())).thenReturn(Optional.of(bucket));
+        when(bucketRepository.findWithLockById(bucket.getId())).thenReturn(Optional.of(bucket));
 
         bucketService.unassignBucketFromPicker(bucket.getId());
 
@@ -172,10 +191,34 @@ class BucketServiceTest {
     @Test
     void unassignBucketFromPicker_unknownBucket_throwsBucketNotFound() {
         UUID bucketId = UUID.randomUUID();
-        when(bucketRepository.findById(bucketId)).thenReturn(Optional.empty());
+        when(bucketRepository.findWithLockById(bucketId)).thenReturn(Optional.empty());
 
         assertThrows(BucketNotFoundException.class, () -> bucketService.unassignBucketFromPicker(bucketId));
         verify(bucketRepository, never()).save(any());
+    }
+
+    @Test
+    void deleteBucket_clearsTagsAndRecordsThenDeletes() {
+        BucketEntity bucket = bucket(9, picker("Dupont", "Jean", null));
+        when(bucketRepository.findWithLockById(bucket.getId())).thenReturn(Optional.of(bucket));
+
+        bucketService.deleteBucket(bucket.getId());
+
+        InOrder order = inOrder(tagRepository, recordRepository, bucketRepository);
+        order.verify(tagRepository).clearBucket(bucket);
+        order.verify(recordRepository).clearBucket(bucket);
+        order.verify(bucketRepository).delete(bucket);
+    }
+
+    @Test
+    void deleteBucket_unknown_throwsNotFoundAndChangesNothing() {
+        UUID bucketId = UUID.randomUUID();
+        when(bucketRepository.findWithLockById(bucketId)).thenReturn(Optional.empty());
+
+        assertThrows(BucketNotFoundException.class, () -> bucketService.deleteBucket(bucketId));
+        verify(tagRepository, never()).clearBucket(any());
+        verify(recordRepository, never()).clearBucket(any());
+        verify(bucketRepository, never()).delete(any());
     }
 
     private PickerEntity picker(String lastname, String firstname, String comment) {

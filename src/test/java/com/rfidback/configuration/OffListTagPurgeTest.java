@@ -120,6 +120,24 @@ class OffListTagPurgeTest {
     }
 
     @Test
+    void run_unlinksATagCountedByAPurgedRecord() {
+        dataUpgradeRepository.deleteById(OffListTagPurge.MARKER);
+        ReaderEntity line = readerRepository.save(ReaderEntity.builder().name("Purge line " + UUID.randomUUID())
+                .build());
+        TagEntity offList = tagRepository.save(TagEntity.builder().uid(ReferenceTagUids.offList()).build());
+        RecordEntity offListRecord = record(offList, line);
+        // An on-list tag counted by that record, as a crate's second tag would be (spec 004, research R11).
+        TagEntity inList = tagRepository.save(TagEntity.builder().uid(ReferenceTagUids.nextInList())
+                .countedRecord(offListRecord).build());
+
+        offListTagPurge.run(null);
+
+        assertThat(recordRepository.findById(offListRecord.getId())).isEmpty();
+        assertThat(tagRepository.findById(inList.getId()))
+                .hasValueSatisfying(tag -> assertThat(tag.getCountedRecord()).isNull());
+    }
+
+    @Test
     void startup_onANewDatabase_wroteTheMarker() {
         assertThat(dataUpgradeRepository.findById(OffListTagPurge.MARKER))
                 .hasValueSatisfying(upgrade -> assertThat(upgrade.getAppliedAt()).isNotNull());

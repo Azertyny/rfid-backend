@@ -61,7 +61,9 @@ public class OffListTagPurge implements ApplicationRunner {
         int records = 0;
         int tags = 0;
         for (List<UUID> chunk : chunks(tagIds)) {
-            // Foreign-key order: a change points to its record, a record to its tag.
+            // Foreign-key order: a change points to its record, a record to its tag, and a tag can point to a record
+            // (spec 004).
+            tagRepository.clearCountedRecordOfTags(chunk);
             changes += recordConformityChangeRepository.deleteByRecordTagIdIn(chunk);
             records += recordRepository.deleteByTagIdIn(chunk);
             tags += tagRepository.deleteByIdIn(chunk);

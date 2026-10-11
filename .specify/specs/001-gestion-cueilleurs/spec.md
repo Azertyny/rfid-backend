@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-24
 
-**Status**: As-Is (reverse-engineered) — describes current behavior, not a target design
+**Status**: Implémenté — la spec décrit l'état initial (as-is) puis la cible ; amendement du 2026-10-11 (suppression logique, FR-010) implémenté sur la branche `001-suppression-cueilleur`
 
 **Input**: User description: "Parcours le dépôt. Pour chaque fonctionnalité métier identifiée, crée .specify/specs/NNN-nom-feature/spec.md ... Décris le comportement ACTUEL (as-is) ... cite les fichiers ... Marque [NEEDS CLARIFICATION] ..."
 
@@ -23,6 +23,10 @@
 ### Session 2026-09-25
 
 - Q: What single French label should the interface use everywhere for pickers (nav tab, page title, headings, modals, empty states, messages)? → A: "Cueilleurs / cueilleur" — "Opérateur" is reserved for the user role (spec `008`), and the English "Picker" is not shown in the UI.
+
+### Session 2026-10-11
+
+- Q: When an Administrateur deletes a picker who already has scans (crates counted for them), what should happen to those scans? (FR-006) → A: Logical deletion, like readers (spec `002`, FR-008) — the picker disappears from the lists, bucket assignment and hour entry but stays in the database; their scans, crates and hours keep their name on past dashboards; their first and last name stay taken (`409` on a duplicate). Spec `014`'s rule "their hours are deleted with them" becomes "their hours are kept".
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -76,13 +80,18 @@ Un administrateur supprime un cueilleur.
 **Acceptance Scenarios**:
 
 1. **Given** le cueilleur existe et n'a **aucun** seau affecté, **When** `DELETE /api/pickers/{id}` est appelé, **Then** `204` et la fiche disparaît. Evidence: `PickerService.java:107-110`.
-2. **Given** le cueilleur existe et a un seau affecté (`BucketEntity.picker` pointe vers lui), **When** `DELETE /api/pickers/{id}` est appelé, **Then** l'implémentation actuelle supprime quand même sans vérification (comportement réel) ; le comportement **cible** (Clarifications 2026-09-24) est un rejet `409` tant que le seau n'a pas été désaffecté au préalable — voir Edge Cases.
+2. **Given** le cueilleur existe et a un seau affecté (`BucketEntity.picker` pointe vers lui), **When** `DELETE /api/pickers/{id}` est appelé, **Then** l'implémentation actuelle supprime quand même sans vérification (comportement réel) ; le comportement **cible** (Clarifications 2026-09-24) est un rejet `409` tant que le seau n'a pas été désaffecté au préalable — voir Edge Cases. **Livré** : rejet `409` (`PickerHasBucketsException`) tant qu'un seau est affecté.
+3. **Given** un cueilleur sans seau ayant des lectures comptées et des heures saisies, **When** un Administrateur le supprime, **Then** `204` ; il n'apparaît plus dans `GET /api/pickers`, ni dans les listes de choix de l'affectation des seaux et de la saisie des heures, et `GET /api/pickers/{id}` répond `404`. (Clarifications 2026-10-11, FR-010)
+4. **Given** ce cueilleur supprimé, **When** le tableau de bord affiche une période où il a des lectures (`GET /api/records/stats`), **Then** ses caisses et ses heures y figurent toujours sous son nom, et les totaux sont identiques à ceux d'avant la suppression. (Clarifications 2026-10-11)
+5. **Given** un cueilleur supprimé « Martin Jean », **When** un Administrateur crée un cueilleur « martin jean », **Then** `409`. (Clarifications 2026-10-11)
+6. **Given** un cueilleur déjà supprimé, **When** un Administrateur le supprime ou le modifie à nouveau, **Then** `404`. (Clarifications 2026-10-11)
 
 ### Edge Cases
 
 - **Suppression d'un cueilleur ayant un seau affecté** : `doc/20251116-use_cases.md:57` documente un cas alternatif ("le système informe qu'une récolte est potentiellement en cours"). Le code ne contient **aucune** vérification de ce type : `PickerService.deletePicker` (`PickerService.java:107-110`) appelle directement `pickerRepository.delete(entity)` sans consulter `BucketRepository`. `BucketEntity.picker` est une FK `nullable` sans `orphanRemoval` ni `cascade` déclaré (`BucketEntity.java:36-38`), et le comportement exact à l'exécution (mise à `NULL`, erreur de contrainte, ou suppression silencieuse) reste non déterminé faute de test (`src/test` ne contient que `TagServiceTest` et `RfidBackApplicationTests`). **Résolu (2026-09-24)** : la cible est un rejet explicite `409` de la suppression tant qu'un seau reste affecté au cueilleur, plutôt que de laisser le comportement actuel (indéterminé) ou d'implémenter la désaffectation automatique.
 - **Authentification absente** : `doc/20251116-use_cases.md` pose comme précondition systématique "L'utilisateur est connecté" pour toutes les actions cueilleur. Il n'existe dans le code **aucune** notion d'utilisateur, de compte, de session ou de login (aucune entité `User`, aucun contrôleur d'authentification). `SecurityConfig` (`configuration/SecurityConfig.java:32-36`) n'exige une authentification que sur `/api/tags/scan` ; toutes les routes `/api/pickers/**` sont `permitAll()`. **Résolu (2026-09-24)** : la précondition "connecté" de `doc/` reflète le comportement cible. **Livré par la spec `008`** : lecture des cueilleurs réservée à l'Opérateur et à l'Administrateur, écriture à l'Administrateur (`SecurityConfig.java:119-121`, vérifié par `AccessMatrixSecurityTest`).
 - **Paramètre `sort` invalide** (cible, Clarifications 2026-09-24) : un champ hors liste blanche (`lastname`, `firstname`, `creationDate`) ou une direction autre que `asc`/`desc` DOIT produire un `400`. La valeur ne DOIT jamais être transmise telle quelle à la requête base de données.
+- **Suppression d'un cueilleur ayant des lectures** (constat 2026-10-11, spec `006` T044) : `PickerService.deletePicker` vérifie les seaux et supprime les heures, mais pas les lectures ; la clé étrangère `record.picker_id` fait alors échouer la suppression en `500` pour tout cueilleur ayant déjà été compté. **Résolu (Clarifications 2026-10-11)** : suppression logique (FR-010), qui ne supprime aucune ligne et lève donc ce blocage.
 - **Casse et espaces** : la comparaison d'unicité est insensible à la casse et les valeurs sont "trim"ées avant comparaison/écriture (`PickerService.java:145-147`), ce qui n'est précisé nulle part dans `doc/`.
 
 ## Requirements *(mandatory)*
@@ -94,14 +103,15 @@ Un administrateur supprime un cueilleur.
 - **FR-003**: État actuel — le système DOIT lister les cueilleurs avec pagination (page/size) et un tri **fixe** nom puis prénom, indépendamment de tout paramètre de tri fourni par l'appelant. Evidence: `PickerService.java:33,38-39`. **Décision (Clarifications 2026-09-24)** : cible = honorer le paramètre `sort` (`field,asc|desc`) quand il est fourni, avec repli sur nom/prénom en son absence. Seuls les champs `lastname`, `firstname`, `creationDate` et les directions `asc`/`desc` sont acceptés ; toute autre valeur DOIT être rejetée avec `400` (pas de repli silencieux).
 - **FR-004**: Le système DOIT exposer, pour chaque cueilleur listé ou consulté, la liste `bucketNumbers` des numéros de seaux qui lui sont affectés (triée, vide si aucun) ; un cueilleur peut avoir plusieurs seaux. **Livré par la spec `006` (FR-006)** : `PickerService.listPickers`/`getPicker` (`BucketRepository.findAllByPickerIn`, `findAllByPickerOrderByNumberAsc`) ; l'ancien champ unique `bucketNumber`, qui provoquait une erreur `500` avec deux seaux, n'existe plus.
 - **FR-005**: Le système DOIT permettre la mise à jour d'un cueilleur existant avec la même règle d'unicité que la création (en excluant le cueilleur lui-même). Evidence: `PickerService.java:93-105`.
-- **FR-006**: État actuel — le système DOIT permettre la suppression d'un cueilleur par id, **sans** vérification ni avertissement préalable concernant un seau affecté. Evidence: `PickerService.java:107-110`. **Décision (Clarifications 2026-09-24)** : cible = rejeter la suppression avec `409` tant qu'au moins un seau (`BucketEntity.picker`) référence encore ce cueilleur ; l'appelant doit d'abord désaffecter tous ses seaux via `DELETE /api/buckets/{bucketId}/picker` (voir spec `006-gestion-seaux-affectation`).
+- **FR-006**: État actuel — le système DOIT permettre la suppression d'un cueilleur par id, **sans** vérification ni avertissement préalable concernant un seau affecté. Evidence: `PickerService.java:107-110`. **Décision (Clarifications 2026-09-24)** : cible = rejeter la suppression avec `409` tant qu'au moins un seau (`BucketEntity.picker`) référence encore ce cueilleur ; l'appelant doit d'abord désaffecter tous ses seaux via `DELETE /api/buckets/{bucketId}/picker` (voir spec `006-gestion-seaux-affectation`). La suppression est logique (FR-010, Clarifications 2026-10-11).
 - **FR-007**: Le système DOIT répondre 404 (`PickerNotFoundException`) pour toute opération de lecture/mise à jour/suppression sur un id inconnu. Evidence: `PickerService.java:112-115`, `exception/PickerNotFoundException.java`.
 - **FR-008**: État actuel — le système ne DOIT imposer **aucune** authentification ni autorisation sur les routes `/api/pickers/**`. Evidence: `SecurityConfig.java:32-36` (seul `/api/tags/scan` est `authenticated()`). **Décision (Clarifications 2026-09-24)** : cet état est un écart à corriger, pas la cible. **Livré par la spec `008`** : session utilisateur, `GET /api/pickers/**` pour Opérateur et Administrateur, `POST`/`PUT`/`DELETE` pour Administrateur seul (`SecurityConfig.java:119-121`, `AccessMatrixSecurityTest`).
 - **FR-009**: Livré (tâches T029–T032) — l'interface désignait auparavant les cueilleurs par « Opérateurs » (navigation, titre, en-tête, état vide, confirmation de suppression) et par « Picker » (bouton, modale, sous-titre de `reader.html`), alors que « Opérateur » est le nom d'un rôle utilisateur (spec `008`). **Décision (Clarifications 2026-09-25)** : cible = l'interface DOIT nommer cette entité « Cueilleurs » / « cueilleur » partout (navigation, titres, modales, états vides, messages) ; « Opérateur » DOIT désigner uniquement le rôle utilisateur et « Picker » ne DOIT pas apparaître dans les textes affichés. Les identifiants techniques (`pickers.html`, `/api/pickers`, code) restent inchangés.
+- **FR-010** (nouveau, Clarifications 2026-10-11) : la suppression d'un cueilleur (FR-006, toujours refusée en `409` tant qu'un seau lui est affecté) DOIT être logique, comme celle d'un lecteur (spec `002`, FR-008), qu'il ait ou non des lectures ou des heures : le cueilleur reste en base mais n'apparaît plus dans `GET /api/pickers`, ni dans les listes de choix de l'affectation des seaux (spec `006`) et de la saisie des heures (spec `014`) ; `GET`, `PUT` et `DELETE /api/pickers/{id}`, l'affectation d'un seau à ce cueilleur et la saisie de ses heures répondent `404`. Ses lectures et ses heures ne sont ni supprimées ni modifiées : le tableau de bord (`GET /api/records/stats`, spec `007`) continue d'afficher ses caisses et ses heures sous son nom, et les totaux ne changent pas. Son couple (nom, prénom) reste pris : la règle de doublon de FR-002 s'applique aussi aux cueilleurs supprimés (`409`). La suppression est définitive (pas de restauration). **Livré** : `picker.deleted_at`, `PickerService.deletePicker` (suppression logique), filtres de `PickerService`, `BucketService` et `WorkHoursService`.
 
 ### Key Entities
 
-- **Picker** (`picker` table) : `id` (UUID), `lastname`/`firstname` (string 50), `comment` (string 280, nullable), `creationDate` (horodatage de création, non modifiable). Pas de champ `updateDate`, contrairement à `Reader`. Evidence: `PickerEntity.java`.
+- **Picker** (`picker` table) : `id` (UUID), `lastname`/`firstname` (string 50), `comment` (string 280, nullable), `creationDate` (horodatage de création, non modifiable). Pas de champ `updateDate`, contrairement à `Reader`. Evidence: `PickerEntity.java`. Cible (Clarifications 2026-10-11, FR-010) : état supprimé (suppression logique) ; un cueilleur supprimé n'est plus listé ni modifiable, mais reste référencé par ses lectures et ses heures.
 - **Bucket** (référencé, non détaillé ici) : relation 0..n par cueilleur (spec `006`, Clarifications 2026-09-24), portée par `BucketEntity.picker`, lue en lecture seule depuis ce module. Voir spec `006-gestion-seaux-affectation`.
 
 ## Success Criteria *(mandatory)*
@@ -118,6 +128,7 @@ Un administrateur supprime un cueilleur.
 
 - Le champ `sort` de l'API est actuellement inopérant ; il doit être implémenté (Clarifications 2026-09-24) plutôt que retiré de l'API, limité à `lastname`/`firstname`/`creationDate` avec rejet `400` du reste.
 - L'absence d'authentification sur ce module était un écart à corriger (Clarifications 2026-09-24) ; elle est corrigée par la spec `008`.
+- (2026-10-11) Les heures déjà saisies d'un cueilleur supprimé ne sont plus modifiables (il n'est plus proposé à la saisie) ; une erreur de saisie se corrige avant la suppression.
 - "Cueilleur" et "Picker" désignent la même entité (terminologie FR côté doc/front, EN côté code). "Opérateur" n'en est pas un synonyme : c'est un rôle utilisateur (spec `008`), anciennement utilisé à tort comme libellé de la page des cueilleurs (Clarifications 2026-09-25).
 
 ## Drift vs `doc/`

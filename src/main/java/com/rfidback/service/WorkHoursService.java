@@ -109,7 +109,9 @@ public class WorkHoursService {
             minutesByPicker.put(pickerId, toMinutes(pickerId, entry.getHours()));
         }
 
+        // A deleted picker can no longer be given hours (spec 001, FR-010): treated as unknown.
         Map<UUID, PickerEntity> pickers = pickerRepository.findAllById(minutesByPicker.keySet()).stream()
+                .filter(picker -> !picker.isDeleted())
                 .collect(Collectors.toMap(PickerEntity::getId, Function.identity()));
         minutesByPicker.keySet().stream().filter(id -> !pickers.containsKey(id)).findFirst().ifPresent(id -> {
             throw new PickerNotFoundException("Picker %s not found".formatted(id));
@@ -180,7 +182,7 @@ public class WorkHoursService {
         }
 
         List<WorkDayPicker> pickers = new ArrayList<>();
-        for (PickerEntity picker : pickerRepository.findAll()) {
+        for (PickerEntity picker : pickerRepository.findAllByDeletedAtIsNull()) {
             PickerWorkDayEntity row = rows.get(picker.getId());
             WorkDayPicker entry = new WorkDayPicker();
             entry.setPickerId(picker.getId());

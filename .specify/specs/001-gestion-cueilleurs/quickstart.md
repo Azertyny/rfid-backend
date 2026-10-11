@@ -24,3 +24,25 @@ Prerequisites: start the app with a bootstrap admin (see `CLAUDE.md`), open `fro
 5. **Regression**: create a picker whose name differs from an existing one only by case → error, and the API answered `409`.
 
 Data model details: [data-model.md](data-model.md). Design decisions: [research.md](research.md).
+
+---
+
+## Amendment 2026-10-11: logical deletion (FR-010)
+
+Contract: [contracts/openapi-pickers.md](contracts/openapi-pickers.md) §5; states: [data-model.md](data-model.md), amendment.
+
+```zsh
+mvn clean test -Dtest='PickerServiceTest,PickerApiTest,BucketApiTest,WorkHoursApiTest,WorkHoursServiceTest,AccessMatrixSecurityTest'
+mvn clean test
+```
+
+Manual (app started as in "Manual (local app)", logged in as `admin`): picker A with one bucket, a scanned tag of that bucket (production reader) and hours entered today in `work-hours.html`.
+
+| # | Action | Expected |
+|---|---|---|
+| 1 | Note the dashboard (`index.html`, today) | A listed with 1 crate and their hours |
+| 2 | Delete A in `pickers.html` | `409` message: a bucket is still assigned |
+| 3 | Delete A's bucket in `buckets.html` (spec 006), then delete A | Deleted; A gone from `pickers.html` |
+| 4 | Dashboard again | Same line for A: same crate, same hours, same totals |
+| 5 | `buckets.html` → "Affecter", `work-hours.html` today | A not offered in either |
+| 6 | Create a picker with A's name, different case | `409` (name taken) |

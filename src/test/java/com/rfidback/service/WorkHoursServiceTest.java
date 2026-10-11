@@ -93,7 +93,7 @@ class WorkHoursServiceTest {
         durand = picker("Paul", "Durand");
         emile = picker("Zoé", "Émile");
         martin = picker("Anne", "Martin");
-        when(pickerRepository.findAll()).thenReturn(List.of(martin, emile, durand));
+        when(pickerRepository.findAllByDeletedAtIsNull()).thenReturn(List.of(martin, emile, durand));
         when(workDayRepository.findAllByWorkDate(any())).thenReturn(List.of());
         when(workDayRepository.findAllByWorkDateAndPickerIn(any(), anyCollection())).thenReturn(List.of());
     }
@@ -248,6 +248,17 @@ class WorkHoursServiceTest {
     }
 
     @Test
+    void saveDay_deletedPicker_throwsPickerNotFound() {
+        PickerEntity gone = picker("Ancien", "Cueilleur");
+        gone.setDeletedAt(OffsetDateTime.parse("2026-10-01T08:00:00Z"));
+        pickersExist(durand, gone);
+
+        assertThrows(PickerNotFoundException.class,
+                () -> service.saveWorkDay(request(TODAY, entry(durand, 8.0), entry(gone, 8.0))));
+        verifyNothingWritten();
+    }
+
+    @Test
     void aConcurrentInsertIsRetriedOnce() {
         pickersExist(durand);
         when(workDayRepository.saveAllAndFlush(anyList()))
@@ -285,7 +296,7 @@ class WorkHoursServiceTest {
     @Test
     void missingHoursMeansRecordsWithoutHours() {
         PickerEntity bertin = picker("Luc", "Bertin");
-        when(pickerRepository.findAll()).thenReturn(List.of(durand, emile, martin, bertin));
+        when(pickerRepository.findAllByDeletedAtIsNull()).thenReturn(List.of(durand, emile, martin, bertin));
         // Durand: records and hours; Émile: records, no hours; Martin: hours, no record; Bertin: neither.
         when(recordRepository.countByPicker(any(), any())).thenReturn(List.of(
                 countsRow(durand, 12), countsRow(emile, 5), countsRow(null, 3)));

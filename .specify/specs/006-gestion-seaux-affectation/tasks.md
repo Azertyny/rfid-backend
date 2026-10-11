@@ -266,3 +266,111 @@ Task: "T013 → T014 → T015 in front/buckets.html"
 ## Phase 7: Convergence
 
 - [X] T026 Manually verify in `front/buckets.html` the two scenarios that T025's quickstart steps 1–10 do not exercise: with no bucket at all (fresh in-memory database), the table shows "Aucun seau. Les seaux sont créés à l'enregistrement des tags." with a link to `tags.html`; and on "Réaffecter" for a bucket assigned to picker A, A is absent from the picker list, including while filtering by A's name, per US1/AC4 and US2/AC6 (partial)
+
+---
+
+## Amendment 2026-10-11: deleting a bucket
+
+**Input**: spec Clarifications 2026-10-11 (FR-010, User Story 4, SC-003); plan "Amendment 2026-10-11"; research R10–R15;
+data-model "Amendment 2026-10-11"; contract §3; quickstart §3. Code references are to branch `004-scan-tag-conformite`
+at `ddfbe0c` (spec `004` amendment, which added `record.bucket_id`).
+
+**Branch**: create `006-suppression-seau` from `004-scan-tag-conformite`, not from `dev`: `dev` does not have
+`record.bucket_id` yet, which T030, T033 and T038 need (plan, "Dependency on the spec `004` amendment"). Open the PR
+(base `dev`) after 004's is merged, or rebase on `dev` once it is.
+
+**Story**: the amendment is User Story 4 (`[US4]`). It is the only story, so it is also the MVP. Tests come first
+(SC-003): the new ones fail until the implementation tasks are done; the updated existing ones must keep passing.
+
+**Key rules** (used by every task below):
+- The delete is **physical**, in one `@Transactional` method, in this order: lock the bucket row
+  (`findWithLockById`, `404` when empty) → `tagRepository.clearBucket(bucket)` → `recordRepository.clearBucket(bucket)`
+  → `bucketRepository.delete(bucket)`. Nothing else is touched: the picker, the tags' `counted_record`, the records'
+  picker, activity and conformity stay as they are (research R10, R11).
+- Everything that can race a delete loads the bucket through the **lock reads** (research R12): `deleteBucket`,
+  `assignBucketToPicker`, `unassignBucketFromPicker` (`findWithLockById` instead of `findById`; `getBucket` and
+  `listBuckets` stay unlocked), `TagService.count` (rule 4) and `TagService.registerTagsForBucket`
+  (`findWithLockByNumber` instead of `findByNumber`).
+- In `TagService.count`, the lock read is an **existence check only**: keep reading the picker from `tag.getBucket()`
+  as today. When the lock read is empty, the bucket was deleted meanwhile: `tag.setBucket(null)` and continue as for a
+  tag without bucket (record with no picker and no bucket).
+
+## Phase 8: Setup (amendment)
+
+- [X] T027 Add the `delete` operation (`operationId: deleteBucket`, `tags: [Bucket]`, responses `204` "Bucket deleted" and `404` "Bucket not found (unknown or already deleted)") to the existing `/buckets/{bucketId}` path item, next to `get`, with the summary and description of [contracts/openapi-buckets.md](contracts/openapi-buckets.md) §3, in `src/main/resources/openapi/api.yaml`; run `mvn generate-sources` and check that `BucketApiDelegate` now has `deleteBucket(UUID bucketId)`
+
+## Phase 9: Foundational (amendment)
+
+Blocks the US4 implementation tasks; the three tasks touch different files.
+
+- [X] T028 [P] Add to `src/main/java/com/rfidback/repository/BucketRepository.java`: `Optional<BucketEntity> findWithLockById(@Param("id") UUID id)` with `@Lock(LockModeType.PESSIMISTIC_WRITE)`, `@QueryHints(@QueryHint(name = "jakarta.persistence.lock.timeout", value = "5000"))` and `@Query("select b from BucketEntity b where b.id = :id")`; and `findWithLockByNumber(@Param("number") Integer number)`, same annotations, `where b.number = :number`. Javadoc: orders a delete against a concurrent scan, registration or assignment (spec 006, research R12). Copy the annotation style of `ReaderRepository.findWithLockById`
+- [X] T029 [P] Add `@Modifying @Query("update TagEntity t set t.bucket = null where t.bucket = :bucket") int clearBucket(@Param("bucket") BucketEntity bucket)` to `src/main/java/com/rfidback/repository/TagRepository.java`, with a one-line comment "Frees the tags of a bucket being deleted (spec 006, FR-010)"
+- [X] T030 [P] Add `@Modifying @Query("update RecordEntity r set r.bucket = null where r.bucket = :bucket") int clearBucket(@Param("bucket") BucketEntity bucket)` to `src/main/java/com/rfidback/repository/RecordRepository.java`, with a one-line comment "Unlinks the records of a bucket being deleted; they keep their picker (spec 006, FR-010)"
+
+## Phase 10: User Story 4 - Supprimer un seau (Priority: P2)
+
+**Goal**: an Administrateur deletes any bucket from the "Seaux" page; its tags are freed, its picker loses it, past
+records and stats are unchanged, its number is free again.
+
+**Independent Test**: [quickstart.md](quickstart.md) §3 — automated tests, then manual steps 1–9.
+
+### Tests for User Story 4 (write first)
+
+- [X] T031 [P] [US4] Update `src/test/java/com/rfidback/service/BucketServiceTest.java`: add a `RecordRepository` mock and pass it to the `BucketService` constructor (T036 adds the parameter); in the assign and unassign tests, stub `bucketRepository.findWithLockById` instead of `findById` (the `getBucket` tests keep `findById`). Add: `deleteBucket_clearsTagsAndRecordsThenDeletes` (verify `tagRepository.clearBucket(bucket)`, `recordRepository.clearBucket(bucket)`, `bucketRepository.delete(bucket)`, in that order with `InOrder`); `deleteBucket_unknown_throwsNotFoundAndChangesNothing` (`BucketNotFoundException`, no `clearBucket` nor `delete`)
+- [X] T032 [P] [US4] Update `src/test/java/com/rfidback/service/TagServiceTest.java`: in the setup, stub `bucketRepository.findWithLockById(any())` to return a non-empty `Optional` (for example `thenAnswer(inv -> Optional.of(BucketEntity.builder().id(inv.getArgument(0)).build()))`) so the existing rule-4 tests keep their picker; in the registration tests (around lines 561 and 592), stub `findWithLockByNumber` instead of `findByNumber`. Add `scan_bucketDeletedMeanwhile_countsWithoutPickerNorBucket`: tag with a bucket that has a picker, `findWithLockById` returns `Optional.empty()` → the saved record has `picker` and `bucket` null, the tag has no bucket and its `countedRecord` is the new record
+- [X] T033 [P] [US4] Add delete tests to `src/test/java/com/rfidback/controller/BucketApiTest.java` (numbers from `NEXT_BUCKET_NUMBER`; autowire `TagRepository`, `RecordRepository`, `ReaderRepository` if not already): `deleteBucket_empty_returns204AndDetail404` (and absent from `GET /api/buckets`); `deleteBucket_twice_secondReturns404`; `deleteBucket_unknown_returns404`; `deleteBucket_withTagsPickerAndRecord_freesTagsKeepsRecord` — a bucket with 2 saved tags, assigned to a picker, and a `RecordEntity` saved directly with one of the tags, a saved reader, that picker, that bucket, a saved active `ActivityEntity` and `compliant(false)`; capture the body of `GET /api/records/stats` (as Administrateur, no parameter) before; `DELETE` → `204`; both tags have `bucket == null` (`tagRepository.findByUid`); the record still has its picker, its activity and `compliant == false`, and `bucket == null`; the picker's `GET /api/pickers/{id}` has no such number in `bucketNumbers`; `GET /api/records/stats` body identical; `deleteBucket_numberReusable_andPickerDeletable` — after deleting a bucket whose only picker is P, `POST /api/tags/buckets/{n}` with one freed tag uid of the reference list returns `2xx` with no move confirmation, `GET /api/buckets` lists number `n` again without picker and with that tag, and `DELETE /api/pickers/{P}` returns `204`. Use uids from `src/main/resources/tags/rfid_tag_list.csv` (registration refuses others), taking ones no other test class uses
+- [X] T034 [P] [US4] Add `scan_tagFreedByBucketDelete_countsWithoutPicker` to `src/test/java/com/rfidback/controller/TagScanApiTest.java`: register a reference-list tag into a new bucket, assign the bucket to a picker, `DELETE /api/buckets/{id}` as Administrateur (with `csrf()`), then scan the tag with a production reader's token using the class's existing helpers → a record is created whose picker is null
+- [X] T035 [P] [US4] Add `new Route(HttpMethod.DELETE, "/api/buckets/" + ID, null, ADMIN_ONLY)` next to the other `/api/buckets` rows in `src/test/java/com/rfidback/security/AccessMatrixSecurityTest.java`
+
+### Implementation for User Story 4
+
+- [X] T036 [US4] In `src/main/java/com/rfidback/service/BucketService.java`: add a `RecordRepository` field (constructor injection via `@RequiredArgsConstructor`); add `@Transactional public void deleteBucket(UUID bucketId)` following the order of the key rules, with a Javadoc citing spec 006 FR-010 and research R10/R12; switch `assignBucketToPicker` and `unassignBucketFromPicker` to `bucketRepository.findWithLockById` (same `BucketNotFoundException` message). Makes T031 pass
+- [X] T037 [US4] Implement `deleteBucket(UUID bucketId)` in `src/main/java/com/rfidback/controller/BucketController.java`: call `bucketService.deleteBucket(bucketId)` and return `ResponseEntity.noContent().build()`, like `unassignBucketFromPicker`. With T036, makes T033 and T035 pass
+- [X] T038 [US4] In `src/main/java/com/rfidback/service/TagService.java`: in `count` (rule 4), before saving the record, when `tag.getBucket() != null` and `bucketRepository.findWithLockById(tag.getBucket().getId())` is empty, call `tag.setBucket(null)`; then build the record from `tag.getBucket()` as today (so `bucket` and `picker` are null in that case). Comment: "Locks the bucket so a concurrent delete either waits for this scan or is seen by it (spec 006, research R12)". In `registerTagsForBucket`, replace `bucketRepository.findByNumber(bucketNumber)` with `findWithLockByNumber(bucketNumber)`. Makes T032 and T034 pass; `TagScanApiTest` and `TagServiceTest` stay green
+- [X] T039 [US4] In `front/buckets.html`: add a `deleteModal` copied from `unassignModal` (title `<i class="fas fa-trash me-2"></i>Supprimer le seau`, ids `deleteError`, `deleteText`, `deleteConfirm`, button `onclick="confirmDelete()"`), create it with `new bootstrap.Modal` like `unassignModal`; in `renderBuckets`, add on every row, after the existing buttons, `<button class="btn btn-outline-danger btn-sm ms-1" onclick="openDelete(${index})"><i class="fas fa-trash me-1"></i>Supprimer</button>`; add `openDelete(index)` building the text of research R13 from `buckets[index]` (lines joined with `<br>` via `innerHTML` with `escapeHtml` on the picker name, or separate `<p>`s): "Supprimer le seau n°X ?", then "Son tag sera libéré et devra être réenregistré." for 1 tag or "Ses N tags seront libérés et devront être réenregistrés." for N > 1, then "Il est affecté à <Prénom Nom>, qui ne l'aura plus." when it has a picker, then "Les lectures passées sont conservées."; add `confirmDelete()` modelled on `confirmUnassign()`: `apiFetch(`/buckets/${selectedBucket.id}`, { method: 'DELETE' })`, `ok` → hide and `loadBuckets()`, `404` → `showError('deleteError', 'Ce seau n\'existe plus.')` and `loadBuckets()`, other non-401/403 → "Erreur lors de la suppression.", network error → "Erreur réseau."
+
+**Checkpoint**: `mvn clean test -Dtest='BucketServiceTest,BucketApiTest,TagServiceTest,TagScanApiTest,AccessMatrixSecurityTest'` is green.
+
+## Phase 11: Polish (amendment)
+
+- [X] T040 [P] Add a "### Supprimer un seau" use case after "### Désaffecter un seau" in `doc/20251116-use_cases.md`, same layout (Acteurs: Administrateur; Conditions initiales: connecté, le seau existe; Conditions finales: le seau n'existe plus, ses TAGs n'ont plus de seau, son numéro est libre; Cas nominal: page de gestion des seaux → "Supprimer" → fenêtre de confirmation (numéro, nombre de TAGs libérés, cueilleur) → valider → le système supprime le seau; Remarque: les lectures passées gardent leur cueilleur)
+- [X] T041 [P] Add to `CLAUDE.md`, in the Persistence section after the sentence on `tag.counted_record_id`: "Deleting a bucket (`DELETE /api/buckets/{id}`, spec 006) frees its tags and unlinks its records (`record.bucket_id`), which keep their picker; the number can be used again."
+- [X] T042 [P] In `.specify/specs/006-gestion-seaux-affectation/spec.md`: status line "à implémenter" → "implémenté" for the 2026-10-11 amendment; append "**Livré** : `DELETE /api/buckets/{bucketId}`, `BucketService.deleteBucket`, bouton « Supprimer » de `front/buckets.html`." to FR-010 and "(livré)" to SC-003
+- [X] T043 Run `mvn clean install`, then `mvn clean test`; the full suite must be green (test classes run in alphabetical order, as on CI)
+- [X] T044 Run the manual check of [quickstart.md](quickstart.md) §3, steps 1–9, and record any deviation in [research.md](research.md)
+
+## Dependencies (amendment)
+
+- T027 (generated delegate) → T037; T028–T030 → T036, T038.
+- Tests T031–T035 can be written as soon as T027 is done (they compile against the new repository methods once T028–T030 exist; write them, then let them fail until T036–T038).
+- T036 → T037. T038 is independent of T036/T037. T039 only needs the route to exist to be checked by hand (T037).
+- T043 after all code tasks; T044 after T043.
+
+### Parallel Opportunities (amendment)
+
+- T028, T029, T030 together.
+- T031, T032, T033, T034, T035 together (five files).
+- T038 and T039 alongside T036 → T037.
+- T040, T041, T042 together.
+
+```text
+# After T027–T030:
+Task: "T031 BucketServiceTest"   Task: "T032 TagServiceTest"   Task: "T033 BucketApiTest"
+Task: "T034 TagScanApiTest"      Task: "T035 AccessMatrixSecurityTest"
+# Then:
+Task: "T036 → T037 BucketService + BucketController"   Task: "T038 TagService"   Task: "T039 buckets.html"
+```
+
+## Implementation Strategy (amendment)
+
+1. T027–T030, then the tests T031–T035 (the new ones fail).
+2. T036–T037: the route works end to end — **MVP**, checkable with `curl` or quickstart §3 steps 1–5 through the API.
+3. T038: the scan and registration races are ordered (no `500` during a shift).
+4. T039: the page button. Then Polish T040–T044.
+
+---
+
+## Phase 12: Convergence
+
+- [X] T045 Make US4/AC7 hold for a picker who has records: today `DELETE /api/pickers/{id}` answers `500` once the picker's last bucket is deleted if they have any record (`record.picker_id` foreign key; `PickerService.deletePicker` only checks buckets and work hours — research "Deviation found by T044"). First get spec `001`'s decision on a deleted picker's records via `/speckit-clarify` on spec `001` (refuse with `409`, keep the records without picker, or delete them), then implement it in `src/main/java/com/rfidback/service/PickerService.java` with a test in `src/test/java/com/rfidback/controller/BucketApiTest.java` (delete the bucket of a picker who has a record, then delete the picker) per US4/AC7 (partial)
+- [ ] T046 Manually verify in `front/buckets.html` (app served with the front on the same origin, logged in as an Administrateur) the steps T044 checked only through the API: the confirmation text of quickstart §3 steps 1 and 4 (no tag/picker sentence for an empty bucket; "Son tag sera libéré…" or "Ses N tags…" and the picker's name otherwise; "Les lectures passées sont conservées."), "Annuler" sends nothing (step 2, Network tab), and after "Confirmer" the row disappears without reloading the page, per US4/AC1-AC3 and SC-003 (partial)

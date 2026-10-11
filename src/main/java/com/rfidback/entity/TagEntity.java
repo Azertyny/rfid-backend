@@ -40,6 +40,12 @@ public class TagEntity {
     @JoinColumn(name = "bucket_id")
     private BucketEntity bucket;
 
+    // The record that counted this tag since it was last registered into a bucket: its own, its crate's or its
+    // rescan's; null once registered again (spec 004, FR-009, research R8).
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "counted_record_id")
+    private RecordEntity countedRecord;
+
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private OffsetDateTime creationDate;
