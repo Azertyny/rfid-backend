@@ -3,7 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Réglages - Admin</title>
+    <title>Réglages - Vegelink</title>
+    <link rel="icon" type="image/png" href="img/favicon-32.png">
+    <link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+    <style>
+        .navbar-brand { display: inline-flex; align-items: center; }
+        .brand-badge { display: inline-flex; width: 32px; height: 32px; margin-right: .5rem; padding: 2px; border-radius: 8px; background: #f5eedc; }
+        .brand-badge img { width: 100%; height: 100%; }
+    </style>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
@@ -17,7 +24,7 @@
     <nav class="navbar navbar-expand navbar-dark bg-dark shadow-sm">
         <div class="container-fluid max-w-7xl mx-auto px-4">
             <a class="navbar-brand fw-bold" href="index.html">
-                <i class="fas fa-wifi me-2"></i>RFID Admin
+                <span class="brand-badge"><img src="img/vegelink-icon.png" alt=""></span>Vegelink
             </a>
             <div class="navbar-nav ms-auto gap-2">
                 <a href="index.html" class="btn btn-sm btn-outline-light border-0">
@@ -39,7 +46,7 @@
                     <i class="fas fa-tags me-1"></i>Tags
                 </a>
                 <a href="buckets.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
-                    <i class="fas fa-fill me-1"></i>Seaux
+                    <i class="fas fa-box me-1"></i>Paquets
                 </a>
                 <a href="users.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
                     <i class="fas fa-user-shield me-1"></i>Utilisateurs
@@ -90,12 +97,12 @@
                         <span>secondes</span>
                     </div>
                     <div class="form-text">
-                        Deux tags d'un même seau lus par le même lecteur à moins de cet écart donnent une seule lecture,
+                        Deux tags d'un même paquet lus par le même lecteur à moins de cet écart donnent une seule lecture,
                         au statut Cheat. Entre 0 et 60 secondes.
                     </div>
                     <!-- Spec 015, FR-013 : les deux conséquences d'un mauvais réglage. -->
                     <ul class="form-text mb-1 ps-3">
-                        <li>À 0, deux tags d'un même seau lus ensemble comptent pour deux caisses.</li>
+                        <li>À 0, deux tags d'un même paquet lus ensemble comptent pour deux caisses.</li>
                         <li>Trop élevé, deux caisses d'un même cueilleur qui se suivent n'en comptent qu'une, au statut Cheat.</li>
                     </ul>
                     <div class="small text-muted mt-1" id="cheatAuthor"></div>

@@ -3,7 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Seaux - Admin</title>
+    <title>Paquets - Vegelink</title>
+    <link rel="icon" type="image/png" href="img/favicon-32.png">
+    <link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+    <style>
+        .navbar-brand { display: inline-flex; align-items: center; }
+        .brand-badge { display: inline-flex; width: 32px; height: 32px; margin-right: .5rem; padding: 2px; border-radius: 8px; background: #f5eedc; }
+        .brand-badge img { width: 100%; height: 100%; }
+    </style>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>body { background-color: #f8f9fa; font-family: 'Segoe UI', sans-serif; }</style>
@@ -14,7 +21,7 @@
     <nav class="navbar navbar-expand navbar-dark bg-dark shadow-sm">
         <div class="container-fluid max-w-7xl mx-auto px-4">
             <a class="navbar-brand fw-bold" href="index.html">
-                <i class="fas fa-wifi me-2"></i>RFID Admin
+                <span class="brand-badge"><img src="img/vegelink-icon.png" alt=""></span>Vegelink
             </a>
             <div class="navbar-nav ms-auto gap-2">
                 <a href="index.html" class="btn btn-sm btn-outline-light border-0">
@@ -36,7 +43,7 @@
                     <i class="fas fa-tags me-1"></i>Tags
                 </a>
                 <a href="buckets.html" data-admin-only class="btn btn-sm btn-primary">
-                    <i class="fas fa-fill me-1"></i>Seaux
+                    <i class="fas fa-box me-1"></i>Paquets
                 </a>
                 <a href="users.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
                     <i class="fas fa-user-shield me-1"></i>Utilisateurs
@@ -54,8 +61,8 @@
     <div class="container-fluid max-w-7xl mx-auto py-4">
         <div class="d-flex justify-content-between align-items-center mb-4">
             <div>
-                <h3 class="fw-bold text-primary mb-0">Seaux</h3>
-                <small class="text-muted">Affectation des seaux aux cueilleurs</small>
+                <h3 class="fw-bold text-primary mb-0">Paquets</h3>
+                <small class="text-muted">Affectation des paquets aux cueilleurs</small>
             </div>
         </div>
 
@@ -66,7 +73,7 @@
                 <table class="table table-hover table-striped mb-0 align-middle">
                     <thead class="table-light">
                         <tr>
-                            <th>N° du seau</th>
+                            <th>N° du paquet</th>
                             <th>Tags</th>
                             <th>Cueilleur</th>
                             <th class="text-end">Actions</th>
@@ -85,7 +92,7 @@
         <div class="modal-dialog">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h5 class="modal-title" id="assignTitle">Affecter le seau</h5>
+                    <h5 class="modal-title" id="assignTitle">Affecter le paquet</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
@@ -118,7 +125,7 @@
         <div class="modal-dialog">
             <div class="modal-content">
                 <div class="modal-header bg-danger text-white">
-                    <h5 class="modal-title"><i class="fas fa-user-minus me-2"></i>Désaffecter le seau</h5>
+                    <h5 class="modal-title"><i class="fas fa-user-minus me-2"></i>Désaffecter le paquet</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
@@ -138,7 +145,7 @@
         <div class="modal-dialog">
             <div class="modal-content">
                 <div class="modal-header bg-danger text-white">
-                    <h5 class="modal-title"><i class="fas fa-trash me-2"></i>Supprimer le seau</h5>
+                    <h5 class="modal-title"><i class="fas fa-trash me-2"></i>Supprimer le paquet</h5>
                     <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
@@ -157,7 +164,7 @@
     <script src="config.js"></script>
     <script src="auth.js"></script>
     <script>
-        const GONE_MESSAGE = "Ce seau ou ce cueilleur n'existe plus.";
+        const GONE_MESSAGE = "Ce paquet ou ce cueilleur n'existe plus.";
 
         let assignModal, unassignModal, deleteModal;
         let buckets = [];
@@ -184,18 +191,18 @@
         async function loadBuckets() {
             try {
                 const response = await apiFetch('/buckets');
-                if (!response.ok) { showPageError('Impossible de charger les seaux.'); return; }
+                if (!response.ok) { showPageError('Impossible de charger les paquets.'); return; }
                 const data = await response.json();
                 buckets = data.buckets || [];
                 renderBuckets();
-            } catch (e) { showPageError('Erreur réseau lors du chargement des seaux.'); }
+            } catch (e) { showPageError('Erreur réseau lors du chargement des paquets.'); }
         }
 
         function renderBuckets() {
             const tbody = document.getElementById('bucketsTable');
             if (!buckets.length) {
                 tbody.innerHTML = `<tr><td colspan="4" class="text-center py-4 text-muted">
-                    Aucun seau. Les seaux sont créés à l'enregistrement des <a href="tags.html">tags</a>.</td></tr>`;
+                    Aucun paquet. Les paquets sont créés à l'enregistrement des <a href="tags.html">tags</a>.</td></tr>`;
                 return;
             }
             tbody.innerHTML = buckets.map((bucket, index) => {
@@ -258,7 +265,7 @@
 
         function openAssign(index) {
             selectedBucket = buckets[index];
-            document.getElementById('assignTitle').innerText = `Affecter le seau n°${selectedBucket.number}`;
+            document.getElementById('assignTitle').innerText = `Affecter le paquet n°${selectedBucket.number}`;
             document.getElementById('pickerFilter').value = '';
             hideError('assignError');
             const hasPickers = pickers.length > 0;
@@ -280,8 +287,8 @@
                 const target = `${chosen.firstname} ${chosen.lastname}`;
                 confirmText.className = 'alert mb-0 ' + (current ? 'alert-warning' : 'alert-info');
                 confirmText.innerText = current
-                    ? `Seau n°${selectedBucket.number} est actuellement affecté à ${pickerName(current)}, le réaffecter à ${target} ?`
-                    : `Affecter le seau n°${selectedBucket.number} à ${target} ?`;
+                    ? `Paquet n°${selectedBucket.number} est actuellement affecté à ${pickerName(current)}, le réaffecter à ${target} ?`
+                    : `Affecter le paquet n°${selectedBucket.number} à ${target} ?`;
             }
             document.getElementById('assignStep1').classList.toggle('d-none', onConfirm);
             document.getElementById('assignStep2').classList.toggle('d-none', !onConfirm);
@@ -322,7 +329,7 @@
             selectedBucket = buckets[index];
             hideError('unassignError');
             document.getElementById('unassignText').innerText =
-                `Retirer ${pickerName(selectedBucket.picker)} du seau n°${selectedBucket.number} ?`;
+                `Retirer ${pickerName(selectedBucket.picker)} du paquet n°${selectedBucket.number} ?`;
             unassignModal.show();
         }
 
@@ -353,7 +360,7 @@
             selectedBucket = buckets[index];
             hideError('deleteError');
             const tagCount = (selectedBucket.tags || []).length;
-            const lines = [`Supprimer le seau n°${selectedBucket.number} ?`];
+            const lines = [`Supprimer le paquet n°${selectedBucket.number} ?`];
             if (tagCount === 1) {
                 lines.push('Son tag sera libéré et devra être réenregistré.');
             } else if (tagCount > 1) {
@@ -382,7 +389,7 @@
                     deleteModal.hide();
                     await loadBuckets();
                 } else if (response.status === 404) {
-                    showError('deleteError', "Ce seau n'existe plus.");
+                    showError('deleteError', "Ce paquet n'existe plus.");
                     await loadBuckets();
                 } else if (response.status !== 401 && response.status !== 403) {
                     showError('deleteError', 'Erreur lors de la suppression.');
