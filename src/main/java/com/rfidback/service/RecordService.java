@@ -14,14 +14,17 @@ import org.springframework.web.server.ResponseStatusException;
 import com.rfidback.entity.ActivityEntity;
 import com.rfidback.entity.PickerEntity;
 import com.rfidback.entity.ReaderEntity;
+import com.rfidback.entity.RecordAnomaly;
 import com.rfidback.entity.RecordConformityChangeEntity;
 import com.rfidback.entity.RecordEntity;
+import com.rfidback.entity.Role;
 import com.rfidback.entity.TagEntity;
 import com.rfidback.entity.UserEntity;
 import com.rfidback.exception.ReaderNotFoundException;
 import com.rfidback.exception.RecordNotFoundException;
 import com.rfidback.generated.model.ConformityChange;
 import com.rfidback.generated.model.ConformityChangesList;
+import com.rfidback.generated.model.RecordStatus;
 import com.rfidback.generated.model.RecordSummary;
 import com.rfidback.generated.model.RecordsList;
 import com.rfidback.repository.ReaderRepository;
@@ -42,6 +45,9 @@ public class RecordService {
     private final UserRepository userRepository;
 
     private static final String OTHER_READER = "A reader token only gives access to its own reader";
+    private static final String ANOMALY_ADMIN_ONLY =
+            "Only an Administrateur can change a Doublon / perdu or Cheat record";
+    private static final String ADMINISTRATEUR_AUTHORITY = "ROLE_" + Role.ADMINISTRATEUR.name();
 
     @Transactional(readOnly = true)
     public RecordsList listLatestRecordsForReader(String readerUid) {
@@ -76,6 +82,7 @@ public class RecordService {
             model.setPickerId(picker.getId());
         }
         model.setIsCompliant(record.isCompliant());
+        model.setStatus(statusOf(record.getAnomaly(), record.isCompliant()));
         model.setCreationDate(record.getCreationDate());
         ActivityEntity activity = record.getActivity();
         if (activity != null) {
@@ -94,12 +101,19 @@ public class RecordService {
         if (kioskReader != null && !record.getReader().getId().equals(kioskReader.getId())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, OTHER_READER);
         }
-        if (record.isCompliant() == isCompliant) {
+        // A Doublon / perdu or Cheat is lifted by an Administrateur only, and always traced, even when the boolean
+        // stays (spec 015, FR-010, research R8).
+        RecordAnomaly anomaly = record.getAnomaly();
+        if (anomaly != null && (kioskReader != null || !isAdministrateur())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, ANOMALY_ADMIN_ONLY);
+        }
+        if (anomaly == null && record.isCompliant() == isCompliant) {
             return;
         }
         RecordConformityChangeEntity.RecordConformityChangeEntityBuilder change = RecordConformityChangeEntity.builder()
                 .record(record)
                 .previousCompliant(record.isCompliant())
+                .previousAnomaly(anomaly)
                 .newCompliant(isCompliant);
         if (kioskReader != null) {
             change.authorReader(kioskReader);
@@ -110,6 +124,7 @@ public class RecordService {
         }
         recordConformityChangeRepository.save(change.build());
         record.setCompliant(isCompliant);
+        record.setAnomaly(null);
     }
 
     @Transactional(readOnly = true)
@@ -133,6 +148,9 @@ public class RecordService {
         ConformityChange model = new ConformityChange();
         model.setPreviousIsCompliant(change.isPreviousCompliant());
         model.setNewIsCompliant(change.isNewCompliant());
+        model.setPreviousStatus(statusOf(change.getPreviousAnomaly(), change.isPreviousCompliant()));
+        // A manual change never sets an anomaly (spec 015, FR-010).
+        model.setNewStatus(statusOf(null, change.isNewCompliant()));
         if (change.getAuthorReader() != null) {
             model.setAuthorType(ConformityChange.AuthorTypeEnum.READER);
             model.setAuthorReaderUid(change.getAuthorReader().getName());
@@ -144,10 +162,27 @@ public class RecordService {
         return model;
     }
 
+    /** The status of a record (spec 015, FR-001): its anomaly if any, else its compliance. */
+    static RecordStatus statusOf(RecordAnomaly anomaly, boolean compliant) {
+        if (anomaly != null) {
+            return switch (anomaly) {
+                case DOUBLON_PERDU -> RecordStatus.DOUBLON_PERDU;
+                case CHEAT -> RecordStatus.CHEAT;
+            };
+        }
+        return compliant ? RecordStatus.CONFORME : RecordStatus.NON_CONFORME;
+    }
+
     // The reader whose token authenticated this request (line kiosk), or null for a logged-in user.
     private static ReaderEntity currentReader() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         return authentication instanceof ReaderAuthentication reader ? (ReaderEntity) reader.getPrincipal() : null;
+    }
+
+    private static boolean isAdministrateur() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        return authentication != null && authentication.getAuthorities().stream()
+                .anyMatch(authority -> ADMINISTRATEUR_AUTHORITY.equals(authority.getAuthority()));
     }
 
     private static String currentUsername() {

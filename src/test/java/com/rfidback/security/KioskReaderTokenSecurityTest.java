@@ -29,6 +29,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.rfidback.entity.ActivityEntity;
 import com.rfidback.entity.ReaderEntity;
+import com.rfidback.entity.RecordAnomaly;
 import com.rfidback.entity.RecordConformityChangeEntity;
 import com.rfidback.entity.RecordEntity;
 import com.rfidback.entity.TagEntity;
@@ -203,6 +204,36 @@ class KioskReaderTokenSecurityTest {
         mockMvc.perform(get("/api/lines/{readerUid}/current-activity", "Kiosk L1")
                         .header("x-api-token", lineOne.getApitoken()))
                 .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void patch_ownCheatRecord_returns403AndChangesNothing() throws Exception {
+        // Only an Administrateur lifts a Doublon / perdu or Cheat (spec 015, FR-010).
+        lineOneRecord.setCompliant(false);
+        lineOneRecord.setAnomaly(RecordAnomaly.CHEAT);
+        recordRepository.saveAndFlush(lineOneRecord);
+
+        patchAsKiosk(lineOneRecord.getId(), true).andExpect(status().isForbidden());
+
+        RecordEntity unchanged = recordRepository.findById(lineOneRecord.getId()).orElseThrow();
+        assertThat(unchanged.getAnomaly()).isEqualTo(RecordAnomaly.CHEAT);
+        assertThat(recordConformityChangeRepository.findAllByRecordOrderByChangedAtAsc(lineOneRecord)).isEmpty();
+    }
+
+    @Test
+    void scanSettings_withAKioskToken_returns403() throws Exception {
+        mockMvc.perform(get("/api/scan-settings").header("x-api-token", lineOne.getApitoken()))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(put("/api/scan-settings").header("x-api-token", lineOne.getApitoken())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"rereadWindowMinutes\":0,\"cheatWindowSeconds\":0}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void anomalies_withAKioskToken_returns403() throws Exception {
+        mockMvc.perform(get("/api/records/anomalies").header("x-api-token", lineOne.getApitoken()))
+                .andExpect(status().isForbidden());
     }
 
     private ResultActions patchAsKiosk(UUID recordId, boolean isCompliant) throws Exception {

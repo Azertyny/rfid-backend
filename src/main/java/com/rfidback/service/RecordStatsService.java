@@ -17,17 +17,24 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.rfidback.configuration.StationProperties;
+import com.rfidback.entity.PickerEntity;
 import com.rfidback.entity.ReaderEntity;
+import com.rfidback.entity.RecordEntity;
 import com.rfidback.exception.ReaderNotFoundException;
 import com.rfidback.generated.model.ActivityColumn;
 import com.rfidback.generated.model.ActivityCount;
+import com.rfidback.generated.model.AnomalyRecord;
+import com.rfidback.generated.model.AnomalyRecordsPage;
 import com.rfidback.generated.model.HourStats;
+import com.rfidback.generated.model.PageMetadata;
 import com.rfidback.generated.model.PickerStats;
 import com.rfidback.generated.model.RecordCounts;
 import com.rfidback.generated.model.RecordStats;
@@ -71,19 +78,35 @@ public class RecordStatsService {
         this.zone = stationProperties.timeZone();
     }
 
-    @Transactional(readOnly = true)
-    public RecordStats getStats(StatsPeriod period, LocalDate from, LocalDate to, UUID readerId) {
+    /**
+     * A resolved period: its first and last station days, the half-open range of instants they cover, today, and the
+     * reader to filter on (null for all).
+     */
+    record Range(LocalDate first, LocalDate last, OffsetDateTime start, OffsetDateTime end, LocalDate today,
+            ReaderEntity reader) {
+    }
+
+    /** Shared by the dashboard and the anomalies list, so both read the same records (spec 015, research R9). */
+    Range resolve(StatsPeriod period, LocalDate from, LocalDate to, UUID readerId) {
         LocalDate today = LocalDate.now(clock.withZone(zone));
         LocalDate[] days = resolveDays(period == null ? StatsPeriod.TODAY : period, from, to, today);
-        LocalDate first = days[0];
-        LocalDate last = days[1];
         ReaderEntity reader = readerId == null ? null
                 : readerRepository.findById(readerId)
                         .orElseThrow(() -> new ReaderNotFoundException("Reader %s not found".formatted(readerId)));
-
         // Half-open range of instants: a 23- or 25-hour day at a daylight-saving change is covered exactly.
-        OffsetDateTime start = first.atStartOfDay(zone).toOffsetDateTime();
-        OffsetDateTime end = last.plusDays(1).atStartOfDay(zone).toOffsetDateTime();
+        return new Range(days[0], days[1], days[0].atStartOfDay(zone).toOffsetDateTime(),
+                days[1].plusDays(1).atStartOfDay(zone).toOffsetDateTime(), today, reader);
+    }
+
+    @Transactional(readOnly = true)
+    public RecordStats getStats(StatsPeriod period, LocalDate from, LocalDate to, UUID readerId) {
+        Range range = resolve(period, from, to, readerId);
+        LocalDate today = range.today();
+        LocalDate first = range.first();
+        LocalDate last = range.last();
+        ReaderEntity reader = range.reader();
+        OffsetDateTime start = range.start();
+        OffsetDateTime end = range.end();
 
         CountsView summary = reader == null ? recordRepository.countSummary(start, end)
                 : recordRepository.countSummaryForReader(start, end, reader);
@@ -115,7 +138,52 @@ public class RecordStatsService {
         stats.setHours(toHourStats(hourRows));
         stats.setActivities(columns);
         stats.setIncludesToday(!today.isBefore(first) && !today.isAfter(last));
+        stats.setDuplicates(reader == null ? recordRepository.countDuplicates(start, end)
+                : recordRepository.countDuplicatesForReader(start, end, reader));
         return stats;
+    }
+
+    /**
+     * The Doublon / perdu and Cheat records of a period and reader, newest first (spec 015, FR-015). Same period
+     * rules as the dashboard, so the list has as many rows as its two anomaly counts.
+     */
+    @Transactional(readOnly = true)
+    public AnomalyRecordsPage listAnomalies(StatsPeriod period, LocalDate from, LocalDate to, UUID readerId,
+            int page, int size) {
+        Range range = resolve(period, from, to, readerId);
+        PageRequest pageable = PageRequest.of(page, size);
+        Page<RecordEntity> records = range.reader() == null
+                ? recordRepository.findAnomalies(range.start(), range.end(), pageable)
+                : recordRepository.findAnomaliesForReader(range.start(), range.end(), range.reader(), pageable);
+
+        List<AnomalyRecord> content = new ArrayList<>(records.getNumberOfElements());
+        for (RecordEntity record : records) {
+            AnomalyRecord row = new AnomalyRecord();
+            row.setId(record.getId());
+            row.setStatus(RecordService.statusOf(record.getAnomaly(), record.isCompliant()));
+            row.setCreationDate(record.getCreationDate());
+            row.setTagUid(record.getTag().getUid());
+            row.setReaderUid(record.getReader().getName());
+            row.setActivityName(record.getActivity() == null ? null : record.getActivity().getName());
+            PickerEntity picker = record.getPicker();
+            if (picker != null) {
+                row.setPickerId(picker.getId());
+                row.setPickerFirstname(picker.getFirstname());
+                row.setPickerLastname(picker.getLastname());
+            }
+            content.add(row);
+        }
+        PageMetadata metadata = new PageMetadata();
+        metadata.setPage(records.getNumber());
+        metadata.setSize(records.getSize());
+        metadata.setTotalElements(Math.toIntExact(records.getTotalElements()));
+        metadata.setTotalPages(records.getTotalPages());
+        metadata.setHasNext(records.hasNext());
+        metadata.setHasPrevious(records.hasPrevious());
+        AnomalyRecordsPage result = new AnomalyRecordsPage();
+        result.setContent(content);
+        result.setMetadata(metadata);
+        return result;
     }
 
     private LocalDate[] resolveDays(StatsPeriod period, LocalDate from, LocalDate to, LocalDate today) {
@@ -151,6 +219,7 @@ public class RecordStatsService {
         RecordCounts counts = new RecordCounts();
         counts.setTotal(row == null ? 0 : toLong(row.getTotal()));
         counts.setNonCompliant(row == null ? 0 : toLong(row.getNonCompliant()));
+        counts.setCheats(row == null ? 0 : toLong(row.getCheats()));
         return counts;
     }
 
@@ -163,6 +232,7 @@ public class RecordStatsService {
             picker.setLastname(row.getLastname());
             picker.setTotal(toLong(row.getTotal()));
             picker.setNonCompliant(toLong(row.getNonCompliant()));
+            picker.setCheats(toLong(row.getCheats()));
             picker.setActivities(new ArrayList<>());
             pickers.add(picker);
         }
@@ -253,6 +323,7 @@ public class RecordStatsService {
                 picker.setLastname(row.getLastname());
                 picker.setTotal(0L);
                 picker.setNonCompliant(0L);
+                picker.setCheats(0L);
                 picker.setActivities(new ArrayList<>());
                 pickers.add(picker);
             }
@@ -264,10 +335,12 @@ public class RecordStatsService {
     private List<HourStats> toHourStats(List<HourCountsView> rows) {
         long[] totals = new long[HOURS_PER_DAY];
         long[] nonCompliant = new long[HOURS_PER_DAY];
+        long[] cheats = new long[HOURS_PER_DAY];
         for (HourCountsView row : rows) {
             int hour = Instant.ofEpochSecond(toLong(row.getHourIndex()) * SECONDS_PER_HOUR).atZone(zone).getHour();
             totals[hour] += toLong(row.getTotal());
             nonCompliant[hour] += toLong(row.getNonCompliant());
+            cheats[hour] += toLong(row.getCheats());
         }
         List<HourStats> hours = new ArrayList<>(HOURS_PER_DAY);
         for (int hour = 0; hour < HOURS_PER_DAY; hour++) {
@@ -275,6 +348,7 @@ public class RecordStatsService {
             stats.setHour(hour);
             stats.setTotal(totals[hour]);
             stats.setNonCompliant(nonCompliant[hour]);
+            stats.setCheats(cheats[hour]);
             hours.add(stats);
         }
         return hours;

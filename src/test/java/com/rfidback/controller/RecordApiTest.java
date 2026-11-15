@@ -40,12 +40,15 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.rfidback.entity.ActivityEntity;
 import com.rfidback.entity.ReaderEntity;
+import com.rfidback.entity.RecordAnomaly;
 import com.rfidback.entity.RecordConformityChangeEntity;
 import com.rfidback.entity.RecordEntity;
 import com.rfidback.entity.Role;
 import com.rfidback.entity.TagEntity;
+import com.rfidback.entity.PickerEntity;
 import com.rfidback.entity.UserEntity;
 import com.rfidback.repository.ActivityRepository;
+import com.rfidback.repository.PickerRepository;
 import com.rfidback.repository.ReaderRepository;
 import com.rfidback.repository.RecordConformityChangeRepository;
 import com.rfidback.repository.RecordRepository;
@@ -88,6 +91,9 @@ class RecordApiTest {
 
     @Autowired
     private PasswordEncoder passwordEncoder;
+
+    @Autowired
+    private PickerRepository pickerRepository;
 
     private ReaderEntity reader;
 
@@ -276,6 +282,117 @@ class RecordApiTest {
 
         mockMvc.perform(get("/api/records/{recordId}/conformity-history", record.getId()).with(asOperator()))
                 .andExpect(status().isForbidden());
+    }
+
+    // --- statuses, lifting an anomaly and the anomalies list (spec 015, FR-009, FR-010, FR-015) ---
+
+    @Test
+    void listLatest_givesEachRecordsStatus() throws Exception {
+        saveRecord("STATUS-OK", true);
+        saveRecord("STATUS-KO", false);
+        saveAnomaly("STATUS-DOUBLON", RecordAnomaly.DOUBLON_PERDU);
+        saveAnomaly("STATUS-CHEAT", RecordAnomaly.CHEAT);
+
+        mockMvc.perform(get("/api/records/readers/{readerId}", READER_NAME).with(asOperator()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.records[?(@.tagUid == 'STATUS-OK')].status").value(contains("CONFORME")))
+                .andExpect(jsonPath("$.records[?(@.tagUid == 'STATUS-KO')].status").value(contains("NON_CONFORME")))
+                .andExpect(jsonPath("$.records[?(@.tagUid == 'STATUS-DOUBLON')].status")
+                        .value(contains("DOUBLON_PERDU")))
+                .andExpect(jsonPath("$.records[?(@.tagUid == 'STATUS-DOUBLON')].isCompliant").value(contains(false)))
+                .andExpect(jsonPath("$.records[?(@.tagUid == 'STATUS-CHEAT')].status").value(contains("CHEAT")));
+    }
+
+    @Test
+    void patch_asAdmin_liftsACheat_andTheHistoryShowsIt() throws Exception {
+        RecordEntity cheat = saveAnomaly("LIFT-CHEAT", RecordAnomaly.CHEAT);
+
+        patchConformity(cheat, false, asAdmin()).andExpect(status().isNoContent());
+
+        RecordEntity lifted = recordRepository.findById(cheat.getId()).orElseThrow();
+        assertThat(lifted.getAnomaly()).isNull();
+        assertThat(lifted.isCompliant()).isFalse();
+        mockMvc.perform(get("/api/records/{recordId}/conformity-history", cheat.getId()).with(asAdmin()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.changes", hasSize(1)))
+                .andExpect(jsonPath("$.changes[0].previousStatus").value("CHEAT"))
+                .andExpect(jsonPath("$.changes[0].newStatus").value("NON_CONFORME"))
+                .andExpect(jsonPath("$.changes[0].authorUsername").value("record-admin"));
+
+        // Once lifted, the record is ordinary again: an Opérateur may toggle it.
+        patchConformity(cheat, true, asOperator()).andExpect(status().isNoContent());
+        assertThat(recordRepository.findById(cheat.getId()).orElseThrow().isCompliant()).isTrue();
+    }
+
+    @Test
+    void patch_asOperator_onADoublon_returns403AndChangesNothing() throws Exception {
+        RecordEntity doublon = saveAnomaly("LIFT-DOUBLON", RecordAnomaly.DOUBLON_PERDU);
+
+        patchConformity(doublon, true, asOperator()).andExpect(status().isForbidden());
+
+        RecordEntity unchanged = recordRepository.findById(doublon.getId()).orElseThrow();
+        assertThat(unchanged.getAnomaly()).isEqualTo(RecordAnomaly.DOUBLON_PERDU);
+        assertThat(unchanged.isCompliant()).isFalse();
+        assertThat(changesOf(doublon)).isEmpty();
+    }
+
+    @Test
+    void anomalies_listsOnlyTheAnomaliesOfThePeriodAndReader_newestFirst() throws Exception {
+        PickerEntity picker = pickerRepository.save(PickerEntity.builder().firstname("Ana").lastname("Lyse").build());
+        saveRecord("ANOMALY-ORDINARY", false);
+        RecordEntity doublon = saveAnomaly("ANOMALY-DOUBLON", RecordAnomaly.DOUBLON_PERDU);
+        RecordEntity cheat = saveAnomaly("ANOMALY-CHEAT", RecordAnomaly.CHEAT);
+        cheat.setPicker(picker);
+        recordRepository.saveAndFlush(cheat);
+        ReaderEntity other = readerRepository.save(ReaderEntity.builder().name("Other anomaly reader").build());
+        TagEntity otherTag = tagRepository.save(TagEntity.builder().uid("ANOMALY-OTHER-LINE").build());
+        recordRepository.saveAndFlush(RecordEntity.builder().tag(otherTag).reader(other).compliant(false)
+                .anomaly(RecordAnomaly.CHEAT).build());
+
+        mockMvc.perform(get("/api/records/anomalies").param("readerId", reader.getId().toString()).with(asAdmin()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content", hasSize(2)))
+                .andExpect(jsonPath("$.content[0].id").value(cheat.getId().toString()))
+                .andExpect(jsonPath("$.content[0].status").value("CHEAT"))
+                .andExpect(jsonPath("$.content[0].tagUid").value("ANOMALY-CHEAT"))
+                .andExpect(jsonPath("$.content[0].readerUid").value(READER_NAME))
+                .andExpect(jsonPath("$.content[0].pickerLastname").value("Lyse"))
+                .andExpect(jsonPath("$.content[1].id").value(doublon.getId().toString()))
+                .andExpect(jsonPath("$.content[1].status").value("DOUBLON_PERDU"))
+                .andExpect(jsonPath("$.content[1].pickerId").value(nullValue()))
+                .andExpect(jsonPath("$.metadata.totalElements").value(2));
+
+        mockMvc.perform(get("/api/records/anomalies").param("readerId", reader.getId().toString())
+                        .param("size", "1").with(asAdmin()))
+                .andExpect(jsonPath("$.content", hasSize(1)))
+                .andExpect(jsonPath("$.metadata.totalPages").value(2))
+                .andExpect(jsonPath("$.metadata.hasNext").value(true));
+    }
+
+    @Test
+    void anomalies_aLiftedRecordLeavesTheList() throws Exception {
+        RecordEntity cheat = saveAnomaly("ANOMALY-LIFTED", RecordAnomaly.CHEAT);
+        patchConformity(cheat, true, asAdmin()).andExpect(status().isNoContent());
+
+        mockMvc.perform(get("/api/records/anomalies").param("readerId", reader.getId().toString()).with(asAdmin()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content", hasSize(0)))
+                .andExpect(jsonPath("$.metadata.totalElements").value(0));
+    }
+
+    @Test
+    void anomalies_moreThan31Days_returns400_andOperatorGets403() throws Exception {
+        mockMvc.perform(get("/api/records/anomalies").param("period", "CUSTOM").param("from", "2026-01-01")
+                        .param("to", "2026-03-01").with(asAdmin()))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(get("/api/records/anomalies").with(asOperator()))
+                .andExpect(status().isForbidden());
+    }
+
+    private RecordEntity saveAnomaly(String tagUid, RecordAnomaly anomaly) {
+        RecordEntity record = saveRecord(tagUid, false);
+        record.setAnomaly(anomaly);
+        return recordRepository.saveAndFlush(record);
     }
 
     private ResultActions patchConformity(RecordEntity record, Boolean isCompliant, RequestPostProcessor who)

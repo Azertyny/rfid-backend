@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -155,6 +156,39 @@ class RecordStatsServiceTest {
         ArgumentCaptor<OffsetDateTime> end = ArgumentCaptor.forClass(OffsetDateTime.class);
         verify(recordRepository).countSummary(start.capture(), end.capture());
         assertEquals(Duration.ofHours(25), Duration.between(start.getValue(), end.getValue()));
+    }
+
+    // --- statuses (spec 015, FR-011) ---
+
+    @Test
+    void cheatsAndDuplicatesAreMapped() {
+        UUID picker = UUID.randomUUID();
+        when(recordRepository.countSummary(any(), any())).thenReturn(counts(10, 3, 1));
+        when(recordRepository.countByPicker(any(), any()))
+                .thenReturn(List.of(pickerRow(picker, "Jane", "Doe", 10, 3, 1)));
+        when(recordRepository.countByUtcHour(any(), any()))
+                .thenReturn(List.of(hourRow("2026-09-25T08:00:00Z", 10, 3, 1)));
+        when(recordRepository.countDuplicates(any(), any())).thenReturn(4L);
+
+        RecordStats stats = serviceAt("2026-09-25T10:00:00Z").getStats(StatsPeriod.TODAY, null, null, null);
+
+        assertEquals(1, stats.getSummary().getCheats());
+        assertEquals(4, stats.getDuplicates());
+        assertEquals(1, stats.getPickers().get(0).getCheats());
+        assertEquals(1, stats.getHours().get(10).getCheats());
+        assertEquals(0, stats.getHours().get(9).getCheats());
+    }
+
+    @Test
+    void aReaderCountsItsOwnDuplicates() {
+        ReaderEntity line = ReaderEntity.builder().id(UUID.randomUUID()).name("L1").build();
+        when(readerRepository.findById(line.getId())).thenReturn(Optional.of(line));
+        when(recordRepository.countDuplicatesForReader(any(), any(), eq(line))).thenReturn(2L);
+
+        RecordStats stats = serviceAt("2026-09-25T10:00:00Z").getStats(StatsPeriod.TODAY, null, null, line.getId());
+
+        assertEquals(2, stats.getDuplicates());
+        verify(recordRepository, never()).countDuplicates(any(), any());
     }
 
     // --- validation (FR-007) ---
@@ -432,6 +466,10 @@ class RecordStatsServiceTest {
     }
 
     private static CountsView counts(Number total, Number nonCompliant) {
+        return counts(total, nonCompliant, 0);
+    }
+
+    private static CountsView counts(Number total, Number nonCompliant, Number cheats) {
         return new CountsView() {
             @Override
             public Number getTotal() {
@@ -442,10 +480,19 @@ class RecordStatsServiceTest {
             public Number getNonCompliant() {
                 return nonCompliant;
             }
+
+            @Override
+            public Number getCheats() {
+                return cheats;
+            }
         };
     }
 
     private static HourCountsView hourRow(String utcHour, long total, long nonCompliant) {
+        return hourRow(utcHour, total, nonCompliant, 0);
+    }
+
+    private static HourCountsView hourRow(String utcHour, long total, long nonCompliant, long cheats) {
         long hourIndex = Instant.parse(utcHour).getEpochSecond() / 3600;
         return new HourCountsView() {
             @Override
@@ -463,11 +510,21 @@ class RecordStatsServiceTest {
             public Number getNonCompliant() {
                 return nonCompliant;
             }
+
+            @Override
+            public Number getCheats() {
+                return cheats;
+            }
         };
     }
 
     private static PickerCountsView pickerRow(UUID id, String firstname, String lastname, long total,
             long nonCompliant) {
+        return pickerRow(id, firstname, lastname, total, nonCompliant, 0);
+    }
+
+    private static PickerCountsView pickerRow(UUID id, String firstname, String lastname, long total,
+            long nonCompliant, long cheats) {
         return new PickerCountsView() {
             @Override
             public UUID getPickerId() {
@@ -492,6 +549,11 @@ class RecordStatsServiceTest {
             @Override
             public Number getNonCompliant() {
                 return nonCompliant;
+            }
+
+            @Override
+            public Number getCheats() {
+                return cheats;
             }
         };
     }

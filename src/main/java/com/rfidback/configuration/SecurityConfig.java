@@ -160,12 +160,15 @@ public class SecurityConfig {
                             .requestMatchers(path(HttpMethod.GET, "/api/pickers/*")).hasAnyRole(ADMINISTRATEUR, OPERATEUR)
                             .requestMatchers(path(null, "/api/pickers/**")).hasRole(ADMINISTRATEUR)
                             .requestMatchers(path(null, "/api/work-hours")).hasRole(ADMINISTRATEUR)
+                            .requestMatchers(path(null, "/api/scan-settings")).hasRole(ADMINISTRATEUR) // spec 015
                             .requestMatchers(path(HttpMethod.GET, "/api/readers")).hasAnyRole(ADMINISTRATEUR, OPERATEUR)
                             .requestMatchers(path(null, "/api/readers/**")).hasRole(ADMINISTRATEUR)
                             .requestMatchers(path(null, "/api/tags/**")).hasRole(ADMINISTRATEUR)
                             .requestMatchers(path(null, "/api/buckets/**")).hasRole(ADMINISTRATEUR)
                             .requestMatchers(path(HttpMethod.GET, "/api/records/*/conformity-history"))
                             .hasRole(ADMINISTRATEUR) // spec 005, FR-007
+                            .requestMatchers(path(HttpMethod.GET, "/api/records/anomalies"))
+                            .hasRole(ADMINISTRATEUR) // spec 015, FR-015
                             .requestMatchers(path(HttpMethod.GET, "/api/activities")).hasAnyRole(ADMINISTRATEUR, OPERATEUR)
                             .requestMatchers(path(null, "/api/activities/**")).hasRole(ADMINISTRATEUR)
                             .requestMatchers(path(null, LINE_ACTIVITY_PATH)).hasAnyRole(ADMINISTRATEUR, OPERATEUR)

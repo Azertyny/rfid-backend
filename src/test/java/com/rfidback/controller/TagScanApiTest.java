@@ -32,6 +32,7 @@ import com.rfidback.entity.ActivityEntity;
 import com.rfidback.entity.BucketEntity;
 import com.rfidback.entity.PickerEntity;
 import com.rfidback.entity.ReaderEntity;
+import com.rfidback.entity.RecordAnomaly;
 import com.rfidback.entity.RecordEntity;
 import com.rfidback.entity.TagEntity;
 import com.rfidback.repository.ActivityRepository;
@@ -173,7 +174,43 @@ class TagScanApiTest {
     }
 
     @Test
-    void scan_sameTagByAnotherReaderTheSameDay_isKO() throws Exception {
+    void scan_countedTagReadAgainWithinTheDelay_byAnotherReader_isIgnored() throws Exception {
+        String uid = tagInBucket(4011);
+        ReaderEntity otherReader = readerRepository.save(ReaderEntity.builder().name("Other reader, recent read").build());
+        long recordsBefore = recordRepository.count();
+        scan(reader, uid, true).andExpect(status().isOk());
+        RecordEntity counted = latestRecord();
+
+        scan(otherReader, uid, false)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.isCompliant").value(true))
+                .andExpect(jsonPath("$.message").value("Recent read ignored"));
+
+        assertThat(recordRepository.count()).isEqualTo(recordsBefore + 1);
+        RecordEntity unchanged = recordRepository.findById(counted.getId()).orElseThrow();
+        assertThat(unchanged.isCompliant()).isTrue();
+        assertThat(unchanged.getAnomaly()).isNull();
+        assertThat(unchanged.getPicker()).isNotNull();
+    }
+
+    @Test
+    void scan_ignoredReads_keepSlidingTheDelay() throws Exception {
+        String uid = tagInBucket(4012);
+        long recordsBefore = recordRepository.count();
+        scan(reader, uid, true).andExpect(status().isOk());
+        // Counted 2 h ago, but read again 20 min ago: still within the 30-minute delay of its last read.
+        age(latestRecord(), Duration.ofHours(2), Duration.ofHours(2));
+        ageTag(uid, Duration.ofMinutes(20));
+
+        scan(reader, uid, true)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("Recent read ignored"));
+
+        assertThat(recordRepository.count()).isEqualTo(recordsBefore + 1);
+    }
+
+    @Test
+    void scan_sameTagByAnotherReaderTheSameDay_afterTheRereadDelay_isKO() throws Exception {
         String uid = tagInBucket(4003);
         ReaderEntity otherReader = readerRepository.save(ReaderEntity.builder().name("Other tag scan test").build());
         long recordsBefore = recordRepository.count();
@@ -181,6 +218,8 @@ class TagScanApiTest {
         scan(reader, uid, true)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.message").doesNotExist());
+        age(latestRecord(), Duration.ofMinutes(31), Duration.ofMinutes(31));
+        ageTag(uid, Duration.ofMinutes(31));
         scan(otherReader, uid, true)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.isCompliant").value(false))
@@ -190,15 +229,36 @@ class TagScanApiTest {
         RecordEntity rescan = recordRepository.findTop10ByReader_NameOrderByCreationDateDesc(otherReader.getName())
                 .get(0);
         assertThat(rescan.isCompliant()).isFalse();
+        assertThat(rescan.getAnomaly()).isEqualTo(RecordAnomaly.DOUBLON_PERDU);
         assertThat(rescan.getPicker()).isNull();
     }
 
     @Test
-    void scan_rescanAfterTheWindow_sameReader_isKO() throws Exception {
+    void scan_countedTagOnALaterDay_isDoublonPerdu() throws Exception {
+        String uid = tagInBucket(4013);
+        long recordsBefore = recordRepository.count();
+        scan(reader, uid, true).andExpect(status().isOk());
+        age(latestRecord(), Duration.ofHours(25), Duration.ofHours(25));
+        ageTag(uid, Duration.ofHours(25));
+
+        scan(reader, uid, true)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.isCompliant").value(false))
+                .andExpect(jsonPath("$.message").value("Tag already scanned today"));
+
+        assertThat(recordRepository.count()).isEqualTo(recordsBefore + 2);
+        RecordEntity rescan = latestRecord();
+        assertThat(rescan.getAnomaly()).isEqualTo(RecordAnomaly.DOUBLON_PERDU);
+        assertThat(rescan.getPicker()).isNull();
+    }
+
+    @Test
+    void scan_rescanAfterTheRereadDelay_sameReader_isKO() throws Exception {
         String uid = tagInBucket(4004);
         long recordsBefore = recordRepository.count();
         scan(reader, uid, true).andExpect(status().isOk());
-        age(latestRecord(), Duration.ofSeconds(30), Duration.ofSeconds(30));
+        age(latestRecord(), Duration.ofMinutes(31), Duration.ofMinutes(31));
+        ageTag(uid, Duration.ofMinutes(31));
 
         scan(reader, uid, true)
                 .andExpect(status().isOk())
@@ -280,6 +340,7 @@ class TagScanApiTest {
                 .andReturn().getResponse().getContentAsString();
         scan(reader, second, true)
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.isCompliant").value(false))
                 .andExpect(jsonPath("$.message").value("Second tag of the crate ignored"))
                 .andExpect(jsonPath("$.processedAt").value(objectMapper.readTree(firstAnswer).get("processedAt").asText()));
         assertThat(recordRepository.count()).isEqualTo(recordsBefore + 1);
@@ -289,6 +350,10 @@ class TagScanApiTest {
         assertThat(firstTag.getBucket()).isNull();
         assertThat(secondTag.getBucket()).isNull();
         assertThat(secondTag.getCountedRecord().getId()).isEqualTo(firstTag.getCountedRecord().getId());
+        RecordEntity crate = recordRepository.findById(firstTag.getCountedRecord().getId()).orElseThrow();
+        assertThat(crate.getAnomaly()).isEqualTo(RecordAnomaly.CHEAT);
+        assertThat(crate.isCompliant()).isFalse();
+        assertThat(crate.getPicker()).isNotNull();
 
         // The second tag's own repeats are the crate's pass.
         scan(reader, second, true).andExpect(jsonPath("$.message").value("Duplicate read ignored"));
@@ -305,6 +370,7 @@ class TagScanApiTest {
         scan(reader, second, true).andExpect(jsonPath("$.message").doesNotExist());
 
         assertThat(recordRepository.count()).isEqualTo(recordsBefore + 2);
+        assertThat(recordRepository.findAll()).noneMatch(r -> r.getAnomaly() == RecordAnomaly.CHEAT);
     }
 
     @Test
@@ -319,6 +385,7 @@ class TagScanApiTest {
         scan(reader, second, true).andExpect(jsonPath("$.message").doesNotExist());
 
         assertThat(recordRepository.count()).isEqualTo(recordsBefore + 2);
+        assertThat(recordRepository.findAll()).noneMatch(r -> r.getAnomaly() == RecordAnomaly.CHEAT);
     }
 
     @Test
@@ -332,6 +399,7 @@ class TagScanApiTest {
         scan(otherReader, second, true).andExpect(jsonPath("$.message").doesNotExist());
 
         assertThat(recordRepository.count()).isEqualTo(recordsBefore + 2);
+        assertThat(recordRepository.findAll()).noneMatch(r -> r.getAnomaly() == RecordAnomaly.CHEAT);
     }
 
     @Test
@@ -446,6 +514,14 @@ class TagScanApiTest {
         OffsetDateTime now = OffsetDateTime.now();
         jdbcTemplate.update("update record set creation_date = ?, last_read_at = ? where id = ?",
                 now.minus(createdAgo), now.minus(lastReadAgo), record.getId());
+        entityManager.clear();
+    }
+
+    /** Moves the tag's last read back in time (spec 015, research R2). */
+    private void ageTag(String uid, Duration lastReadAgo) {
+        entityManager.flush();
+        jdbcTemplate.update("update tag set last_read_at = ? where uid = ?", OffsetDateTime.now().minus(lastReadAgo),
+                uid);
         entityManager.clear();
     }
 
