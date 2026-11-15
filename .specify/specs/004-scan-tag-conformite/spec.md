@@ -6,6 +6,8 @@
 
 **Status**: Delivered (2026-09-24) — FR-002 (UID vide → `400`) and FR-008 (dédoublonnage) implemented; see [plan.md](plan.md). Amended 2026-10-11 (Clarifications): sliding window for FR-008, FR-009 (tag leaves its bucket, same-day rescan KO) and FR-010 (two tags on one crate) — delivered 2026-10-11, see [plan.md](plan.md) and [tasks.md](tasks.md) T018–T042
 
+**Amended by spec `015`** (2026-11-15, [../015-statuts-doublon-cheat/spec.md](../015-statuts-doublon-cheat/spec.md)): FR-006 — a record has a status with four values, the `compliant` boolean plus a nullable anomaly (Doublon / perdu, Cheat), spec 015 FR-001; FR-009 — a counted tag read again by any reader within the re-read delay (30 min, set by the Administrateur) is ignored (spec 015 FR-003), and later, on any day, gives a Doublon / perdu record with no picker instead of a non-compliant one or an ordinary one the next day (spec 015 FR-005); FR-010 — the crate's record of a second tag becomes Cheat (spec 015 FR-007), and the 2 s gap is set by the Administrateur (spec 015 FR-008). The message `"Tag already scanned today"` is kept for the Doublon / perdu record, also on a later day; a new message `"Recent read ignored"` answers an ignored read.
+
 **Input**: User description: "Parcours le dépôt. Pour chaque fonctionnalité métier identifiée, crée .specify/specs/NNN-nom-feature/spec.md ... Décris le comportement ACTUEL (as-is) ... cite les fichiers ... Marque [NEEDS CLARIFICATION] ..."
 
 ## Clarifications

@@ -499,6 +499,55 @@ paths:
         "500": { $ref: "#/components/responses/InternalError" }
 
   # -----------------------------------------------------------------------------------------------
+  # Scan settings section (spec 015)
+  # -----------------------------------------------------------------------------------------------
+  /scan-settings:
+    get:
+      summary: The two scan delays an Administrateur can change
+      description: >
+        The delay during which a counted tag read again is ignored, and the gap under which two tags of one bucket
+        read by one reader are a Cheat. A value never changed is the installation default, with no author and no
+        date. Administrateur.
+      operationId: getScanSettings
+      tags: [ScanSettings]
+      responses:
+        "200":
+          description: The settings in force
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanSettings"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    put:
+      summary: Change the scan delays
+      description: >
+        Both values are sent. A value different from the one in force is stored with the session's user and the
+        current time and applies from the next scan; a value equal to the one in force keeps its author and date.
+        Records already stored are never re-evaluated. 0 disables the rule. Out-of-range or non-integer values
+        answer 400 and nothing is saved. Administrateur.
+      operationId: updateScanSettings
+      tags: [ScanSettings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateScanSettings"
+      responses:
+        "200":
+          description: The settings after the change, as returned by GET
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanSettings"
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  # -----------------------------------------------------------------------------------------------
   # Tag section
   # -----------------------------------------------------------------------------------------------
   /tags/buckets/{bucketNumber}:
@@ -558,14 +607,17 @@ paths:
         mode, no tag and no record are created, isCompliant is true and the message is "Tag not in reference list,
         ignored". For a reader in PRODUCTION mode, rules apply in this order. A read of a tag by the same reader
         less than app.scan.duplicate-window (10 s by default) after the last read of the record that counted it is
-        the same pass: no new record, the response carries that record and the message "Duplicate read ignored". A
-        tag of bucket B read by the same reader less than app.scan.crate-window (2 s by default) after a record
-        counted another tag of B is the second tag of that crate: no new record, the tag leaves its bucket, the
-        response carries the crate's record and the message "Second tag of the crate ignored". In both cases, a read
-        reporting isCompliant false turns a compliant record non-compliant. A tag already counted today (station
-        day), read again, gives a new non-compliant record with no picker, whatever isCompliant says, and the message
-        "Tag already scanned today". Otherwise a new record is created and the tag leaves its bucket. Registering the
-        tag into a bucket again resets it. A record carries the line's current activity, if any.
+        the same pass: no new record, the response carries that record and the message "Duplicate read ignored"; a
+        read reporting isCompliant false turns a compliant record non-compliant. A tag of bucket B read by the same
+        reader less than the Cheat gap (GET /scan-settings, 2 s by default) after a record counted another tag of B
+        is the second tag of that crate: no new record, the tag leaves its bucket, the crate's record becomes CHEAT
+        (non-compliant) and the response carries it with the message "Second tag of the crate ignored". A tag
+        already counted read again, by any reader, less than the re-read delay (GET /scan-settings, 30 min by
+        default) after its last read is ignored: no record, nothing changed, the message "Recent read ignored". A
+        tag already counted read again later, on any day, gives a new DOUBLON_PERDU record (non-compliant) with no
+        picker, whatever isCompliant says, and the message "Tag already scanned today". Otherwise a new record is
+        created and the tag leaves its bucket. Registering the tag into a bucket again resets it. A record carries
+        the line's current activity, if any (spec 015).
       operationId: scanTag
       tags: [Tag]
       security:
@@ -747,7 +799,9 @@ paths:
         are in the station time zone (app.station.time-zone). Conformity is the current value of each record,
         after manual corrections. The picker rows, and the hour entries, each add up to the summary. Each picker
         row's activities add up to its total. Hours are the hours entered by the Administrateur (spec 014), summed
-        over the period, and only given without a reader. Administrateur and Opérateur.
+        over the period, and only given without a reader. Records with status DOUBLON_PERDU are not crates: they are
+        left out of the summary, the picker rows, the activities and the hours, and counted apart in duplicates
+        (spec 015). Administrateur and Opérateur.
       operationId: getRecordStats
       tags: [Record]
       parameters:
@@ -784,6 +838,57 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RecordStats"
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /records/anomalies:
+    get:
+      summary: Records with status DOUBLON_PERDU or CHEAT in a period
+      description: >
+        The records of the period (and reader) whose status is DOUBLON_PERDU or CHEAT, newest first, paged. Same
+        period parameters, resolution and 31-day limit as GET /records/stats. A record whose anomaly was lifted is
+        no longer listed. Administrateur (spec 015).
+      operationId: listRecordAnomalies
+      tags: [Record]
+      parameters:
+        - in: query
+          name: period
+          required: false
+          schema:
+            $ref: "#/components/schemas/StatsPeriod"
+        - in: query
+          name: from
+          required: false
+          description: First day, inclusive. Required with CUSTOM, refused otherwise.
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: to
+          required: false
+          description: Last day, inclusive. Required with CUSTOM, refused otherwise. At most 31 days from `from`.
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: readerId
+          required: false
+          description: Only the records of this reader.
+          schema:
+            type: string
+            format: uuid
+        - $ref: "#/components/parameters/PageNumber"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: One page of anomaly records
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnomalyRecordsPage"
         "400": { $ref: "#/components/responses/InvalidRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -828,7 +933,9 @@ paths:
         the token of the record's reader (line kiosk, no CSRF header); another reader's token gets 403 and nothing
         changes. If the value differs from the current one, the change is recorded in the record's compliance history
         with the user or the reader as author, and duplicate scans no longer change the record. If it is the current
-        value, nothing is written (idempotent).
+        value, nothing is written (idempotent). On a record whose status is DOUBLON_PERDU or CHEAT, only an
+        Administrateur session is accepted (403 for an Opérateur or a reader token, nothing changed): the record
+        becomes CONFORME or NON_CONFORME as asked and a history entry is always written (spec 015).
       operationId: updateRecordConformity
       tags: [Record]
       security:
@@ -1536,9 +1643,12 @@ components:
           type: string
           description: >
             Processing message, absent when a new record counted the tag. "Duplicate read ignored" for a repeat of
-            the same pass, "Second tag of the crate ignored" for a crate's second tag (no new record), "Tag already
-            scanned today" for a non-compliant rescan, "Tag not in reference list, ignored" for a uid outside the
-            reference list; registration messages for readers in ENREGISTREMENT mode.
+            the same pass, "Second tag of the crate ignored" for a crate's second tag (no new record, the crate's
+            record becomes CHEAT), "Recent read ignored" for a counted tag read again within the re-read delay (no
+            record, nothing changed), "Tag already scanned today" for the rescan of a counted tag, on any day (a new
+            DOUBLON_PERDU record), "Tag not in reference list, ignored" for a uid outside the reference list;
+            registration messages for readers in ENREGISTREMENT mode. isCompliant is false for a CHEAT or
+            DOUBLON_PERDU record (spec 015).
           example: Duplicate read ignored
       required:
         - uid
@@ -1777,11 +1887,14 @@ components:
         activityName:
           type: string
           nullable: true
+        status:
+          $ref: "#/components/schemas/RecordStatus"
       required:
         - id
         - tagUid
         - isCompliant
         - creationDate
+        - status
 
     RecordsList:
       type: object
@@ -1806,15 +1919,23 @@ components:
       required:
         - total
         - nonCompliant
+        - cheats
       properties:
         total:
           type: integer
           format: int64
           minimum: 0
+          description: Records counted as crates; DOUBLON_PERDU records are left out (spec 015).
         nonCompliant:
           type: integer
           format: int64
           minimum: 0
+          description: Records of total that are not CONFORME, CHEAT included.
+        cheats:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Records of total with status CHEAT, also counted in nonCompliant (spec 015).
 
     PickerStats:
       allOf:
@@ -1871,6 +1992,7 @@ components:
         - hours
         - activities
         - includesToday
+        - duplicates
       properties:
         from:
           type: string
@@ -1916,6 +2038,11 @@ components:
         includesToday:
           type: boolean
           description: The period contains today in the station time zone.
+        duplicates:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Records with status DOUBLON_PERDU in the period (and reader), not counted in summary (spec 015).
 
     ActivityColumn:
       type: object
@@ -2020,6 +2147,98 @@ components:
           multipleOf: 0.25
           description: Null removes the picker's hours for the day
 
+    RecordStatus:
+      type: string
+      enum: [CONFORME, NON_CONFORME, DOUBLON_PERDU, CHEAT]
+      description: >
+        CONFORME and NON_CONFORME come from the reader's verdict or a manual change. DOUBLON_PERDU (a tag already
+        counted and not registered into a bucket since, read again) and CHEAT (two tags of one bucket read together)
+        are only set by the system; isCompliant is false for both (spec 015).
+
+    AnomalyRecord:
+      type: object
+      required: [id, status, creationDate, tagUid, readerUid]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/RecordStatus"
+        creationDate:
+          type: string
+          format: date-time
+        tagUid:
+          type: string
+        readerUid:
+          type: string
+          description: Name of the line's reader
+        activityName:
+          type: string
+          nullable: true
+        pickerId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Null for DOUBLON_PERDU, and for a CHEAT whose bucket had no picker
+        pickerFirstname:
+          type: string
+          nullable: true
+        pickerLastname:
+          type: string
+          nullable: true
+
+    AnomalyRecordsPage:
+      type: object
+      required: [content, metadata]
+      properties:
+        content:
+          type: array
+          items:
+            $ref: "#/components/schemas/AnomalyRecord"
+        metadata:
+          $ref: "#/components/schemas/PageMetadata"
+
+    ScanSetting:
+      type: object
+      required: [value]
+      properties:
+        value:
+          type: integer
+          minimum: 0
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Null while the installation default applies
+        updatedBy:
+          type: string
+          nullable: true
+          description: Username of the Administrateur who last changed it
+
+    ScanSettings:
+      type: object
+      required: [rereadWindowMinutes, cheatWindowSeconds]
+      properties:
+        rereadWindowMinutes:
+          $ref: "#/components/schemas/ScanSetting"
+        cheatWindowSeconds:
+          $ref: "#/components/schemas/ScanSetting"
+
+    UpdateScanSettings:
+      type: object
+      required: [rereadWindowMinutes, cheatWindowSeconds]
+      properties:
+        rereadWindowMinutes:
+          type: integer
+          minimum: 0
+          maximum: 1440
+          example: 30
+        cheatWindowSeconds:
+          type: integer
+          minimum: 0
+          maximum: 60
+          example: 2
+
     UpdateRecordConformityRequest:
       type: object
       properties:
@@ -2059,11 +2278,17 @@ components:
           format: date-time
           description: Date of the change
           example: "2024-01-15T09:31:12Z"
+        previousStatus:
+          $ref: "#/components/schemas/RecordStatus"
+        newStatus:
+          $ref: "#/components/schemas/RecordStatus"
       required:
         - previousIsCompliant
         - newIsCompliant
         - authorType
         - changedAt
+        - previousStatus
+        - newStatus
 
     ConformityChangesList:
       type: object

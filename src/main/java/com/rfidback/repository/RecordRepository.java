@@ -6,6 +6,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
@@ -52,8 +54,15 @@ public interface RecordRepository extends JpaRepository<RecordEntity, UUID> {
     // Dashboard statistics (spec 007). Each query exists without and with a reader: an optional reader written as
     // "(:reader is null or ...)" can fail on PostgreSQL with a null parameter (spec 007, T008).
 
-    String IN_RANGE = " r.creationDate >= :start and r.creationDate < :end ";
-    String COUNTS = " count(r) as total, sum(case when r.compliant = false then 1 else 0 end) as nonCompliant ";
+    String PERIOD = " r.creationDate >= :start and r.creationDate < :end ";
+    // A Doublon / perdu record is not a crate: every dashboard total leaves it out (spec 015, FR-002, research R10).
+    String IN_RANGE = PERIOD
+            + "and (r.anomaly is null or r.anomaly <> com.rfidback.entity.RecordAnomaly.DOUBLON_PERDU) ";
+    String COUNTS = " count(r) as total, sum(case when r.compliant = false then 1 else 0 end) as nonCompliant,"
+            + " sum(case when r.anomaly = com.rfidback.entity.RecordAnomaly.CHEAT then 1 else 0 end) as cheats ";
+    String DUPLICATES = "select count(r) from RecordEntity r where" + PERIOD
+            + "and r.anomaly = com.rfidback.entity.RecordAnomaly.DOUBLON_PERDU";
+    String ANOMALIES = "from RecordEntity r where" + PERIOD + "and r.anomaly is not null";
     String BY_PICKER = "select p.id as pickerId, p.firstname as firstname, p.lastname as lastname," + COUNTS
             + "from RecordEntity r left join r.picker p where" + IN_RANGE;
     String PICKER_GROUP = " group by p.id, p.firstname, p.lastname";
@@ -91,6 +100,27 @@ public interface RecordRepository extends JpaRepository<RecordEntity, UUID> {
     List<PickerActivityCountsView> countByPickerAndActivityForReader(@Param("start") OffsetDateTime start,
             @Param("end") OffsetDateTime end, @Param("reader") ReaderEntity reader);
 
+    /** Doublon / perdu records created in {@code [start, end)}, counted apart from the totals (spec 015, FR-011). */
+    @Query(DUPLICATES)
+    long countDuplicates(@Param("start") OffsetDateTime start, @Param("end") OffsetDateTime end);
+
+    @Query(DUPLICATES + " and r.reader = :reader")
+    long countDuplicatesForReader(@Param("start") OffsetDateTime start, @Param("end") OffsetDateTime end,
+            @Param("reader") ReaderEntity reader);
+
+    /** Doublon / perdu and Cheat records of {@code [start, end)}, newest first (spec 015, FR-015, research R9). */
+    @EntityGraph(attributePaths = { "tag", "reader", "activity", "picker" })
+    @Query(value = "select r " + ANOMALIES + " order by r.creationDate desc, r.id desc",
+            countQuery = "select count(r) " + ANOMALIES)
+    Page<RecordEntity> findAnomalies(@Param("start") OffsetDateTime start, @Param("end") OffsetDateTime end,
+            Pageable pageable);
+
+    @EntityGraph(attributePaths = { "tag", "reader", "activity", "picker" })
+    @Query(value = "select r " + ANOMALIES + " and r.reader = :reader order by r.creationDate desc, r.id desc",
+            countQuery = "select count(r) " + ANOMALIES + " and r.reader = :reader")
+    Page<RecordEntity> findAnomaliesForReader(@Param("start") OffsetDateTime start, @Param("end") OffsetDateTime end,
+            @Param("reader") ReaderEntity reader, Pageable pageable);
+
     /** Counts per UTC hour, as the number of hours since 1970-01-01T00:00Z (spec 007, research R4). */
     @Query(BY_UTC_HOUR + "group by " + UTC_HOUR)
     List<HourCountsView> countByUtcHour(@Param("start") OffsetDateTime start, @Param("end") OffsetDateTime end);
@@ -115,6 +145,8 @@ public interface RecordRepository extends JpaRepository<RecordEntity, UUID> {
         Number getTotal();
 
         Number getNonCompliant();
+
+        Number getCheats();
     }
 
     interface PickerCountsView extends CountsView {

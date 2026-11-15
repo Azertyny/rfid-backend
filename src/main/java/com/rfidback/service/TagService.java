@@ -24,6 +24,7 @@ import com.rfidback.entity.ActivityEntity;
 import com.rfidback.entity.BucketEntity;
 import com.rfidback.entity.PickerEntity;
 import com.rfidback.entity.ReaderEntity;
+import com.rfidback.entity.RecordAnomaly;
 import com.rfidback.entity.RecordEntity;
 import com.rfidback.entity.TagEntity;
 import com.rfidback.exception.RegistrationNotConfirmedException;
@@ -51,6 +52,7 @@ public class TagService {
     static final String OFF_LIST_SCAN_IGNORED = "Tag not in reference list, ignored";
     static final String RESCAN_TODAY = "Tag already scanned today";
     static final String SECOND_TAG_OF_CRATE = "Second tag of the crate ignored";
+    static final String RECENT_READ_IGNORED = "Recent read ignored";
 
     private final TagRepository tagRepository;
     private final RecordRepository recordRepository;
@@ -59,16 +61,15 @@ public class TagService {
     private final ReferenceTagList referenceTagList;
     private final ReaderRepository readerRepository;
     private final LineActivityService lineActivityService;
+    private final ScanSettingsService scanSettingsService;
     private final Clock clock;
     private final Duration duplicateWindow;
-    private final Duration crateWindow;
 
     public TagService(TagRepository tagRepository, RecordRepository recordRepository,
             BucketRepository bucketRepository, RecordConformityChangeRepository recordConformityChangeRepository,
             ReferenceTagList referenceTagList, ReaderRepository readerRepository,
-            LineActivityService lineActivityService, Clock clock,
-            @Value("${app.scan.duplicate-window}") Duration duplicateWindow,
-            @Value("${app.scan.crate-window}") Duration crateWindow) {
+            LineActivityService lineActivityService, ScanSettingsService scanSettingsService, Clock clock,
+            @Value("${app.scan.duplicate-window}") Duration duplicateWindow) {
         this.tagRepository = tagRepository;
         this.recordRepository = recordRepository;
         this.bucketRepository = bucketRepository;
@@ -76,16 +77,19 @@ public class TagService {
         this.referenceTagList = referenceTagList;
         this.readerRepository = readerRepository;
         this.lineActivityService = lineActivityService;
+        this.scanSettingsService = scanSettingsService;
         this.clock = clock;
         this.duplicateWindow = duplicateWindow;
-        this.crateWindow = crateWindow;
     }
 
     /**
      * A scan from a PRODUCTION reader. A tag not in the reference list is ignored before any database access: no Tag,
      * no Record, and {@code isCompliant} true so the line raises no alert (spec 010 révision, FR-006). Otherwise the
-     * first matching rule applies (spec 004, research R13): the same pass (FR-008), the second tag of a crate (FR-010),
-     * a rescan the same day (FR-009), or a new Record that takes the tag out of its bucket (FR-009). A record carries the line's current activity at scan time, if any (spec 012, FR-014).
+     * first matching rule applies (spec 015, research R3): 1 the same pass (spec 004, FR-008), 2 the second tag of a
+     * crate (spec 004, FR-010), 3 a counted tag read again within the re-read delay of its last read, ignored (spec
+     * 015, FR-003), 4 a rescan of a counted tag (spec 004, FR-009), 5 a new Record that takes the tag out of its
+     * bucket. Every rule records the tag's last read. A record carries the line's current activity at scan time, if
+     * any (spec 012, FR-014).
      */
     @Transactional
     public ScanTagResponse registerScan(ReaderEntity reader, ScanTagRequest scanTagRequest) {
@@ -106,19 +110,26 @@ public class TagService {
         OffsetDateTime now = OffsetDateTime.now(clock);
         TagEntity tag = tagRepository.findByUid(uid)
                 .orElseGet(() -> tagRepository.save(TagEntity.builder().uid(uid).build()));
-
+        ScanSettingsService.Windows windows = scanSettingsService.windows();
         Optional<RecordEntity> counted = countedRecord(tag);
+        // Read before this scan moves it (rule 3); the tag is managed, so the new value is written with the transaction.
+        OffsetDateTime lastRead = lastRead(tag, counted);
+        tag.setLastReadAt(now);
+
         if (counted.isPresent() && isSamePass(counted.get(), reader, now)) {
             return absorb(counted.get(), tag, isCompliant, now, DUPLICATE_READ_IGNORED);
         }
-        Optional<RecordEntity> crate = crateOf(tag, reader, now);
+        Optional<RecordEntity> crate = crateOf(tag, reader, now, windows.cheat());
         if (crate.isPresent()) {
             tag.setBucket(null);
             tag.setCountedRecord(crate.get());
-            return absorb(crate.get(), tag, isCompliant, now, SECOND_TAG_OF_CRATE);
+            return markCheat(crate.get(), tag, now);
         }
-        if (counted.isPresent() && !counted.get().getCreationDate().isBefore(lineActivityService.startOfToday())) {
-            return rescanToday(tag, reader, now);
+        if (counted.isPresent() && isRecentRead(lastRead, now, windows.reread())) {
+            return response(tag, counted.get(), RECENT_READ_IGNORED);
+        }
+        if (counted.isPresent()) {
+            return duplicate(tag, reader, now);
         }
         return count(tag, reader, isCompliant, now);
     }
@@ -127,6 +138,26 @@ public class TagService {
     private Optional<RecordEntity> countedRecord(TagEntity tag) {
         return tag.getCountedRecord() == null ? Optional.empty()
                 : recordRepository.findWithLockById(tag.getCountedRecord().getId());
+    }
+
+    /**
+     * The tag's last read before this scan, by any reader (spec 015, research R2). Before spec 015 only the counted
+     * record knew it: its own last read, else its creation.
+     */
+    private static OffsetDateTime lastRead(TagEntity tag, Optional<RecordEntity> counted) {
+        if (tag.getLastReadAt() != null) {
+            return tag.getLastReadAt();
+        }
+        return counted.map(record -> record.getLastReadAt() != null ? record.getLastReadAt()
+                : record.getCreationDate()).orElse(null);
+    }
+
+    /**
+     * Rule 3 (spec 015, FR-003, research R4): a counted tag read again, by any reader, less than the re-read delay after
+     * its last read is ignored. The record is not touched, whatever the read's verdict.
+     */
+    private static boolean isRecentRead(OffsetDateTime lastRead, OffsetDateTime now, Duration rereadWindow) {
+        return rereadWindow.isPositive() && lastRead != null && lastRead.isAfter(now.minus(rereadWindow));
     }
 
     /** Rule 1 (FR-008, research R7): the same reader read it less than the window ago, the window sliding. */
@@ -138,7 +169,7 @@ public class TagService {
     }
 
     /**
-     * Rule 4 (FR-003, FR-009): a new Record with the bucket's picker, and the tag leaves its bucket. The tag is
+     * Rule 5 (FR-003, FR-009): a new Record with the bucket's picker, and the tag leaves its bucket. The tag is
      * managed, so its changes are written with the transaction.
      */
     private ScanTagResponse count(TagEntity tag, ReaderEntity reader, boolean isCompliant, OffsetDateTime now) {
@@ -166,7 +197,8 @@ public class TagService {
      * the same bucket. Measured from that Record's creation, so a crate still in front of the reader never swallows
      * the next one.
      */
-    private Optional<RecordEntity> crateOf(TagEntity tag, ReaderEntity reader, OffsetDateTime now) {
+    private Optional<RecordEntity> crateOf(TagEntity tag, ReaderEntity reader, OffsetDateTime now,
+            Duration crateWindow) {
         if (tag.getBucket() == null || !crateWindow.isPositive()) {
             return Optional.empty();
         }
@@ -175,15 +207,17 @@ public class TagService {
     }
 
     /**
-     * Rule 3 (FR-009, research R9): a tag counted earlier today, read again outside its pass, was reused: a new
-     * non-compliant Record with no picker, whatever the reader says. The first Record is unchanged.
+     * Rule 4 (spec 015, FR-005, research R5): a counted tag, not registered into a bucket since, read again outside
+     * the rules above, on any day, was lost or reused: a new Doublon / perdu Record with no picker, whatever the
+     * reader says. The first Record is unchanged. The message keeps its spec 004 text, which readers may match on.
      */
-    private ScanTagResponse rescanToday(TagEntity tag, ReaderEntity reader, OffsetDateTime now) {
+    private ScanTagResponse duplicate(TagEntity tag, ReaderEntity reader, OffsetDateTime now) {
         RecordEntity saved = recordRepository.saveAndFlush(RecordEntity.builder()
                 .tag(tag)
                 .reader(reader)
                 .activity(currentActivity(reader))
                 .compliant(false)
+                .anomaly(RecordAnomaly.DOUBLON_PERDU)
                 .lastReadAt(now)
                 .build());
         tag.setCountedRecord(saved);
@@ -201,7 +235,22 @@ public class TagService {
     }
 
     /**
-     * A read that creates no Record: it extends the record's pass, and a non-compliant one lowers the record (never
+     * Rule 2 (spec 015, FR-007, research R5): the second tag of a crate creates no Record; the crate's Record becomes
+     * Cheat, whatever the reads said, and keeps its picker. A Record an Opérateur or Administrateur already changed
+     * keeps its status (spec 005, FR-006); only its last read moves.
+     */
+    private ScanTagResponse markCheat(RecordEntity crate, TagEntity tag, OffsetDateTime now) {
+        crate.setLastReadAt(now);
+        if (crate.getAnomaly() != RecordAnomaly.CHEAT && !recordConformityChangeRepository.existsByRecord(crate)) {
+            crate.setCompliant(false);
+            crate.setAnomaly(RecordAnomaly.CHEAT);
+            crate = recordRepository.saveAndFlush(crate);
+        }
+        return response(tag, crate, SECOND_TAG_OF_CRATE);
+    }
+
+    /**
+     * Rule 1: a read of the same pass creates no Record: it extends the record's pass, and a non-compliant one lowers the record (never
      * raises it), unless an Opérateur already changed it (spec 005, FR-006).
      */
     private ScanTagResponse absorb(RecordEntity existing, TagEntity tag, boolean isCompliant, OffsetDateTime now,

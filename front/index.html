@@ -18,6 +18,10 @@
         .bg-blue-soft { background-color: #dbeafe; color: #2563eb; }
         .bg-red-soft { background-color: #fee2e2; color: #dc2626; }
         .bg-purple-soft { background-color: #f3e8ff; color: #9333ea; }
+        .bg-indigo-soft { background-color: #dbeafe; color: #1e40af; }
+        .bg-orange-soft { background-color: #ffedd5; color: #c2410c; }
+        a.anomaly-link { color: inherit; text-decoration: none; display: block; }
+        a.anomaly-link:hover .card { border-color: #94a3b8; }
         .stat-value { font-variant-numeric: tabular-nums; }
         #pickersTable td.num, #pickersTable th.num { text-align: right; font-variant-numeric: tabular-nums; }
     </style>
@@ -54,6 +58,9 @@
                 </a>
                 <a href="users.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
                     <i class="fas fa-user-shield me-1"></i>Utilisateurs
+                </a>
+                <a href="settings.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-sliders me-1"></i>Réglages
                 </a>
                 <button class="btn btn-sm btn-outline-light border-0" onclick="logout()">
                     <i class="fas fa-sign-out-alt me-1"></i>Déconnexion
@@ -131,7 +138,7 @@
         <div id="results" class="d-none">
             <!-- SYNTHÈSE -->
             <div class="row g-3 mb-4">
-                <div class="col-md-3 col-6">
+                <div class="col-lg-2 col-md-4 col-6">
                     <div class="card p-3 h-100">
                         <div class="d-flex align-items-center gap-3">
                             <div class="icon-box bg-blue-soft"><i class="fas fa-barcode"></i></div>
@@ -142,7 +149,7 @@
                         </div>
                     </div>
                 </div>
-                <div class="col-md-3 col-6">
+                <div class="col-lg-2 col-md-4 col-6">
                     <div class="card p-3 h-100">
                         <div class="d-flex align-items-center gap-3">
                             <div class="icon-box bg-green-soft"><i class="fas fa-check"></i></div>
@@ -153,7 +160,7 @@
                         </div>
                     </div>
                 </div>
-                <div class="col-md-3 col-6">
+                <div class="col-lg-2 col-md-4 col-6">
                     <div class="card p-3 h-100">
                         <div class="d-flex align-items-center gap-3">
                             <div class="icon-box bg-red-soft"><i class="fas fa-xmark"></i></div>
@@ -164,7 +171,7 @@
                         </div>
                     </div>
                 </div>
-                <div class="col-md-3 col-6">
+                <div class="col-lg-2 col-md-4 col-6">
                     <div class="card p-3 h-100">
                         <div class="d-flex align-items-center gap-3">
                             <div class="icon-box bg-purple-soft"><i class="fas fa-percent"></i></div>
@@ -174,6 +181,34 @@
                             </div>
                         </div>
                     </div>
+                </div>
+                <!-- Statuts posés par le système (spec 015) : le Doublon / perdu n'est pas une caisse, hors des
+                     totaux ; le Cheat en est une, déjà compté dans les non conformes. -->
+                <div class="col-lg-2 col-md-4 col-6">
+                    <a class="anomaly-link" data-anomaly-link title="Lectures d'un tag déjà compté, hors du total">
+                        <div class="card p-3 h-100">
+                            <div class="d-flex align-items-center gap-3">
+                                <div class="icon-box bg-indigo-soft"><i class="fas fa-clone"></i></div>
+                                <div>
+                                    <p class="text-muted small mb-0 fw-semibold">Doublon / perdu</p>
+                                    <h2 class="mb-0 fw-bold stat-value" style="color: #1e40af" id="statDuplicates">0</h2>
+                                </div>
+                            </div>
+                        </div>
+                    </a>
+                </div>
+                <div class="col-lg-2 col-md-4 col-6">
+                    <a class="anomaly-link" data-anomaly-link title="Caisses lues avec deux tags d'un même seau">
+                        <div class="card p-3 h-100">
+                            <div class="d-flex align-items-center gap-3">
+                                <div class="icon-box bg-orange-soft"><i class="fas fa-user-secret"></i></div>
+                                <div>
+                                    <p class="text-muted small mb-0 fw-semibold">Cheat</p>
+                                    <h2 class="mb-0 fw-bold stat-value" style="color: #c2410c" id="statCheats">0</h2>
+                                </div>
+                            </div>
+                        </div>
+                    </a>
                 </div>
             </div>
 
@@ -225,13 +260,17 @@
         const SANS_ACTIVITE = 'Sans activité';
 
         let lastStats = null;
+        let lastQuery = null;
+        // The anomalies list is an Administrateur page (spec 015, FR-015): the figures link to it for them only.
+        let isAdmin = false;
         // Only the latest request may render: an older answer arriving late must not replace newer figures.
         let statsRequestSeq = 0;
         let readersById = {};
         let hoursChart = null;
 
         document.addEventListener('DOMContentLoaded', async () => {
-            await requireRole('ADMINISTRATEUR', 'OPERATEUR');
+            const user = await requireRole('ADMINISTRATEUR', 'OPERATEUR');
+            isAdmin = user.role === 'ADMINISTRATEUR';
             initChart();
             document.getElementById('periodSelect').addEventListener('change', onPeriodChange);
             ['fromDate', 'toDate', 'readerSelect'].forEach(id =>
@@ -325,6 +364,7 @@
                 const stats = await response.json();
                 if (requestId !== statsRequestSeq) return;
                 lastStats = stats;
+                lastQuery = query;
                 render(lastStats);
             } catch (e) {
                 if (requestId !== statsRequestSeq) return;
@@ -354,7 +394,7 @@
         function render(stats) {
             document.getElementById('periodLabel').textContent = periodLabel(stats);
             // Pickers with hours and no record still make a table (spec 014).
-            if (stats.summary.total === 0 && stats.pickers.length === 0) {
+            if (stats.summary.total === 0 && stats.pickers.length === 0 && !stats.duplicates) {
                 showState('empty');
                 return;
             }
@@ -363,6 +403,12 @@
             document.getElementById('statCompliant').textContent = formatInt(summary.total - summary.nonCompliant);
             document.getElementById('statNonCompliant').textContent = formatInt(summary.nonCompliant);
             document.getElementById('statRate').textContent = formatRate(summary);
+            document.getElementById('statDuplicates').textContent = formatInt(stats.duplicates || 0);
+            document.getElementById('statCheats').textContent = formatInt(summary.cheats || 0);
+            document.querySelectorAll('[data-anomaly-link]').forEach(link => {
+                if (isAdmin) link.href = 'anomalies.html?' + lastQuery;
+                else link.removeAttribute('href');
+            });
             renderPickers(stats);
             renderHours(stats.hours);
             showState('results');
@@ -432,7 +478,7 @@
             const headers = ['Cueilleur'];
             if (showsHours(stats)) headers.push('Heures');
             stats.activities.forEach(column => headers.push(activityLabel(column)));
-            headers.push('Total caisses', 'Non conformes', 'Taux de conformité');
+            headers.push('Total caisses', 'Non conformes', 'Cheat', 'Taux de conformité');
             headers.forEach((text, i) => {
                 const th = document.createElement('th');
                 th.textContent = text;
@@ -461,7 +507,7 @@
             }
             activityTotals(stats, picker).forEach(total => cells.push({ text: formatInt(total) }));
             cells.push({ text: formatInt(picker.total) }, { text: formatInt(picker.nonCompliant) },
-                { text: formatRate(picker) });
+                { text: formatInt(picker.cheats || 0) }, { text: formatRate(picker) });
             const row = tableRow(cells);
             if (isUnassigned(picker)) row.cells[0].classList.add('fst-italic', 'text-muted');
             return row;
@@ -473,7 +519,7 @@
             if (showsHours(stats)) cells.push({ text: formatHours(stats.workHours || 0) });
             columnSums(stats).forEach(total => cells.push({ text: formatInt(total) }));
             cells.push({ text: formatInt(stats.summary.total) }, { text: formatInt(stats.summary.nonCompliant) },
-                { text: formatRate(stats.summary) });
+                { text: formatInt(stats.summary.cheats || 0) }, { text: formatRate(stats.summary) });
             return tableRow(cells);
         }
 
@@ -544,7 +590,7 @@
             const header = ['Cueilleur'];
             if (showsHours(stats)) header.push('Heures');
             stats.activities.forEach(column => header.push(activityLabel(column)));
-            header.push('Total caisses', 'Conformes', 'Non conformes', 'Taux de conformité (%)');
+            header.push('Total caisses', 'Conformes', 'Non conformes', 'Cheat', 'Taux de conformité (%)');
             const lines = [header];
             stats.pickers.forEach(picker => lines.push(csvRow(stats, pickerName(picker),
                 isUnassigned(picker) ? null : picker.workHours, activityTotals(stats, picker), picker)));
@@ -576,7 +622,7 @@
         function csvCounts(counts) {
             const rate = complianceRate(counts);
             return [String(counts.total), String(counts.total - counts.nonCompliant),
-                String(counts.nonCompliant),
+                String(counts.nonCompliant), String(counts.cheats || 0),
                 rate === null ? '' : rate.toLocaleString('fr-FR',
                     { minimumFractionDigits: 1, maximumFractionDigits: 1, useGrouping: false })];
         }

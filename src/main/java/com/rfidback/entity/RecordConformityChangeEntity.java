@@ -7,6 +7,8 @@ import org.hibernate.annotations.CreationTimestamp;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -56,6 +58,10 @@ public class RecordConformityChangeEntity {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "author_reader_id")
     private ReaderEntity authorReader;
+    // The anomaly this change lifted (spec 015, FR-010); null for an ordinary toggle. Only an Administrateur lifts one.
+    @Enumerated(EnumType.STRING)
+    @Column(name = "previous_anomaly", length = 20)
+    private RecordAnomaly previousAnomaly;
 
     @CreationTimestamp
     @Column(name = "changed_at", nullable = false, updatable = false)

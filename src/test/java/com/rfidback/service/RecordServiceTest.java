@@ -24,6 +24,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.rfidback.entity.ReaderEntity;
+import com.rfidback.entity.RecordAnomaly;
 import com.rfidback.entity.RecordConformityChangeEntity;
 import com.rfidback.entity.RecordEntity;
 import com.rfidback.entity.Role;
@@ -31,6 +32,7 @@ import com.rfidback.entity.UserEntity;
 import com.rfidback.exception.RecordNotFoundException;
 import com.rfidback.generated.model.ConformityChange;
 import com.rfidback.generated.model.ConformityChangesList;
+import com.rfidback.generated.model.RecordStatus;
 import com.rfidback.repository.ReaderRepository;
 import com.rfidback.repository.RecordConformityChangeRepository;
 import com.rfidback.repository.RecordRepository;
@@ -103,6 +105,90 @@ class RecordServiceTest {
 
         assertThrows(RecordNotFoundException.class, () -> recordService.updateRecordConformity(id, false));
         verify(recordConformityChangeRepository, never()).save(any());
+    }
+
+    // --- lifting a Doublon / perdu or Cheat: Administrateur only (spec 015, FR-010, research R8) ---
+
+    @Test
+    void updateConformity_asAdministrateur_liftsACheat_evenWhenTheBooleanStays() {
+        UserEntity admin = actAsAdministrateur();
+        RecordEntity record = lockedRecord(false);
+        record.setAnomaly(RecordAnomaly.CHEAT);
+
+        recordService.updateRecordConformity(record.getId(), false);
+
+        assertThat(record.getAnomaly()).isNull();
+        assertThat(record.isCompliant()).isFalse();
+        ArgumentCaptor<RecordConformityChangeEntity> change = ArgumentCaptor.forClass(RecordConformityChangeEntity.class);
+        verify(recordConformityChangeRepository).save(change.capture());
+        assertThat(change.getValue().getPreviousAnomaly()).isEqualTo(RecordAnomaly.CHEAT);
+        assertThat(change.getValue().isPreviousCompliant()).isFalse();
+        assertThat(change.getValue().isNewCompliant()).isFalse();
+        assertThat(change.getValue().getAuthor()).isSameAs(admin);
+    }
+
+    @Test
+    void updateConformity_asAdministrateur_liftsADoublonToConforme() {
+        actAsAdministrateur();
+        RecordEntity record = lockedRecord(false);
+        record.setAnomaly(RecordAnomaly.DOUBLON_PERDU);
+
+        recordService.updateRecordConformity(record.getId(), true);
+
+        assertThat(record.getAnomaly()).isNull();
+        assertThat(record.isCompliant()).isTrue();
+        verify(recordConformityChangeRepository).save(any());
+    }
+
+    @Test
+    void updateConformity_asOperateur_onAnAnomaly_throws403_writesNothing() {
+        RecordEntity record = lockedRecord(false);
+        record.setAnomaly(RecordAnomaly.DOUBLON_PERDU);
+
+        ResponseStatusException error = assertThrows(ResponseStatusException.class,
+                () -> recordService.updateRecordConformity(record.getId(), true));
+
+        assertThat(error.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(record.getAnomaly()).isEqualTo(RecordAnomaly.DOUBLON_PERDU);
+        assertThat(record.isCompliant()).isFalse();
+        verify(recordConformityChangeRepository, never()).save(any());
+    }
+
+    @Test
+    void updateConformity_asReader_onAnAnomaly_throws403_writesNothing() {
+        ReaderEntity lineOne = reader("L1");
+        actAsReader(lineOne);
+        RecordEntity record = lockedRecord(false, lineOne);
+        record.setAnomaly(RecordAnomaly.CHEAT);
+
+        ResponseStatusException error = assertThrows(ResponseStatusException.class,
+                () -> recordService.updateRecordConformity(record.getId(), true));
+
+        assertThat(error.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(record.getAnomaly()).isEqualTo(RecordAnomaly.CHEAT);
+        verify(recordConformityChangeRepository, never()).save(any());
+    }
+
+    @Test
+    void listConformityChanges_givesTheStatusesOfALiftedCheat() {
+        RecordEntity record = RecordEntity.builder().id(UUID.randomUUID()).compliant(false).build();
+        when(recordRepository.findById(record.getId())).thenReturn(Optional.of(record));
+        RecordConformityChangeEntity lifted = change(record, false, false, operator, OffsetDateTime.now());
+        lifted.setPreviousAnomaly(RecordAnomaly.CHEAT);
+        when(recordConformityChangeRepository.findAllByRecordOrderByChangedAtAsc(record)).thenReturn(List.of(lifted));
+
+        ConformityChange result = recordService.listConformityChanges(record.getId()).getChanges().get(0);
+
+        assertThat(result.getPreviousStatus()).isEqualTo(RecordStatus.CHEAT);
+        assertThat(result.getNewStatus()).isEqualTo(RecordStatus.NON_CONFORME);
+    }
+
+    @Test
+    void statusOf_mapsTheFourStatuses() {
+        assertThat(RecordService.statusOf(null, true)).isEqualTo(RecordStatus.CONFORME);
+        assertThat(RecordService.statusOf(null, false)).isEqualTo(RecordStatus.NON_CONFORME);
+        assertThat(RecordService.statusOf(RecordAnomaly.DOUBLON_PERDU, false)).isEqualTo(RecordStatus.DOUBLON_PERDU);
+        assertThat(RecordService.statusOf(RecordAnomaly.CHEAT, false)).isEqualTo(RecordStatus.CHEAT);
     }
 
     // --- listConformityChanges (spec 005, FR-007) ---
@@ -212,6 +298,15 @@ class RecordServiceTest {
 
     private static ReaderEntity reader(String name) {
         return ReaderEntity.builder().id(UUID.randomUUID()).name(name).build();
+    }
+
+    private UserEntity actAsAdministrateur() {
+        SecurityContextHolder.getContext()
+                .setAuthentication(new TestingAuthenticationToken("admin1", null, "ROLE_ADMINISTRATEUR"));
+        UserEntity admin = UserEntity.builder().id(UUID.randomUUID()).username("admin1").role(Role.ADMINISTRATEUR)
+                .enabled(true).build();
+        when(userRepository.findByUsername("admin1")).thenReturn(Optional.of(admin));
+        return admin;
     }
 
     private static void actAsReader(ReaderEntity reader) {

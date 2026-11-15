@@ -6,6 +6,8 @@
 
 **Status**: Delivered — as-is behavior plus the targets of the 2026-09-24 / 2026-09-25 clarifications (history, idempotency, FR-006 lock, history route, SC-003)
 
+**Amended by spec `015`** (2026-11-15, [../015-statuts-doublon-cheat/spec.md](../015-statuts-doublon-cheat/spec.md)): FR-003/FR-004 — on a Doublon / perdu or Cheat record, `PATCH /records/{id}/conformity` is Administrateur only (`403` for an Opérateur and the kiosk); it clears the anomaly and is always traced, with `previous_anomaly` (spec 015 FR-010). Records and history entries carry a `status` (spec 015 FR-001, FR-009). An Administrateur list of a period's anomalies is `GET /records/anomalies` (spec 015 FR-015).
+
 **Input**: User description: "Parcours le dépôt. Pour chaque fonctionnalité métier identifiée, crée .specify/specs/NNN-nom-feature/spec.md ... Décris le comportement ACTUEL (as-is) ... cite les fichiers ... Marque [NEEDS CLARIFICATION] ..."
 
 ## Clarifications
