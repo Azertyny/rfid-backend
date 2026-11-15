@@ -43,7 +43,7 @@
                     <i class="fas fa-tags me-1"></i>Tags
                 </a>
                 <a href="buckets.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
-                    <i class="fas fa-fill me-1"></i>Seaux
+                    <i class="fas fa-box me-1"></i>Paquets
                 </a>
                 <a href="users.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
                     <i class="fas fa-user-shield me-1"></i>Utilisateurs
@@ -240,7 +240,7 @@
                     deleteModal.hide();
                     fetchPickers(currentPage);
                 } else if (response.status === 409) {
-                    alert("Ce cueilleur a encore un seau affecté : désaffectez-le avant de le supprimer.");
+                    alert("Ce cueilleur a encore un paquet affecté : désaffectez-le avant de le supprimer.");
                 } else if (response.status === 404) {
                     deleteModal.hide();
                     fetchPickers(currentPage);
