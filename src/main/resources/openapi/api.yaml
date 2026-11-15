@@ -1015,7 +1015,7 @@ paths:
       - in: path
         name: bucketId
         required: true
-        description: Identifiant du seau
+        description: Identifiant du paquet
         schema:
           type: string
           format: uuid
@@ -1051,7 +1051,7 @@ paths:
       - in: path
         name: bucketId
         required: true
-        description: Identifiant du seau
+        description: Identifiant du paquet
         schema:
           type: string
           format: uuid
@@ -1068,7 +1068,7 @@ paths:
               $ref: "#/components/schemas/AssignBucketToPickerRequest"
       responses:
         "204":
-          description: Seau affecte au cueilleur
+          description: Paquet affecté au cueilleur
         "400": { $ref: "#/components/responses/InvalidRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/InternalError" }
@@ -1078,7 +1078,7 @@ paths:
       tags: [Bucket]
       responses:
         "204":
-          description: Seau désaffecté (aussi quand il n'avait pas de cueilleur)
+          description: Paquet désaffecté (aussi quand il n'avait pas de cueilleur)
         "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/InternalError" }
 

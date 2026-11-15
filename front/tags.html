@@ -49,7 +49,7 @@
                     <i class="fas fa-tags me-1"></i>Tags
                 </a>
                 <a href="buckets.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
-                    <i class="fas fa-fill me-1"></i>Seaux
+                    <i class="fas fa-box me-1"></i>Paquets
                 </a>
                 <a href="users.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
                     <i class="fas fa-user-shield me-1"></i>Utilisateurs
@@ -67,8 +67,8 @@
     <div class="container-fluid max-w-7xl mx-auto py-4">
 
         <div class="mb-4">
-            <h3 class="fw-bold text-primary mb-0">Enregistrement des tags sur un seau</h3>
-            <small class="text-muted">Lisez les tags avec le lecteur du poste, puis associez-les à un numéro de seau</small>
+            <h3 class="fw-bold text-primary mb-0">Enregistrement des tags sur un paquet</h3>
+            <small class="text-muted">Lisez les tags avec le lecteur du poste, puis associez-les à un numéro de paquet</small>
         </div>
 
         <div id="messages"></div>
@@ -113,7 +113,7 @@
             <div class="card-body">
                 <div class="row g-3 align-items-end mb-3">
                     <div class="col-md-4">
-                        <label for="bucketNumber" class="form-label fw-bold">Numéro de seau</label>
+                        <label for="bucketNumber" class="form-label fw-bold">Numéro de paquet</label>
                         <input type="number" min="1" step="1" id="bucketNumber" class="form-control" placeholder="Ex : 12"
                                oninput="renderReads()">
                     </div>
@@ -131,7 +131,7 @@
                         <tr>
                             <th>UID du tag</th>
                             <th style="width: 20%">Lu à</th>
-                            <th style="width: 30%">Seau actuel</th>
+                            <th style="width: 30%">Paquet actuel</th>
                         </tr>
                     </thead>
                     <tbody id="readsTable"></tbody>
@@ -145,11 +145,11 @@
         <div class="modal-dialog">
             <div class="modal-content">
                 <div class="modal-header bg-warning">
-                    <h5 class="modal-title"><i class="fas fa-exchange-alt me-2"></i>Tags déjà associés à un autre seau</h5>
+                    <h5 class="modal-title"><i class="fas fa-exchange-alt me-2"></i>Tags déjà associés à un autre paquet</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
-                    <p>Ces tags seront retirés de leur seau actuel et associés au seau <strong id="moveTarget"></strong> :</p>
+                    <p>Ces tags seront retirés de leur paquet actuel et associés au paquet <strong id="moveTarget"></strong> :</p>
                     <ul id="moveList" class="mb-0"></ul>
                 </div>
                 <div class="modal-footer">
@@ -309,9 +309,9 @@
                 if (read.bucketNumber == null) {
                     status = '<span class="badge bg-success">Nouveau</span>';
                 } else if (read.bucketNumber === target) {
-                    status = '<span class="badge bg-secondary">Déjà sur ce seau</span>';
+                    status = '<span class="badge bg-secondary">Déjà sur ce paquet</span>';
                 } else {
-                    status = `<span class="badge bg-warning text-dark"><i class="fas fa-exclamation-triangle me-1"></i>Seau ${read.bucketNumber}</span>`;
+                    status = `<span class="badge bg-warning text-dark"><i class="fas fa-exclamation-triangle me-1"></i>Paquet ${read.bucketNumber}</span>`;
                 }
                 return `<tr>
                     <td class="tag-uid">${escapeHtml(read.uid)}</td>
@@ -326,7 +326,7 @@
             clearMessages();
             const bucketNumber = parseInt(document.getElementById('bucketNumber').value, 10);
             if (!Number.isInteger(bucketNumber) || bucketNumber < 1) {
-                showMessage('warning', 'Saisissez un numéro de seau (entier à partir de 1).');
+                showMessage('warning', 'Saisissez un numéro de paquet (entier à partir de 1).');
                 return;
             }
             if (lastReads.length === 0) {
@@ -348,12 +348,12 @@
                 const result = await response.json();
                 moveModal.hide();
                 showIdle();
-                showMessage('success', `${result.registeredCount} tag(s) enregistré(s) — le seau ${result.bucketNumber} contient maintenant ${result.totalCount} tag(s).`);
+                showMessage('success', `${result.registeredCount} tag(s) enregistré(s) — le paquet ${result.bucketNumber} contient maintenant ${result.totalCount} tag(s).`);
             } else if (response.status === 409) {
                 const conflict = await response.json();
                 document.getElementById('moveTarget').textContent = bucketNumber;
                 document.getElementById('moveList').innerHTML = conflict.tags
-                    .map(tag => `<li><span class="tag-uid">${escapeHtml(tag.uid)}</span> → actuellement seau ${tag.bucketNumber}</li>`)
+                    .map(tag => `<li><span class="tag-uid">${escapeHtml(tag.uid)}</span> → actuellement paquet ${tag.bucketNumber}</li>`)
                     .join('');
                 moveModal.show();
             } else if (response.status === 404) {
@@ -363,7 +363,7 @@
                 // The server's reason (e.g. a tag not in the reference list, spec 010) when it gives one.
                 const problem = await response.json().catch(() => ({}));
                 const reason = problem.detail ? ` (${escapeHtml(problem.detail)})` : '';
-                showMessage('warning', `Enregistrement refusé : vérifiez le numéro de seau et qu'au moins un tag a été lu${reason}.`);
+                showMessage('warning', `Enregistrement refusé : vérifiez le numéro de paquet et qu'au moins un tag a été lu${reason}.`);
             } else if (response.status !== 401 && response.status !== 403) {
                 showMessage('danger', `Erreur à l'enregistrement (code ${response.status}).`);
             }

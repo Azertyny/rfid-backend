@@ -8,7 +8,7 @@ RFID Back — a Spring Boot 3.5.7 (Java 21) backend for tracking fruit-harvest l
 (entities/docs use French terms):
 
 - **Picker** (cueilleur) — a harvester
-- **Bucket** (seau) — container assigned to a picker
+- **Bucket** (paquet, formerly seau) — container of RFID tags assigned to a picker
 - **Tag** — RFID tag attached to a bucket
 - **Reader** (lecteur) — RFID reader device that scans tags; authenticates via its own token, not a user login
 - **Record** — a scan event linking tag/bucket/picker, with a status (spec 015): Conforme / Non conforme (the
