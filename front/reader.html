@@ -3,7 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Interface Contrôle Qualité</title>
+    <title>Contrôle qualité - Vegelink</title>
+    <link rel="icon" type="image/png" href="img/favicon-32.png">
+    <link rel="apple-touch-icon" href="img/apple-touch-icon.png">
     <script src="config.js"></script>
     <script src="auth.js"></script>
     <style>
@@ -17,6 +19,7 @@
             background: #080808; z-index: 100;
             display: flex; flex-direction: column; align-items: center; justify-content: center;
         }
+        .setup-logo { width: 320px; max-width: 70vw; border-radius: 16px; margin-bottom: 32px; }
         .setup-title { font-size: 2rem; margin-bottom: 40px; color: #888; text-transform: uppercase; letter-spacing: 2px; }
         
         #readers-grid {
@@ -112,6 +115,7 @@
 <body>
 
     <div id="setup-screen">
+        <img class="setup-logo" src="img/vegelink-logo.png" alt="Vegelink">
         <div class="setup-title">Sélectionnez la ligne</div>
         <div id="readers-grid">
             <div style="color:#666">Chargement des lecteurs...</div>
