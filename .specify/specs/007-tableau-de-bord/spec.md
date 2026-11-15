@@ -6,6 +6,8 @@
 
 **Status**: Target implemented (Clarifications 2026-09-25) — backend and page delivered, SC-001 and SC-002 verified; only the production token rotation (T019) remains. Amendment 2026-10-11 (periods « Le mois en cours » / « Le mois dernier », FR-007) delivered
 
+**Amended by spec `015`** (2026-11-15, [../015-statuts-doublon-cheat/spec.md](../015-statuts-doublon-cheat/spec.md)): Doublon / perdu records are not crates — they are left out of every total, picker row, hour and the conformity rate, and counted apart in `duplicates` (spec 015 FR-002); each count gains `cheats`, included in `nonCompliant` and `total`; the page shows both figures, a Cheat column and its CSV field (spec 015 FR-011).
+
 **Input**: User description: "Parcours le dépôt. Pour chaque fonctionnalité métier identifiée, crée .specify/specs/NNN-nom-feature/spec.md ... Décris le comportement ACTUEL (as-is) ... cite les fichiers ... Marque [NEEDS CLARIFICATION] ..."
 
 > **Résolu (2026-09-25)** : aucune section de `doc/` ne décrit ce tableau de bord ; il est défini par les Clarifications 2026-09-25 ci-dessous. Il n'existe que dans le code front (`front/index.html`) et l'API OpenAPI (`api.yaml`) qu'il consomme — cette spec compare donc le front à l'API plutôt qu'à un texte métier.

@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Réglages - Admin</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        body { background-color: #f0f2f5; font-family: 'Segoe UI', sans-serif; }
+        .setting-input { width: 8rem; text-align: right; }
+    </style>
+</head>
+<body class="d-flex flex-column h-100">
+
+    <!-- MENU DE NAVIGATION HARMONISÉ -->
+    <nav class="navbar navbar-expand navbar-dark bg-dark shadow-sm">
+        <div class="container-fluid max-w-7xl mx-auto px-4">
+            <a class="navbar-brand fw-bold" href="index.html">
+                <i class="fas fa-wifi me-2"></i>RFID Admin
+            </a>
+            <div class="navbar-nav ms-auto gap-2">
+                <a href="index.html" class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-chart-line me-1"></i>Dashboard
+                </a>
+                <a href="pickers.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-users me-1"></i>Cueilleurs
+                </a>
+                <a href="work-hours.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-clock me-1"></i>Heures
+                </a>
+                <a href="readers.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-satellite-dish me-1"></i>Lecteurs
+                </a>
+                <a href="activities.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-seedling me-1"></i>Activités
+                </a>
+                <a href="tags.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-tags me-1"></i>Tags
+                </a>
+                <a href="buckets.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-fill me-1"></i>Seaux
+                </a>
+                <a href="users.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-user-shield me-1"></i>Utilisateurs
+                </a>
+                <a href="settings.html" data-admin-only class="btn btn-sm btn-primary">
+                    <i class="fas fa-sliders me-1"></i>Réglages
+                </a>
+                <button class="btn btn-sm btn-outline-light border-0" onclick="logout()">
+                    <i class="fas fa-sign-out-alt me-1"></i>Déconnexion
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid max-w-7xl mx-auto py-4" style="max-width: 900px">
+
+        <!-- En-tête -->
+        <div class="mb-4">
+            <h3 class="fw-bold text-primary mb-0">Réglages des lectures</h3>
+            <small class="text-muted">Les deux durées qui décident du statut d'une lecture. Une nouvelle valeur
+                s'applique dès la lecture suivante ; les lectures déjà enregistrées ne changent pas.</small>
+        </div>
+
+        <div id="alertArea"></div>
+
+        <form id="settingsForm" class="card shadow-sm border-0" novalidate>
+            <div class="card-body">
+                <div class="mb-4">
+                    <label for="rereadInput" class="form-label fw-bold">Relecture ignorée</label>
+                    <div class="d-flex align-items-center gap-2">
+                        <input type="number" id="rereadInput" class="form-control setting-input" min="0" max="1440"
+                               step="1" required>
+                        <span>minutes</span>
+                    </div>
+                    <div class="form-text">
+                        Un tag déjà compté, relu par n'importe quel lecteur moins de ce délai après sa dernière lecture,
+                        n'est pas pris en compte. Au-delà, la lecture est un Doublon / perdu. 0 désactive la règle.
+                        Entre 0 et 1 440 minutes (24 heures).
+                    </div>
+                    <div class="small text-muted mt-1" id="rereadAuthor"></div>
+                </div>
+
+                <div class="mb-2">
+                    <label for="cheatInput" class="form-label fw-bold">Deux tags en même temps</label>
+                    <div class="d-flex align-items-center gap-2">
+                        <input type="number" id="cheatInput" class="form-control setting-input" min="0" max="60"
+                               step="1" required>
+                        <span>secondes</span>
+                    </div>
+                    <div class="form-text">
+                        Deux tags d'un même seau lus par le même lecteur à moins de cet écart donnent une seule lecture,
+                        au statut Cheat. Entre 0 et 60 secondes.
+                    </div>
+                    <!-- Spec 015, FR-013 : les deux conséquences d'un mauvais réglage. -->
+                    <ul class="form-text mb-1 ps-3">
+                        <li>À 0, deux tags d'un même seau lus ensemble comptent pour deux caisses.</li>
+                        <li>Trop élevé, deux caisses d'un même cueilleur qui se suivent n'en comptent qu'une, au statut Cheat.</li>
+                    </ul>
+                    <div class="small text-muted mt-1" id="cheatAuthor"></div>
+                </div>
+            </div>
+            <div class="card-footer bg-white d-flex justify-content-end">
+                <button type="submit" id="saveBtn" class="btn btn-primary" disabled>
+                    <i class="fas fa-save me-1"></i>Enregistrer
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="config.js"></script>
+    <script src="auth.js"></script>
+    <script>
+        // Spec 015, US5: GET/PUT /scan-settings, Administrateur only. The server checks the bounds again (FR-013).
+        const FIELDS = {
+            rereadWindowMinutes: { input: 'rereadInput', author: 'rereadAuthor', max: 1440, name: 'La relecture ignorée' },
+            cheatWindowSeconds: { input: 'cheatInput', author: 'cheatAuthor', max: 60, name: "L'écart entre deux tags" }
+        };
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            await requireRole('ADMINISTRATEUR');
+            document.getElementById('settingsForm').addEventListener('submit', save);
+            await load();
+        });
+
+        async function load() {
+            try {
+                const response = await apiFetch('/scan-settings', { silent: true });
+                if (!response.ok) {
+                    showAlert('danger', response.status === 403 ? 'Accès refusé.' : 'Impossible de charger les réglages.');
+                    return;
+                }
+                render(await response.json());
+                document.getElementById('saveBtn').disabled = false;
+            } catch (e) {
+                showAlert('danger', 'Impossible de joindre le serveur.');
+            }
+        }
+
+        function render(settings) {
+            Object.entries(FIELDS).forEach(([key, field]) => {
+                const setting = settings[key];
+                document.getElementById(field.input).value = setting.value;
+                document.getElementById(field.author).textContent = setting.updatedBy
+                    ? `Modifié par ${setting.updatedBy} le ${new Date(setting.updatedAt).toLocaleString('fr-FR',
+                        { dateStyle: 'short', timeStyle: 'short' })}`
+                    : "Valeur d'installation, jamais modifiée.";
+            });
+        }
+
+        // Returns the body to send, or null after naming the field and focusing it.
+        function readForm() {
+            const body = {};
+            for (const [key, field] of Object.entries(FIELDS)) {
+                const input = document.getElementById(field.input);
+                const text = input.value.trim();
+                if (!/^\d+$/.test(text) || Number(text) > field.max) {
+                    showAlert('danger', `${field.name} doit être un nombre entier entre 0 et ${field.max}.`);
+                    input.focus();
+                    return null;
+                }
+                body[key] = Number(text);
+            }
+            return body;
+        }
+
+        async function save(event) {
+            event.preventDefault();
+            clearAlert();
+            const body = readForm();
+            if (body === null) return;
+            const button = document.getElementById('saveBtn');
+            button.disabled = true;
+            try {
+                const response = await apiFetch('/scan-settings', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                    silent: true
+                });
+                if (!response.ok) {
+                    const problem = await response.json().catch(() => ({}));
+                    showAlert('danger', problem.detail || `Réglages non enregistrés (erreur ${response.status}).`);
+                    return;
+                }
+                render(await response.json());
+                showAlert('success', 'Réglages enregistrés : ils s\'appliquent dès la lecture suivante.');
+            } catch (e) {
+                showAlert('danger', 'Impossible de joindre le serveur.');
+            } finally {
+                button.disabled = false;
+            }
+        }
+
+        function showAlert(type, message) {
+            document.getElementById('alertArea').innerHTML =
+                `<div class="alert alert-${type} alert-dismissible fade show" role="alert">${escapeHtml(message)}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Fermer"></button>
+                </div>`;
+        }
+
+        function clearAlert() {
+            document.getElementById('alertArea').innerHTML = '';
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text === null || text === undefined ? '' : String(text);
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>

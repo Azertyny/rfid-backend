@@ -383,6 +383,11 @@ class WorkHoursServiceTest {
             public Number getNonCompliant() {
                 return 0;
             }
+
+            @Override
+            public Number getCheats() {
+                return 0;
+            }
         };
     }
 

@@ -93,6 +93,17 @@
         .record-activity.none { color: #777; font-style: italic; }
         .defect .record-activity { color: #333; }
 
+        /* Statuts posés par le système (spec 015) : pas de bascule, sauf pour un Administrateur */
+        .status-label { font-size: 1.3rem; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; margin-top: 10px; text-align: center; }
+        .box-container.anomaly { cursor: default; }
+        .doublon .box-card { background: #1e3a8a; border-color: #60a5fa; box-shadow: 0 0 40px rgba(96,165,250,0.4); }
+        .doublon .timestamp, .doublon .record-activity { color: #dbeafe; }
+        .cheat .box-card { background: #7f1d1d; border-color: #f87171; box-shadow: 0 0 40px rgba(248,113,113,0.5); }
+        .cheat .timestamp, .cheat .record-activity { color: #fee2e2; }
+        .lift-actions { display: flex; gap: 10px; margin-top: 16px; }
+        .lift-actions button { background: #fff; color: #111; border: none; border-radius: 8px; font-size: 1rem; font-weight: 700; padding: 10px 14px; cursor: pointer; }
+        .lift-actions button:active { transform: scale(0.95); }
+
         /* Indicateurs */
         #status-indicator { position: fixed; bottom: 10px; right: 10px; font-size: 0.8rem; opacity: 0.5; }
         .error-state { color: red !important; opacity: 1 !important; }
@@ -164,6 +175,14 @@
             uid: null
         };
         let currentRecordsHash = "";
+        // An Administrateur session may lift a Doublon / perdu or Cheat; never the kiosk (spec 015, FR-010).
+        let canLiftAnomalies = false;
+        const STATUSES = {
+            CONFORME: { icon: '✅', label: 'Conforme', cls: '' },
+            NON_CONFORME: { icon: '⚠️', label: 'Non conforme', cls: 'defect' },
+            DOUBLON_PERDU: { icon: '🔁', label: 'Doublon / perdu', cls: 'doublon anomaly' },
+            CHEAT: { icon: '⛔', label: 'Cheat', cls: 'cheat anomaly' }
+        };
         let lineActivity = null;
         let activityInterval = null;
         const ACTIVITY_POLLING_INTERVAL = 5000;
@@ -291,7 +310,10 @@
 
             records.slice(0, 5).forEach(record => {
                 const el = document.createElement('div');
-                el.className = `box-container ${!record.isCompliant ? 'defect' : ''}`;
+                const statusKey = record.status || (record.isCompliant ? 'CONFORME' : 'NON_CONFORME');
+                const status = STATUSES[statusKey] || STATUSES.NON_CONFORME;
+                const isAnomaly = statusKey === 'DOUBLON_PERDU' || statusKey === 'CHEAT';
+                el.className = `box-container ${status.cls}`;
                 
                 const timeStr = new Date(record.creationDate).toLocaleTimeString('fr-FR');
                 const title = record.tagUid || "TAG ???";
@@ -302,16 +324,34 @@
                     ? `<div class="record-activity">${escapeHtml(record.activityName)}</div>`
                     : '<div class="record-activity none">Sans activité</div>';
 
+                const liftActions = isAnomaly && canLiftAnomalies
+                    ? `<div class="lift-actions">
+                           <button type="button" data-compliant="true">Conforme</button>
+                           <button type="button" data-compliant="false">Non conforme</button>
+                       </div>`
+                    : '';
+
                 el.innerHTML = `
                     <div class="box-card">
-                        <div class="status-icon">${record.isCompliant ? '✅' : '⚠️'}</div>
+                        <div class="status-icon">${status.icon}</div>
                         <div class="timestamp">${timeStr}</div>
                         ${activity}
+                        ${isAnomaly ? `<div class="status-label">${status.label}</div>` : ''}
+                        ${liftActions}
                     </div>
                 `;
 
-                // Interaction PATCH
-                el.addEventListener('click', () => toggleCompliance(record, el));
+                if (isAnomaly) {
+                    // Set by the scan: only an Administrateur lifts it, with an explicit choice (spec 015, FR-010).
+                    el.querySelectorAll('.lift-actions button').forEach(button => button.addEventListener('click',
+                        event => {
+                            event.stopPropagation();
+                            setCompliance(record, button.dataset.compliant === 'true');
+                        }));
+                } else {
+                    // Interaction PATCH
+                    el.addEventListener('click', () => toggleCompliance(record, el));
+                }
                 area.appendChild(el);
             });
         }
@@ -324,18 +364,27 @@
             if (!newStatus) { element.classList.add('defect'); icon.innerText = '⚠️'; }
             else { element.classList.remove('defect'); icon.innerText = '✅'; }
 
+            await setCompliance(record, newStatus);
+        }
+
+        async function setCompliance(record, isCompliant) {
             try {
                 // PATCH /records/{recordId}/conformity
-                await apiFetch(`/records/${record.id}/conformity`, {
+                const response = await apiFetch(`/records/${record.id}/conformity`, {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ isCompliant: newStatus })
+                    body: JSON.stringify({ isCompliant }),
+                    silent: true
                 });
-                fetchRecords(); // Refresh
+                if (!response.ok) {
+                    throw new Error(response.status === 403 ? 'non autorisé' : `API: ${response.status}`);
+                }
             } catch (e) {
-                alert("Erreur mise à jour");
-                // Rollback visuel simple : le prochain fetchRecords corrigera l'état
+                // No browser dialog on the line screen: the status line says it, the refresh restores the card.
+                updateSystemStatus(false, "Erreur mise à jour : " + (e.message || "conformité non modifiée"));
             }
+            currentRecordsHash = "";
+            fetchRecords(); // Refresh
         }
 
         // --- ACTIVITÉ DE LA LIGNE (spec 012) ---
@@ -477,7 +526,8 @@
                 selectReader({ uid: kioskReader() });
                 return;
             }
-            await requireRole('ADMINISTRATEUR', 'OPERATEUR');
+            const user = await requireRole('ADMINISTRATEUR', 'OPERATEUR');
+            canLiftAnomalies = user.role === 'ADMINISTRATEUR';
             loadReaders();
         };
 

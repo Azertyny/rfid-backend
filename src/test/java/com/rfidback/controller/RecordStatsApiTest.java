@@ -36,6 +36,7 @@ import com.rfidback.entity.BucketEntity;
 import com.rfidback.entity.PickerEntity;
 import com.rfidback.entity.PickerWorkDayEntity;
 import com.rfidback.entity.ReaderEntity;
+import com.rfidback.entity.RecordAnomaly;
 import com.rfidback.entity.RecordEntity;
 import com.rfidback.entity.Role;
 import com.rfidback.entity.TagEntity;
@@ -195,6 +196,52 @@ class RecordStatsApiTest {
         assertCounts(summer.get("hours").get(7), 1, 0);
         assertInvariants(winter);
         assertInvariants(summer);
+    }
+
+    // --- statuses (spec 015, FR-002, FR-011) ---
+
+    @Test
+    void doublonsAreLeftOutOfEveryTotal_andCheatsStayInThem() throws Exception {
+        // Spec 015, US4 scenario 10 at a smaller scale: 10 crates (2 non-compliant, 1 Cheat) and 3 doublons.
+        for (int i = 0; i < 7; i++) {
+            record(reader, diallo, dialloTag, true, "2031-05-04T08:0" + i + ":00Z");
+        }
+        record(reader, diallo, dialloTag, false, "2031-05-04T09:00:00Z");
+        record(reader, moreau, moreauTag, false, "2031-05-04T09:10:00Z");
+        anomaly(record(reader, diallo, dialloTag, false, "2031-05-04T09:20:00Z"), RecordAnomaly.CHEAT);
+        for (int i = 0; i < 3; i++) {
+            anomaly(record(reader, null, looseTag, false, "2031-05-04T10:0" + i + ":00Z"), RecordAnomaly.DOUBLON_PERDU);
+        }
+
+        JsonNode stats = stats("period=CUSTOM&from=2031-05-04&to=2031-05-04", asOperator());
+
+        assertCounts(stats.get("summary"), 10, 3);
+        assertEquals(1, stats.get("summary").get("cheats").asLong());
+        assertEquals(3, stats.get("duplicates").asLong());
+        JsonNode pickers = stats.get("pickers");
+        assertEquals(2, pickers.size(), "no Non attribué row made of doublons only");
+        assertCounts(pickers.get(0), 9, 2);
+        assertEquals(1, pickers.get(0).get("cheats").asLong());
+        assertEquals(0, pickers.get(1).get("cheats").asLong());
+        // Paris is UTC+2 in May: the doublons of 10:0xZ would be in 12h, the Cheat of 09:20Z is in 11h.
+        assertEquals(0, stats.get("hours").get(12).get("total").asLong(), "doublons are not in the hours");
+        assertEquals(1, stats.get("hours").get(11).get("cheats").asLong());
+        assertInvariants(stats);
+    }
+
+    @Test
+    void readerFilterAppliesToBothCounts() throws Exception {
+        anomaly(record(reader, diallo, dialloTag, false, "2031-05-05T08:00:00Z"), RecordAnomaly.CHEAT);
+        anomaly(record(reader, null, looseTag, false, "2031-05-05T08:30:00Z"), RecordAnomaly.DOUBLON_PERDU);
+        anomaly(record(otherReader, null, looseTag, false, "2031-05-05T09:00:00Z"), RecordAnomaly.DOUBLON_PERDU);
+
+        JsonNode stats = stats("period=CUSTOM&from=2031-05-05&to=2031-05-05&readerId=" + otherReader.getId(),
+                asOperator());
+
+        assertCounts(stats.get("summary"), 0, 0);
+        assertEquals(0, stats.get("summary").get("cheats").asLong());
+        assertEquals(1, stats.get("duplicates").asLong());
+        assertEquals(0, stats.get("pickers").size());
     }
 
     // --- reader filter ---
@@ -398,14 +445,22 @@ class RecordStatsApiTest {
     private static void assertCounts(JsonNode counts, long total, long nonCompliant) {
         assertEquals(total, counts.get("total").asLong(), "total");
         assertEquals(nonCompliant, counts.get("nonCompliant").asLong(), "nonCompliant");
+        assertThat(counts.get("cheats").asLong()).isBetween(0L, nonCompliant);
+    }
+
+    private void anomaly(RecordEntity record, RecordAnomaly anomaly) {
+        jdbcTemplate.update("update record set anomaly = ? where id = ?", anomaly.name(), record.getId());
     }
 
     // The contract's invariants: picker rows and hours each add up to the summary.
     private static void assertInvariants(JsonNode stats) {
         long total = stats.get("summary").get("total").asLong();
         long nonCompliant = stats.get("summary").get("nonCompliant").asLong();
+        long cheats = stats.get("summary").get("cheats").asLong();
         long pickerTotal = 0;
         long pickerNonCompliant = 0;
+        long pickerCheats = 0;
+        long hourCheats = 0;
         double pickerHours = 0;
         long[] columnTotals = new long[stats.get("activities").size()];
         for (JsonNode picker : stats.get("pickers")) {
@@ -415,6 +470,7 @@ class RecordStatsApiTest {
             }
             pickerTotal += picker.get("total").asLong();
             pickerNonCompliant += picker.get("nonCompliant").asLong();
+            pickerCheats += picker.get("cheats").asLong();
             long activityTotal = 0;
             for (JsonNode count : picker.get("activities")) {
                 activityTotal += count.get("total").asLong();
@@ -438,7 +494,10 @@ class RecordStatsApiTest {
             assertEquals(hour, entry.get("hour").asInt());
             hourTotal += entry.get("total").asLong();
             hourNonCompliant += entry.get("nonCompliant").asLong();
+            hourCheats += entry.get("cheats").asLong();
         }
+        assertEquals(cheats, pickerCheats);
+        assertEquals(cheats, hourCheats);
         assertEquals(total, pickerTotal);
         assertEquals(nonCompliant, pickerNonCompliant);
         assertEquals(total, hourTotal);

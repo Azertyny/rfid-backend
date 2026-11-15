@@ -8,6 +8,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 
 import com.rfidback.generated.api.RecordApiDelegate;
+import com.rfidback.generated.model.AnomalyRecordsPage;
 import com.rfidback.generated.model.ConformityChangesList;
 import com.rfidback.generated.model.RecordStats;
 import com.rfidback.generated.model.StatsPeriod;
@@ -35,6 +36,14 @@ public class RecordController implements RecordApiDelegate {
             Optional<LocalDate> to, Optional<UUID> readerId) {
         return ResponseEntity.ok(recordStatsService.getStats(period.orElse(null), from.orElse(null), to.orElse(null),
                 readerId.orElse(null)));
+    }
+
+    @Override
+    public ResponseEntity<AnomalyRecordsPage> listRecordAnomalies(Optional<StatsPeriod> period,
+            Optional<LocalDate> from, Optional<LocalDate> to, Optional<UUID> readerId, Optional<Integer> page,
+            Optional<Integer> size) {
+        return ResponseEntity.ok(recordStatsService.listAnomalies(period.orElse(null), from.orElse(null),
+                to.orElse(null), readerId.orElse(null), page.orElse(0), size.orElse(20)));
     }
 
     @Override

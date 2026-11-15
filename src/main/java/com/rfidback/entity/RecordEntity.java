@@ -7,6 +7,8 @@ import org.hibernate.annotations.CreationTimestamp;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -78,4 +80,9 @@ public class RecordEntity {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "bucket_id")
     private BucketEntity bucket;
+    // Set only by the scan (spec 015, FR-001): Doublon / perdu or Cheat, always with compliant = false; null for an
+    // ordinary record and for every record before spec 015. Cleared when an Administrateur lifts it (FR-010).
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20)
+    private RecordAnomaly anomaly;
 }

@@ -11,7 +11,9 @@ RFID Back — a Spring Boot 3.5.7 (Java 21) backend for tracking fruit-harvest l
 - **Bucket** (seau) — container assigned to a picker
 - **Tag** — RFID tag attached to a bucket
 - **Reader** (lecteur) — RFID reader device that scans tags; authenticates via its own token, not a user login
-- **Record** — a scan event linking tag/bucket/picker, carries a conformity flag that can be revised later
+- **Record** — a scan event linking tag/bucket/picker, with a status (spec 015): Conforme / Non conforme (the
+  `conformity` flag, revisable later) or, set only by the scan, Doublon / perdu or Cheat (`record.anomaly`, always
+  with `conformity = false`); only an Administrateur lifts an anomaly
 - **Activity** (activité) — product type a production line runs; the Administrateur associates activities with lines,
   the line's kiosk chooses the current one, and each record carries the one current at scan time (spec 012)
 - **Work hours** (heures de travail) — hours a picker worked on a station day, entered by the Administrateur on
@@ -74,6 +76,8 @@ Standard layered structure under `src/main/java/com/rfidback/`:
   /api/lines/{uid}/current-activity` (spec 012), everything else `403`.
   `RecordService` and `LineActivityService` limit them to the token's own reader and credit conformity and activity
   changes to the reader (`record_conformity_change.author_reader_id`, `line_activity_change.author_reader_id`).
+  On a Doublon / perdu or Cheat record the PATCH is Administrateur only: `RecordService` answers `403` to the kiosk
+  and to an Opérateur, a check that depends on the record, not on the route (spec 015, FR-010).
 - **Human users** (`@Order(3)`, everything else): server-side session opened by `POST /api/auth/login`
   (`AuthService`), with two roles `ADMINISTRATEUR` / `OPERATEUR` (`entity/Role`, users in table `app_user`). The
   route × role matrix lives in this chain's `authorizeHttpRequests` (spec `.specify/specs/008-*/spec.md`); unlisted
@@ -93,8 +97,15 @@ constraint: the one such change so far (`author_id` nullable, spec 008 kiosk) is
 `configuration/ConformityAuthorSchemaUpgrade`. Readers are never physically deleted: `DELETE /api/readers/{id}` (a disabled reader only) sets `reader.deleted_at`,
 which hides the reader from every list and line but keeps its uid taken and its records (spec 002, FR-008).
 A production scan takes the tag out of its bucket: `tag.counted_record_id` points at the record that counted it, and
-registering the tag into a bucket again clears it. The same station day, a rescan gives a non-compliant record with no
-picker, and two tags of one bucket read by one reader within `app.scan.crate-window` count as one crate (spec 004).
+registering the tag into a bucket again clears it. `TagService.registerScan` applies five rules in order (spec 015,
+research R3): the same pass (same reader, `app.scan.duplicate-window`); two tags of one bucket read by one reader
+within the Cheat gap, one record turned Cheat; a counted tag read again by any reader within the re-read delay of
+its last read (`tag.last_read_at`), ignored; a counted tag read again later, on any day, a new Doublon / perdu record
+with no picker; else a new record. The re-read delay and the Cheat gap are set by the Administrateur on
+`front/settings.html` (`GET/PUT /api/scan-settings`, table `scan_setting`, read at every scan; no row = the
+`app.scan.reread-window` / `app.scan.crate-window` default). Doublon / perdu records are not crates: every
+`GET /api/records/stats` total leaves them out and counts them apart (`duplicates`); `GET /api/records/anomalies`
+(Administrateur, `front/anomalies.html`) lists a period's Doublon / perdu and Cheat records for correction.
 Deleting a bucket (`DELETE /api/buckets/{id}`, spec 006) frees its tags and unlinks its records (`record.bucket_id`),
 which keep their picker; the number can be used again.
 Work hours live in `picker_work_day`, one row per picker and station day in whole minutes (no row = not entered);

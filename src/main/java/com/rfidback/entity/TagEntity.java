@@ -45,6 +45,10 @@ public class TagEntity {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "counted_record_id")
     private RecordEntity countedRecord;
+    // Last production read of the tag by any reader, ignored reads included: the start of the re-read delay
+    // (spec 015, FR-003, research R2). Null until the tag's first read after spec 015.
+    @Column(name = "last_read_at")
+    private OffsetDateTime lastReadAt;
 
     @CreationTimestamp
     @Column(nullable = false, updatable = false)

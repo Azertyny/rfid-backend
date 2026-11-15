@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Anomalies - Admin</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        body { background-color: #f0f2f5; font-family: 'Segoe UI', sans-serif; }
+        .table-hover tbody tr:hover { background-color: #f1f1f1; }
+        .badge-doublon { background-color: #1e40af; }
+        .badge-cheat { background-color: #c2410c; }
+        #anomaliesTable td { vertical-align: middle; }
+    </style>
+</head>
+<body class="d-flex flex-column h-100">
+
+    <!-- MENU DE NAVIGATION HARMONISÉ -->
+    <nav class="navbar navbar-expand navbar-dark bg-dark shadow-sm">
+        <div class="container-fluid max-w-7xl mx-auto px-4">
+            <a class="navbar-brand fw-bold" href="index.html">
+                <i class="fas fa-wifi me-2"></i>RFID Admin
+            </a>
+            <div class="navbar-nav ms-auto gap-2">
+                <a href="index.html" class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-chart-line me-1"></i>Dashboard
+                </a>
+                <a href="pickers.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-users me-1"></i>Cueilleurs
+                </a>
+                <a href="work-hours.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-clock me-1"></i>Heures
+                </a>
+                <a href="readers.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-satellite-dish me-1"></i>Lecteurs
+                </a>
+                <a href="activities.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-seedling me-1"></i>Activités
+                </a>
+                <a href="tags.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-tags me-1"></i>Tags
+                </a>
+                <a href="buckets.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-fill me-1"></i>Seaux
+                </a>
+                <a href="users.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-user-shield me-1"></i>Utilisateurs
+                </a>
+                <a href="settings.html" data-admin-only class="btn btn-sm btn-outline-light border-0">
+                    <i class="fas fa-sliders me-1"></i>Réglages
+                </a>
+                <button class="btn btn-sm btn-outline-light border-0" onclick="logout()">
+                    <i class="fas fa-sign-out-alt me-1"></i>Déconnexion
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid max-w-7xl mx-auto py-4">
+
+        <!-- En-tête -->
+        <div class="mb-4">
+            <h3 class="fw-bold text-primary mb-0">Lectures à vérifier</h3>
+            <small class="text-muted">Les lectures que le système a marquées Doublon / perdu ou Cheat. Une lecture
+                signalée à tort peut être repassée en Conforme ou Non conforme.</small>
+        </div>
+
+        <div id="alertArea"></div>
+
+        <!-- FILTRES : mêmes périodes que le tableau de bord -->
+        <div class="card p-3 mb-4">
+            <div class="row g-2 align-items-end">
+                <div class="col-md-3">
+                    <label for="periodSelect" class="form-label small fw-semibold mb-1">Période</label>
+                    <select id="periodSelect" class="form-select form-select-sm">
+                        <option value="TODAY" selected>Aujourd'hui</option>
+                        <option value="YESTERDAY">Hier</option>
+                        <option value="LAST_7_DAYS">7 derniers jours</option>
+                        <option value="CURRENT_MONTH">Le mois en cours</option>
+                        <option value="LAST_MONTH">Le mois dernier</option>
+                        <option value="CUSTOM">Personnalisée</option>
+                    </select>
+                </div>
+                <div class="col-md-2 d-none" data-custom-period>
+                    <label for="fromDate" class="form-label small fw-semibold mb-1">Du</label>
+                    <input type="date" id="fromDate" class="form-control form-control-sm">
+                </div>
+                <div class="col-md-2 d-none" data-custom-period>
+                    <label for="toDate" class="form-label small fw-semibold mb-1">Au</label>
+                    <input type="date" id="toDate" class="form-control form-control-sm">
+                </div>
+                <div class="col-md-3">
+                    <label for="readerSelect" class="form-label small fw-semibold mb-1">Lecteur</label>
+                    <select id="readerSelect" class="form-select form-select-sm">
+                        <option value="">Tous les lecteurs</option>
+                    </select>
+                </div>
+                <div class="col-md-auto ms-auto">
+                    <button id="refreshBtn" class="btn btn-sm btn-outline-secondary">
+                        <i class="fas fa-rotate me-1"></i>Actualiser
+                    </button>
+                </div>
+            </div>
+            <div id="periodError" class="invalid-feedback d-block"></div>
+        </div>
+
+        <div class="card shadow-sm border-0">
+            <div class="table-responsive">
+                <table class="table table-hover mb-0" id="anomaliesTable">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Date</th>
+                            <th>Ligne</th>
+                            <th>Tag</th>
+                            <th>Statut</th>
+                            <th>Activité</th>
+                            <th>Cueilleur</th>
+                            <th class="text-end">Corriger</th>
+                        </tr>
+                    </thead>
+                    <tbody id="anomaliesBody">
+                        <tr><td colspan="7" class="text-center text-muted py-4">Chargement...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="card-footer bg-white d-flex justify-content-between align-items-center">
+                <small class="text-muted" id="pageInfo"></small>
+                <div class="d-flex gap-2">
+                    <button id="prevBtn" class="btn btn-sm btn-outline-secondary" disabled>Page précédente</button>
+                    <button id="nextBtn" class="btn btn-sm btn-outline-secondary" disabled>Page suivante</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="config.js"></script>
+    <script src="auth.js"></script>
+    <script>
+        // Spec 015, FR-015: the Doublon / perdu and Cheat records of a period, with the same period rules as the
+        // dashboard (GET /records/anomalies), and the Administrateur's correction (PATCH /records/{id}/conformity).
+        const MAX_DAYS = 31;
+        const PAGE_SIZE = 50;
+        const STATUS_LABELS = {
+            DOUBLON_PERDU: { label: 'Doublon / perdu', cls: 'badge-doublon' },
+            CHEAT: { label: 'Cheat', cls: 'badge-cheat' }
+        };
+
+        let page = 0;
+        let requestSeq = 0;
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            await requireRole('ADMINISTRATEUR');
+            applyQueryString();
+            document.getElementById('periodSelect').addEventListener('change', () => { toggleCustom(); reload(); });
+            ['fromDate', 'toDate', 'readerSelect'].forEach(id =>
+                document.getElementById(id).addEventListener('change', reload));
+            document.getElementById('refreshBtn').addEventListener('click', () => load());
+            document.getElementById('prevBtn').addEventListener('click', () => { page--; load(); });
+            document.getElementById('nextBtn').addEventListener('click', () => { page++; load(); });
+            await loadReaders(new URLSearchParams(location.search).get('readerId'));
+            await load();
+        });
+
+        // The dashboard links here with its own period and reader (index.html).
+        function applyQueryString() {
+            const params = new URLSearchParams(location.search);
+            const period = params.get('period');
+            if (period && document.querySelector(`#periodSelect option[value="${CSS.escape(period)}"]`)) {
+                document.getElementById('periodSelect').value = period;
+            }
+            if (params.get('from')) document.getElementById('fromDate').value = params.get('from');
+            if (params.get('to')) document.getElementById('toDate').value = params.get('to');
+            toggleCustom();
+        }
+
+        function toggleCustom() {
+            const custom = document.getElementById('periodSelect').value === 'CUSTOM';
+            document.querySelectorAll('[data-custom-period]').forEach(el => el.classList.toggle('d-none', !custom));
+        }
+
+        // Production readers only, disabled ones included, as on the dashboard.
+        async function loadReaders(selectedId) {
+            try {
+                const response = await apiFetch('/readers');
+                if (!response.ok) return;
+                const readers = ((await response.json()).readers || []).filter(reader => reader.mode === 'PRODUCTION');
+                readers.sort((a, b) => a.uid.localeCompare(b.uid, 'fr'));
+                const select = document.getElementById('readerSelect');
+                readers.forEach(reader => {
+                    let label = reader.uid;
+                    if (reader.active === false) label += ' (désactivé)';
+                    select.appendChild(new Option(label, reader.id));
+                });
+                if (selectedId && readers.some(reader => reader.id === selectedId)) select.value = selectedId;
+            } catch (e) { console.error('Err Readers', e); }
+        }
+
+        function reload() {
+            page = 0;
+            load();
+        }
+
+        // Returns the query string, or null after showing why the custom dates are not valid.
+        function buildQuery() {
+            const params = new URLSearchParams();
+            const period = document.getElementById('periodSelect').value;
+            params.set('period', period);
+            if (period === 'CUSTOM') {
+                const from = document.getElementById('fromDate').value;
+                const to = document.getElementById('toDate').value;
+                if (!from || !to) return showPeriodError('Choisissez une date de début et une date de fin.');
+                if (from > to) return showPeriodError('La date de début doit précéder la date de fin.');
+                const days = Math.round((Date.parse(to + 'T00:00:00Z') - Date.parse(from + 'T00:00:00Z')) / 86400000);
+                if (days + 1 > MAX_DAYS) return showPeriodError(`La période ne peut pas dépasser ${MAX_DAYS} jours.`);
+                params.set('from', from);
+                params.set('to', to);
+            }
+            const readerId = document.getElementById('readerSelect').value;
+            if (readerId) params.set('readerId', readerId);
+            params.set('page', String(page));
+            params.set('size', String(PAGE_SIZE));
+            return params.toString();
+        }
+
+        function showPeriodError(message) {
+            document.getElementById('periodError').textContent = message;
+            renderMessage('—');
+            return null;
+        }
+
+        async function load() {
+            document.getElementById('periodError').textContent = '';
+            const query = buildQuery();
+            if (query === null) return;
+            const requestId = ++requestSeq;
+            try {
+                const response = await apiFetch('/records/anomalies?' + query, { silent: true });
+                if (requestId !== requestSeq) return;
+                if (response.status === 400) {
+                    const problem = await response.json().catch(() => ({}));
+                    showPeriodError(problem.detail || 'Période invalide.');
+                    return;
+                }
+                if (!response.ok) {
+                    renderMessage(response.status === 403 ? 'Accès refusé.' : 'Impossible de charger les lectures.');
+                    return;
+                }
+                const result = await response.json();
+                if (requestId !== requestSeq) return;
+                // The last row of a page was corrected: show the previous page rather than an empty one.
+                if (result.content.length === 0 && page > 0) {
+                    page--;
+                    load();
+                    return;
+                }
+                render(result);
+            } catch (e) {
+                if (requestId !== requestSeq) return;
+                console.error('Err Anomalies', e);
+                renderMessage('Impossible de joindre le serveur.');
+            }
+        }
+
+        function render(result) {
+            const body = document.getElementById('anomaliesBody');
+            body.replaceChildren();
+            const metadata = result.metadata;
+            if (result.content.length === 0) {
+                renderMessage('Aucune lecture Doublon / perdu ni Cheat sur la période.');
+                return;
+            }
+            result.content.forEach(record => body.appendChild(row(record)));
+            const first = metadata.page * metadata.size + 1;
+            const last = metadata.page * metadata.size + result.content.length;
+            document.getElementById('pageInfo').textContent =
+                `${first}–${last} sur ${metadata.totalElements} lecture${metadata.totalElements > 1 ? 's' : ''}`;
+            document.getElementById('prevBtn').disabled = !metadata.hasPrevious;
+            document.getElementById('nextBtn').disabled = !metadata.hasNext;
+        }
+
+        function renderMessage(message) {
+            const body = document.getElementById('anomaliesBody');
+            body.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-4">${escapeHtml(message)}</td></tr>`;
+            document.getElementById('pageInfo').textContent = '';
+            document.getElementById('prevBtn').disabled = true;
+            document.getElementById('nextBtn').disabled = true;
+        }
+
+        function row(record) {
+            const status = STATUS_LABELS[record.status] || { label: record.status, cls: 'bg-secondary' };
+            const picker = record.pickerId
+                ? `${record.pickerFirstname || ''} ${record.pickerLastname || ''}`.trim()
+                : '<span class="text-muted fst-italic">Non attribué</span>';
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td class="text-nowrap">${escapeHtml(formatDate(record.creationDate))}</td>
+                <td>${escapeHtml(record.readerUid)}</td>
+                <td class="font-monospace small">${escapeHtml(record.tagUid)}</td>
+                <td><span class="badge ${status.cls}">${escapeHtml(status.label)}</span></td>
+                <td>${record.activityName ? escapeHtml(record.activityName)
+                    : '<span class="text-muted fst-italic">Sans activité</span>'}</td>
+                <td>${record.pickerId ? escapeHtml(picker) : picker}</td>
+                <td class="text-end text-nowrap">
+                    <button type="button" class="btn btn-sm btn-outline-success" data-compliant="true">Conforme</button>
+                    <button type="button" class="btn btn-sm btn-outline-danger" data-compliant="false">Non conforme</button>
+                </td>`;
+            tr.querySelectorAll('button[data-compliant]').forEach(button => button.addEventListener('click',
+                () => correct(record, button.dataset.compliant === 'true', tr)));
+            return tr;
+        }
+
+        async function correct(record, isCompliant, tr) {
+            tr.querySelectorAll('button').forEach(button => { button.disabled = true; });
+            try {
+                const response = await apiFetch(`/records/${record.id}/conformity`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ isCompliant }),
+                    silent: true
+                });
+                if (!response.ok) {
+                    const problem = await response.json().catch(() => ({}));
+                    showAlert('danger', problem.detail || `La lecture n'a pas été corrigée (erreur ${response.status}).`);
+                    tr.querySelectorAll('button').forEach(button => { button.disabled = false; });
+                    return;
+                }
+                showAlert('success', `Lecture du tag ${record.tagUid} passée en ${isCompliant ? 'Conforme' : 'Non conforme'}.`);
+                load();
+            } catch (e) {
+                showAlert('danger', 'Impossible de joindre le serveur.');
+                tr.querySelectorAll('button').forEach(button => { button.disabled = false; });
+            }
+        }
+
+        function formatDate(value) {
+            return new Date(value).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'medium' });
+        }
+
+        function showAlert(type, message) {
+            document.getElementById('alertArea').innerHTML =
+                `<div class="alert alert-${type} alert-dismissible fade show" role="alert">${escapeHtml(message)}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Fermer"></button>
+                </div>`;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text === null || text === undefined ? '' : String(text);
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>
